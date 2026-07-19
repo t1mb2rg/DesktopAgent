@@ -1,29 +1,31 @@
 <Window x:Class="DesktopAgent.Poc.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DesktopAgent PoC"
-        Width="940"
-        Height="620"
-        MinWidth="760"
-        MinHeight="460"
+        Title="DesktopAgent PoC  —  M1-01 显示器拓扑与目标选择"
+        Width="960"
+        Height="660"
+        MinWidth="780"
+        MinHeight="480"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="16" />
+            <RowDefinition Height="12" />
             <RowDefinition Height="*" />
             <RowDefinition Height="12" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
+        <!--  标题栏  -->
         <DockPanel Grid.Row="0">
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock FontSize="26"
                            FontWeight="SemiBold"
-                           Text="显示器拓扑验证" />
+                           Text="显示器拓扑验证  +  目标显示器选择" />
                 <TextBlock Margin="0,6,0,0"
                            Foreground="Gray"
-                           Text="枚举任意数量显示器，并使用虚拟桌面物理像素坐标。" />
+                           TextWrapping="Wrap"
+                           Text="枚举任意数量显示器，使用虚拟桌面物理像素坐标。单击行选择目标显示器。M1 后续只修改目标显示器。" />
             </StackPanel>
 
             <Button DockPanel.Dock="Right"
@@ -35,13 +37,28 @@
                     Content="重新读取" />
         </DockPanel>
 
+        <!--  显示器列表  -->
         <DataGrid x:Name="DisplaysGrid"
                   Grid.Row="2"
                   AutoGenerateColumns="False"
                   CanUserAddRows="False"
                   IsReadOnly="True"
-                  SelectionMode="Single">
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  SelectionChanged="DisplaysGrid_SelectionChanged">
             <DataGrid.Columns>
+                <DataGridTemplateColumn Header="目标"
+                                        Width="56">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       FontSize="16"
+                                       Foreground="#0078D4"
+                                       Text="{Binding TargetMarker}" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="设备"
                                     Width="150"
                                     Binding="{Binding DeviceName}" />
@@ -63,9 +80,21 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <TextBlock x:Name="StatusText"
-                   Grid.Row="4"
-                   Foreground="Gray"
-                   Text="等待读取显示器信息。" />
+        <!--  状态栏  -->
+        <Border Grid.Row="4"
+                Padding="12,10"
+                Background="#F3F3F3"
+                CornerRadius="4">
+            <StackPanel>
+                <TextBlock x:Name="StatusText"
+                           Foreground="#555"
+                           Text="等待读取显示器信息。" />
+                <TextBlock x:Name="TargetText"
+                           Margin="0,4,0,0"
+                           FontWeight="SemiBold"
+                           Foreground="#0078D4"
+                           Text="" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

@@ -7,6 +7,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>DesktopAgent.Poc</RootNamespace>
     <AssemblyName>DesktopAgent.Poc</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
