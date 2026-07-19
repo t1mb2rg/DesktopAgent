@@ -11,7 +11,7 @@ public partial class App : Application
 {
     private IHost? _host;
 
-    protected override async void OnStartup(StartupEventArgs e)
+    protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
@@ -28,16 +28,16 @@ public partial class App : Application
             })
             .Build();
 
-        await _host.StartAsync();
+        _host.StartAsync().GetAwaiter().GetResult();
 
         _host.Services.GetRequiredService<MainWindow>().Show();
     }
 
-    protected override async void OnExit(ExitEventArgs e)
+    protected override void OnExit(ExitEventArgs e)
     {
         if (_host is not null)
         {
-            await _host.StopAsync();
+            _host.StopAsync().GetAwaiter().GetResult();
             _host.Dispose();
         }
 
