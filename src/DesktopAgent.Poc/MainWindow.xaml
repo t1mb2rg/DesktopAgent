@@ -1,88 +1,169 @@
 <Window x:Class="DesktopAgent.Poc.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DesktopAgent PoC  —  M1-01 显示器拓扑与目标选择"
-        Width="960"
-        Height="660"
-        MinWidth="780"
-        MinHeight="480"
+        Title="DesktopAgent PoC — M1-02 桌面图标读取"
+        Width="1000"
+        Height="780"
+        MinWidth="820"
+        MinHeight="600"
         WindowStartupLocation="CenterScreen">
-    <Grid Margin="24">
+    <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="8" />
+            <RowDefinition Height="160" />
             <RowDefinition Height="12" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="4" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="12" />
+            <RowDefinition Height="8" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!--  标题栏  -->
+        <!-- ── 标题栏 ── -->
         <DockPanel Grid.Row="0">
             <StackPanel DockPanel.Dock="Left">
-                <TextBlock FontSize="26"
+                <TextBlock FontSize="22"
                            FontWeight="SemiBold"
-                           Text="显示器拓扑验证  +  目标显示器选择" />
-                <TextBlock Margin="0,6,0,0"
+                           Text="DesktopAgent PoC — M1-02" />
+                <TextBlock Margin="0,4,0,0"
                            Foreground="Gray"
                            TextWrapping="Wrap"
-                           Text="枚举任意数量显示器，使用虚拟桌面物理像素坐标。单击行选择目标显示器。M1 后续只修改目标显示器。" />
+                           Text="M1-01 显示器拓扑 + 目标选择  |  M1-02 只读桌面图标枚举" />
             </StackPanel>
-
-            <Button DockPanel.Dock="Right"
-                    Width="130"
-                    Height="36"
-                    Margin="16,0,0,0"
-                    VerticalAlignment="Center"
-                    Click="RefreshDisplays_Click"
-                    Content="重新读取" />
         </DockPanel>
 
-        <!--  显示器列表  -->
-        <DataGrid x:Name="DisplaysGrid"
-                  Grid.Row="2"
+        <!-- ── 显示器拓扑区 ── -->
+        <DockPanel Grid.Row="2">
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Text="显示器拓扑"
+                               VerticalAlignment="Center" />
+                    <Button DockPanel.Dock="Right"
+                            Width="110"
+                            Height="32"
+                            Click="RefreshDisplays_Click"
+                            Content="重新读取" />
+                </DockPanel>
+            </StackPanel>
+
+            <DataGrid x:Name="DisplaysGrid"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      IsReadOnly="True"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      SelectionChanged="DisplaysGrid_SelectionChanged"
+                      RowHeight="28">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="目标"
+                                            Width="50">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           FontSize="16"
+                                           Foreground="#0078D4"
+                                           Text="{Binding TargetMarker}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="设备"
+                                        Width="140"
+                                        Binding="{Binding DeviceName}" />
+                    <DataGridCheckBoxColumn Header="主屏"
+                                            Width="55"
+                                            Binding="{Binding IsPrimary}" />
+                    <DataGridTextColumn Header="坐标范围"
+                                        Width="200"
+                                        Binding="{Binding BoundsText}" />
+                    <DataGridTextColumn Header="工作区"
+                                        Width="200"
+                                        Binding="{Binding WorkAreaText}" />
+                    <DataGridTextColumn Header="DPI"
+                                        Width="90"
+                                        Binding="{Binding DpiText}" />
+                    <DataGridTextColumn Header="缩放"
+                                        Width="*"
+                                        Binding="{Binding ScaleText}" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </DockPanel>
+
+        <!-- ── 图标区标题 ── -->
+        <DockPanel Grid.Row="4">
+            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+                <TextBlock FontSize="15"
+                           FontWeight="SemiBold"
+                           Text="桌面图标" />
+                <TextBlock x:Name="IconStatsText"
+                           Margin="0,2,0,0"
+                           Foreground="Gray"
+                           Text="尚未读取。" />
+            </StackPanel>
+            <Button x:Name="ReadIconsButton"
+                    DockPanel.Dock="Right"
+                    Width="130"
+                    Height="32"
+                    Click="ReadDesktopIcons_Click"
+                    Content="读取桌面图标"
+                    IsEnabled="True" />
+        </DockPanel>
+
+        <!-- ── 图标列表 ── -->
+        <DataGrid x:Name="IconsGrid"
+                  Grid.Row="6"
                   AutoGenerateColumns="False"
                   CanUserAddRows="False"
                   IsReadOnly="True"
                   SelectionMode="Single"
-                  SelectionUnit="FullRow"
-                  SelectionChanged="DisplaysGrid_SelectionChanged">
+                  RowHeight="26">
             <DataGrid.Columns>
-                <DataGridTemplateColumn Header="目标"
-                                        Width="56">
+                <DataGridTextColumn Header="显示名称"
+                                    Width="180"
+                                    Binding="{Binding DisplayName}" />
+                <DataGridTextColumn Header="标识"
+                                    Width="200"
+                                    Binding="{Binding StableIdTruncated}" />
+                <DataGridTextColumn Header="类型"
+                                    Width="70"
+                                    Binding="{Binding ItemKind}" />
+                <DataGridTextColumn Header="X"
+                                    Width="70"
+                                    Binding="{Binding X}" />
+                <DataGridTextColumn Header="Y"
+                                    Width="70"
+                                    Binding="{Binding Y}" />
+                <DataGridTextColumn Header="所属显示器"
+                                    Width="130"
+                                    Binding="{Binding MonitorDisplay}" />
+                <DataGridTemplateColumn Header="目标屏幕"
+                                        Width="70">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <TextBlock HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
-                                       FontSize="16"
+                                       FontWeight="SemiBold"
                                        Foreground="#0078D4"
-                                       Text="{Binding TargetMarker}" />
+                                       Text="{Binding TargetScreenMarker}" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="设备"
-                                    Width="150"
-                                    Binding="{Binding DeviceName}" />
-                <DataGridCheckBoxColumn Header="主屏"
-                                        Width="70"
-                                        Binding="{Binding IsPrimary}" />
-                <DataGridTextColumn Header="坐标范围"
-                                    Width="220"
-                                    Binding="{Binding BoundsText}" />
-                <DataGridTextColumn Header="工作区"
-                                    Width="220"
-                                    Binding="{Binding WorkAreaText}" />
-                <DataGridTextColumn Header="DPI"
-                                    Width="100"
-                                    Binding="{Binding DpiText}" />
-                <DataGridTextColumn Header="缩放"
-                                    Width="*"
-                                    Binding="{Binding ScaleText}" />
+                <DataGridCheckBoxColumn Header="文件系统"
+                                        Width="65"
+                                        Binding="{Binding IsFileSystemItem}" />
+                <DataGridCheckBoxColumn Header="系统项目"
+                                        Width="65"
+                                        Binding="{Binding IsSystemItem}" />
             </DataGrid.Columns>
         </DataGrid>
 
-        <!--  状态栏  -->
-        <Border Grid.Row="4"
-                Padding="12,10"
+        <!-- ── 状态栏 ── -->
+        <Border Grid.Row="8"
+                Padding="12,8"
                 Background="#F3F3F3"
                 CornerRadius="4">
             <StackPanel>
@@ -90,7 +171,7 @@
                            Foreground="#555"
                            Text="等待读取显示器信息。" />
                 <TextBlock x:Name="TargetText"
-                           Margin="0,4,0,0"
+                           Margin="0,3,0,0"
                            FontWeight="SemiBold"
                            Foreground="#0078D4"
                            Text="" />

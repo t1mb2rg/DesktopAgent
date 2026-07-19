@@ -1,0 +1,10 @@
+IShellBrowser
+IShellView
+IFolderView
+IFolderView2
+IShellFolder
+IEnumIDList
+SHGetKnownFolderIDList
+SHGetDesktopFolder
+GetClassName
+StrRetToBuf

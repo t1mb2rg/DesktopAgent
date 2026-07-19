@@ -4,4 +4,8 @@
     <RootNamespace>DesktopAgent.Core</RootNamespace>
     <AssemblyName>DesktopAgent.Core</AssemblyName>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DesktopAgent.Tests" />
+  </ItemGroup>
 </Project>
