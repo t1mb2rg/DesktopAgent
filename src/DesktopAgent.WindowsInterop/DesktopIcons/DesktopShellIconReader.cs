@@ -41,7 +41,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
                 catch (Exception ex)
                 {
                     failedCount++; var hresultStr = ex is COMException ce ? $" HR=0x{ce.ErrorCode:X8}" : "";
-                    Debug.WriteLine($"[M1-02] 图标 #{enumIndex} 读取失敗:{hresultStr} {ex.GetType().Name} — {ex.Message}");
+                    Debug.WriteLine($"[M1-02] 图标 #{enumIndex} 读取失败:{hresultStr} {ex.GetType().Name} — {ex.Message}");
                 }
                 finally { if (pidl != nint.Zero) Marshal.FreeCoTaskMem(pidl); }
             }
@@ -58,9 +58,31 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
         FindDesktopView(ShellWindowsLateBound shellWindows)
     {
         var primaryCtx = new DesktopViewContext();
-        try { FindDesktopViewViaFindWindowSW(shellWindows, primaryCtx); return (primaryCtx, ConnectionMethod.FindWindowSW, null); }
-        catch (Exception ex)
-        { primaryCtx.Dispose(); Debug.WriteLine($"[M1-02] 主路径失败→降级。{FormatException(ex)}"); return (FindDesktopViewViaEnumeration(shellWindows), ConnectionMethod.EnumerationFallback, ex); }
+        try
+        {
+            FindDesktopViewViaFindWindowSW(shellWindows, primaryCtx);
+            return (primaryCtx, ConnectionMethod.FindWindowSW, null);
+        }
+        catch (Exception primaryEx)
+        {
+            primaryCtx.Dispose();
+            Debug.WriteLine($"[M1-02] 主路径失败→降级。{FormatException(primaryEx)}");
+
+            try
+            {
+                var fallbackCtx = FindDesktopViewViaEnumeration(shellWindows);
+                return (fallbackCtx, ConnectionMethod.EnumerationFallback, primaryEx);
+            }
+            catch (Exception fallbackEx)
+            {
+                var msg = new StringBuilder();
+                msg.AppendLine("主路径和降级路径均失败。");
+                msg.AppendLine("── 主路径异常 ──"); msg.AppendLine(FormatException(primaryEx));
+                msg.AppendLine("── 降级路径异常 ──"); msg.AppendLine(FormatException(fallbackEx));
+                throw new InvalidOperationException(
+                    msg.ToString(), new AggregateException(primaryEx, fallbackEx));
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
