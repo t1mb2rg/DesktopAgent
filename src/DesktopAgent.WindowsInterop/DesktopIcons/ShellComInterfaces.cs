@@ -208,7 +208,9 @@ internal interface IFolderView
     [PreserveSig] int GetAutoArrange();
     [PreserveSig] int SelectItem(int iItem, uint dwFlags);
     // SelectAndPositionItems: 保留为 vtable 完整性，M1 不调用
-    [PreserveSig] int SelectAndPositionItems(uint cidl, nint[] apidl, Point[]? apt, uint dwFlags);
+    [PreserveSig] int SelectAndPositionItems(uint cidl,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] nint[] apidl,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] Point[]? apt, uint dwFlags);
 }
 
 #endregion
@@ -234,8 +236,10 @@ internal interface IShellFolder
     [PreserveSig] int CreateViewObject(nint hwndOwner,
         [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
         [MarshalAs(UnmanagedType.Interface)] out object? ppv);
-    [PreserveSig] int GetAttributesOf(uint cidl, nint[] apidl, ref uint rgfInOut);
-    [PreserveSig] int GetUIObjectOf(nint hwndOwner, uint cidl, nint[] apidl,
+    [PreserveSig] int GetAttributesOf(uint cidl,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] nint[] apidl, ref uint rgfInOut);
+    [PreserveSig] int GetUIObjectOf(nint hwndOwner, uint cidl,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] nint[] apidl,
         [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out uint rgfReserved,
         [MarshalAs(UnmanagedType.Interface)] out object? ppv);
     // GetDisplayNameOf: 使用 CsWin32 生成的 CSSTRRET (Windows.Win32.UI.Shell.Common.STRRET)
