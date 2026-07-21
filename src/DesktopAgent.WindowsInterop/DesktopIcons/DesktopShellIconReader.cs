@@ -29,7 +29,11 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             }
 
             hr = ctx.FolderView.Items(SVGIO_ALLVIEW, IidIEnumIDList, out var enumObj);
-            if (hr < 0) throw new COMException("IFolderView.Items failed", hr);
+            if (hr < 0)
+            {
+                SafeReleaseComObject(ref enumObj);
+                throw new COMException("IFolderView.Items failed", hr);
+            }
             if (enumObj is not IEnumIDList enumerator)
             {
                 SafeReleaseComObject(ref enumObj);
@@ -39,18 +43,25 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
 
             var icons = new List<DesktopIconDescriptor>(itemCount);
             var failedCount = 0;
+            var enumIndex = 0;
             while (true)
             {
                 nint pidl = nint.Zero;
                 hr = enumerator.Next(1, out pidl, out var fetched);
                 if (hr < 0) throw new COMException("IEnumIDList.Next failed", hr);
                 if (hr == 1 || fetched == 0) break;
+                enumIndex++;
                 try
                 {
                     var icon = ReadSingleIcon(ctx.FolderView, ctx.DesktopFolder, pidl);
                     if (icon is not null) icons.Add(icon);
                 }
-                catch { failedCount++; }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    var hresultStr = ex is COMException ce ? $" HR=0x{ce.ErrorCode:X8}" : "";
+                    Debug.WriteLine($"[M1-02] 图标 #{enumIndex} 读取失败:{hresultStr} {ex.GetType().Name} — {ex.Message}");
+                }
                 finally { if (pidl != nint.Zero) Marshal.FreeCoTaskMem(pidl); }
             }
             stopwatch.Stop();
@@ -132,9 +143,15 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
 
         // [3] QueryActiveShellView → IShellView
         hr = browser.QueryActiveShellView(out var shellView);
-        if (hr < 0 || shellView is null)
+        if (hr < 0)
+        {
+            SafeRelease(ref shellView);
             throw new InvalidOperationException(
                 $"[3] QueryActiveShellView HR=0x{hr:X8} hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
+        }
+        if (shellView is null)
+            throw new InvalidOperationException(
+                $"[3] QueryActiveShellView 返回 null。hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
         ctx.SetShellView(shellView);
 
         // [3b] QI 诊断
@@ -305,34 +322,20 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     }
 
     /// <summary>
-    /// STRRET → string。仅以 StrRetToBuf HRESULT 判断成功。
-    /// hr >= 0 → StrRetToBuf 已释放 pOleStr，直接返回 sb。
-    /// hr  < 0 → 手动读取原始 STRRET 并调用 FreeStrRetIfNeeded。
+    /// STRRET → string。StrRetToBuf 返回后绝对不再读取或释放 STRRET.pOleStr——
+    /// 无论 HRESULT 成功与否，StrRetToBuf 在 STRRET_WSTR 情况下都已释放 pOleStr。
+    /// 因此 StrRetToBuf 失败时直接抛 COMException，不手动回退。
     /// </summary>
-    private static unsafe string GetDisplayNameSafe(IShellFolder folder, nint pidl, uint flags)
+    private static string GetDisplayNameSafe(IShellFolder folder, nint pidl, uint flags)
     {
         var hr = folder.GetDisplayNameOf(pidl, flags, out CSSTRRET strRet);
         if (hr < 0) throw new COMException($"GetDisplayNameOf(flags=0x{flags:X4}) failed", hr);
 
         var sb = new StringBuilder(512);
         hr = StrRetToBuf(ref strRet, pidl, sb, (uint)sb.Capacity);
-        if (hr >= 0)
-            return sb.ToString();
-        // 以下仅 hr < 0 时执行
-
-        string result;
-        if (strRet.uType == 0)
-            result = Marshal.PtrToStringUni((nint)strRet.Anonymous.pOleStr.Value) ?? string.Empty;
-        else if (strRet.uType == 2)
-        {
-            var ptr = (nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref strRet.Anonymous.cStr[0]);
-            result = Marshal.PtrToStringAnsi(ptr) ?? string.Empty;
-        }
-        else
-            result = string.Empty;
-
-        FreeStrRetIfNeeded(ref strRet, strRetToBufSucceeded: false);
-        return result;
+        if (hr < 0)
+            throw new COMException($"StrRetToBuf failed", hr);
+        return sb.ToString();
     }
 
     private static uint GetItemAttributes(IShellFolder folder, nint pidl)

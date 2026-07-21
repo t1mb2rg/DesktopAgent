@@ -302,46 +302,6 @@ internal static class NativeShellMethods
     public static readonly Guid IidIShellFolder = new("000214E6-0000-0000-C000-000000000046");
     public static readonly Guid IidIEnumIDList = new("000214F2-0000-0000-C000-000000000046");
 
-    // ─── CsWin32 生成的 STRRET 访问 helper ───
-    // CSSTRRET.uType → anonymous union → pOleStr / uOffset / cStr
-
-    /// <summary>从 CSSTRRET 提取字符串。StrRetToBuf 成功后自动释放 pOleStr。</summary>
-    public static unsafe string StrRetToString(nint pidl, ref CSSTRRET strRet)
-    {
-        var sb = new System.Text.StringBuilder(512);
-        var hr = StrRetToBuf(ref strRet, pidl, sb, (uint)sb.Capacity);
-        if (hr == 0 && sb.Length > 0)
-            return sb.ToString();
-
-        // StrRetToBuf 失败 → 手动回退（不重复释放 pOleStr）
-        if (strRet.uType == 0)
-            return Marshal.PtrToStringUni((nint)strRet.Anonymous.pOleStr.Value) ?? string.Empty;
-        if (strRet.uType == 2)
-        {
-            var ptr = (nint)System.Runtime.CompilerServices.Unsafe.AsPointer(ref strRet.Anonymous.cStr[0]);
-            return Marshal.PtrToStringAnsi(ptr) ?? string.Empty;
-        }
-        return string.Empty;
-    }
-
-    /// <summary>
-    /// 仅在 StrRetToBuf 未成功时释放 pOleStr。
-    /// StrRetToBuf 成功时会自行释放 STRRET_WSTR 中的 pOleStr，
-    /// 因此调用者必须避免 double-free。
-    /// </summary>
-    public static unsafe void FreeStrRetIfNeeded(ref CSSTRRET strRet, bool strRetToBufSucceeded)
-    {
-        if (!strRetToBufSucceeded && strRet.uType == 0)
-        {
-            var ptr = (nint)strRet.Anonymous.pOleStr.Value;
-            if (ptr != nint.Zero)
-            {
-                Marshal.FreeCoTaskMem(ptr);
-                strRet.Anonymous.pOleStr = default;
-            }
-        }
-    }
-
     // ─── P/Invoke ───
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
