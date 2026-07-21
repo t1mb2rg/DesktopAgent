@@ -15,14 +15,12 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     {
         var stopwatch = Stopwatch.StartNew();
         using var shellWindows = new ShellWindowsLateBound();
-        var ctx = new DesktopViewContext();
 
-        try
+        var (ctx, connectionMethod, primaryEx) = FindDesktopView(shellWindows);
+        using (ctx)
         {
-            var (connectionMethod, primaryEx) = FindDesktopView(shellWindows, ctx);
-
             var hr = ctx.FolderView.ItemCount(SVGIO_ALLVIEW, out var itemCount);
-            if (hr < 0) throw new COMException($"IFolderView.ItemCount failed", hr);
+            if (hr < 0) throw new COMException("IFolderView.ItemCount failed", hr);
             if (itemCount <= 0)
             {
                 stopwatch.Stop();
@@ -31,9 +29,12 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             }
 
             hr = ctx.FolderView.Items(SVGIO_ALLVIEW, IidIEnumIDList, out var enumObj);
-            if (hr < 0) throw new COMException($"IFolderView.Items failed", hr);
+            if (hr < 0) throw new COMException("IFolderView.Items failed", hr);
             if (enumObj is not IEnumIDList enumerator)
+            {
+                SafeReleaseComObject(ref enumObj);
                 throw new InvalidOperationException("IFolderView.Items did not return IEnumIDList.");
+            }
             ctx.SetEnumerator(enumerator);
 
             var icons = new List<DesktopIconDescriptor>(itemCount);
@@ -42,8 +43,8 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             {
                 nint pidl = nint.Zero;
                 hr = enumerator.Next(1, out pidl, out var fetched);
-                if (hr < 0) throw new COMException($"IEnumIDList.Next failed", hr);
-                if (hr == 1 || fetched == 0) break; // S_FALSE or no items
+                if (hr < 0) throw new COMException("IEnumIDList.Next failed", hr);
+                if (hr == 1 || fetched == 0) break;
                 try
                 {
                     var icon = ReadSingleIcon(ctx.FolderView, ctx.DesktopFolder, pidl);
@@ -56,49 +57,50 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             return new DesktopIconReadResult(icons, failedCount, connectionMethod,
                 stopwatch.Elapsed, primaryEx);
         }
-        finally { ctx.Dispose(); }
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  查找桌面视图
+    //  查找桌面视图 — 主/降级各用独立 DesktopViewContext
     // ═══════════════════════════════════════════════════════════
 
-    private static (ConnectionMethod method, Exception? primaryEx)
-        FindDesktopView(ShellWindowsLateBound shellWindows, DesktopViewContext ctx)
+    private static (DesktopViewContext ctx, ConnectionMethod method, Exception? primaryEx)
+        FindDesktopView(ShellWindowsLateBound shellWindows)
     {
-        Exception? primaryEx = null;
+        // ── 主路径：全新 context ──
+        var primaryCtx = new DesktopViewContext();
         try
         {
-            FindDesktopViewViaFindWindowSW(shellWindows, ctx);
-            return (ConnectionMethod.FindWindowSW, null);
+            FindDesktopViewViaFindWindowSW(shellWindows, primaryCtx);
+            return (primaryCtx, ConnectionMethod.FindWindowSW, null);
         }
         catch (Exception ex)
         {
-            primaryEx = ex;
+            primaryCtx.Dispose(); // 主路径失败，释放已获得的 COM 对象
             Debug.WriteLine($"[M1-02] 主路径失败→降级。{FormatException(ex)}");
-        }
 
-        // 主路径失败，清理后再尝试降级
-        ctx.Dispose();
-
-        try
-        {
-            FindDesktopViewViaEnumeration(shellWindows, ctx);
-            return (ConnectionMethod.EnumerationFallback, primaryEx);
-        }
-        catch (Exception fallbackEx)
-        {
-            var msg = new StringBuilder();
-            msg.AppendLine("主路径和降级路径均失败。");
-            msg.AppendLine("── 主路径异常 ──"); msg.AppendLine(FormatException(primaryEx!));
-            msg.AppendLine("── 降级路径异常 ──"); msg.AppendLine(FormatException(fallbackEx));
-            throw new InvalidOperationException(msg.ToString());
+            // ── 降级路径：另一个全新 context ──
+            var fallbackCtx = new DesktopViewContext();
+            try
+            {
+                FindDesktopViewViaEnumeration(shellWindows, fallbackCtx);
+                return (fallbackCtx, ConnectionMethod.EnumerationFallback, ex);
+            }
+            catch (Exception fallbackEx)
+            {
+                fallbackCtx.Dispose();
+                var msg = new StringBuilder();
+                msg.AppendLine("主路径和降级路径均失败。");
+                msg.AppendLine("── 主路径异常 ──"); msg.AppendLine(FormatException(ex));
+                msg.AppendLine("── 降级路径异常 ──"); msg.AppendLine(FormatException(fallbackEx));
+                throw new InvalidOperationException(msg.ToString());
+            }
         }
     }
 
-    /// <summary>
-    /// 主路径。成功后 ctx 拥有 dispatch / browser / shellView / desktopFolder。
-    /// </summary>
+    // ═══════════════════════════════════════════════════════════
+    //  主路径
+    // ═══════════════════════════════════════════════════════════
+
     private static void FindDesktopViewViaFindWindowSW(
         ShellWindowsLateBound shellWindows, DesktopViewContext ctx)
     {
@@ -113,9 +115,19 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             ?? throw new InvalidOperationException("[2] 不支持 IServiceProvider。");
 
         int hr = sp.QueryService(SID_STopLevelBrowser, IidIShellBrowser, out var browserObj);
-        if (hr < 0 || browserObj is not IShellBrowser browser)
+        if (hr < 0)
+        {
+            SafeReleaseComObject(ref browserObj);
             throw new InvalidOperationException(
                 $"[2] QueryService HR=0x{hr:X8} hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
+        }
+        var browser = browserObj as IShellBrowser;
+        if (browser is null)
+        {
+            SafeReleaseComObject(ref browserObj);
+            throw new InvalidOperationException(
+                $"[2] QueryService 返回非 IShellBrowser。hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
+        }
         ctx.SetBrowser(browser);
 
         // [3] QueryActiveShellView → IShellView
@@ -125,28 +137,36 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
                 $"[3] QueryActiveShellView HR=0x{hr:X8} hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
         ctx.SetShellView(shellView);
 
-        // [3b] QI 诊断 (仅 Debug，不改变控制流)
-        var qiDiag = DiagnoseShellViewInterfaces(shellView, hwnd, hwndClass);
-        Debug.WriteLine(qiDiag);
+        // [3b] QI 诊断
+        Debug.WriteLine(DiagnoseShellViewInterfaces(shellView, hwnd, hwndClass));
 
-        // [4] QI IShellView → IFolderView
-        if (shellView is not IFolderView folderView)
+        // [4] QI IShellView → IFolderView（与 shellView 同 RCW，不单独释放）
+        if (shellView is not IFolderView)
             throw new InvalidOperationException(
-                $"[4] QI IFolderView 失败。hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}\n{qiDiag}");
-        // folderView 与 shellView 是同一 RCW，不单独保存
+                $"[4] QI IFolderView 失败。hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
 
         // [5] GetFolder → IShellFolder
-        hr = folderView.GetFolder(IidIShellFolder, out var sfObj);
-        if (hr < 0 || sfObj is not IShellFolder desktopFolder)
+        hr = ((IFolderView)shellView).GetFolder(IidIShellFolder, out var sfObj);
+        if (hr < 0)
+        {
+            SafeReleaseComObject(ref sfObj);
             throw new InvalidOperationException(
                 $"[5] GetFolder HR=0x{hr:X8} hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
+        }
+        var desktopFolder = sfObj as IShellFolder;
+        if (desktopFolder is null)
+        {
+            SafeReleaseComObject(ref sfObj);
+            throw new InvalidOperationException(
+                $"[5] GetFolder 返回非 IShellFolder。hwnd={hwnd}(0x{hwnd:X}) class={hwndClass}");
+        }
         ctx.SetDesktopFolder(desktopFolder);
     }
 
-    /// <summary>
-    /// 降级路径。成功后 ctx 拥有 dispatch / browser / shellView / desktopFolder。
-    /// 每次迭代的 item 在 QueryService 成功后立即释放（不随成功结果返回）。
-    /// </summary>
+    // ═══════════════════════════════════════════════════════════
+    //  降级路径
+    // ═══════════════════════════════════════════════════════════
+
     private static void FindDesktopViewViaEnumeration(
         ShellWindowsLateBound shellWindows, DesktopViewContext ctx)
     {
@@ -161,16 +181,24 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             if (item is null) continue;
 
             var sp = item as IServiceProvider;
-            if (sp is null) { SafeRelease(ref item); skipReasons.Add($"#{i}: no IServiceProvider"); continue; }
+            if (sp is null) { SafeReleaseComObject(ref item); skipReasons.Add($"#{i}: no IServiceProvider"); continue; }
 
             var hr = sp.QueryService(SID_STopLevelBrowser, IidIShellBrowser, out var browserObj);
-            SafeRelease(ref item); // QueryService 完成后 item/sp 不再需要
-            if (hr < 0) { skipReasons.Add($"#{i}: QueryService HR=0x{hr:X8}"); continue; }
-
+            SafeReleaseComObject(ref item); // QueryService 完成，item/sp 不再需要
+            if (hr < 0)
+            {
+                SafeReleaseComObject(ref browserObj);
+                skipReasons.Add($"#{i}: QueryService HR=0x{hr:X8}");
+                continue;
+            }
             var browser = browserObj as IShellBrowser;
-            if (browser is null) { skipReasons.Add($"#{i}: QueryService not IShellBrowser"); continue; }
+            if (browser is null)
+            {
+                SafeReleaseComObject(ref browserObj);
+                skipReasons.Add($"#{i}: QueryService not IShellBrowser");
+                continue;
+            }
 
-            // <-- browser 在此保证非 null
             hr = browser.GetWindow(out var hwnd);
             if (hr < 0 || hwnd == nint.Zero)
             { SafeRelease(ref browser); skipReasons.Add($"#{i}: GetWindow failed"); continue; }
@@ -180,22 +208,23 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             { SafeRelease(ref browser); skipReasons.Add($"#{i}: class={sb}"); continue; }
 
             hr = browser.QueryActiveShellView(out var shellViewObj);
-            if (hr < 0) { SafeRelease(ref browser); skipReasons.Add($"#{i}: QueryActiveShellView HR=0x{hr:X8}"); continue; }
-
+            if (hr < 0)
+            { SafeRelease(ref shellViewObj); SafeRelease(ref browser); skipReasons.Add($"#{i}: QueryActiveShellView HR=0x{hr:X8}"); continue; }
             var shellView = shellViewObj as IShellView;
-            if (shellView is null) { SafeRelease(ref shellViewObj); SafeRelease(ref browser); skipReasons.Add($"#{i}: QueryActiveShellView not IShellView"); continue; }
+            if (shellView is null)
+            { SafeRelease(ref shellViewObj); SafeRelease(ref browser); skipReasons.Add($"#{i}: QueryActiveShellView not IShellView"); continue; }
 
-            // <-- shellView 在此保证非 null
-            var folderView = shellView as IFolderView;
-            if (folderView is null) { SafeRelease(ref shellView); SafeRelease(ref browser); skipReasons.Add($"#{i}: QI IFolderView null"); continue; }
+            if (shellView is not IFolderView)
+            { SafeRelease(ref shellView); SafeRelease(ref browser); skipReasons.Add($"#{i}: QI IFolderView null"); continue; }
 
-            hr = folderView.GetFolder(IidIShellFolder, out var sfObj);
-            if (hr < 0) { SafeRelease(ref shellView); SafeRelease(ref browser); skipReasons.Add($"#{i}: GetFolder HR=0x{hr:X8}"); continue; }
-
+            hr = ((IFolderView)shellView).GetFolder(IidIShellFolder, out var sfObj);
+            if (hr < 0)
+            { SafeReleaseComObject(ref sfObj); SafeRelease(ref shellView); SafeRelease(ref browser); skipReasons.Add($"#{i}: GetFolder HR=0x{hr:X8}"); continue; }
             var desktopFolder = sfObj as IShellFolder;
-            if (desktopFolder is null) { SafeRelease(ref shellView); SafeRelease(ref browser); skipReasons.Add($"#{i}: GetFolder not IShellFolder"); continue; }
+            if (desktopFolder is null)
+            { SafeReleaseComObject(ref sfObj); SafeRelease(ref shellView); SafeRelease(ref browser); skipReasons.Add($"#{i}: GetFolder not IShellFolder"); continue; }
 
-            // 成功 — 所有对象移交 ctx
+            // 成功 — 移交 ctx
             ctx.SetBrowser(browser);
             ctx.SetShellView(shellView);
             ctx.SetDesktopFolder(desktopFolder);
@@ -255,7 +284,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
         IFolderView folderView, IShellFolder desktopFolder, nint pidl)
     {
         var hr = folderView.GetItemPosition(pidl, out Point pt);
-        if (hr < 0) throw new COMException($"GetItemPosition failed", hr);
+        if (hr < 0) throw new COMException("GetItemPosition failed", hr);
 
         var position = new PixelPoint(pt.X, pt.Y);
         var displayName = GetDisplayNameSafe(desktopFolder, pidl, SHGDN_NORMAL);
@@ -275,6 +304,11 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             IsSystemItem: isSystem && !isFileSystem, IsFileSystemItem: isFileSystem);
     }
 
+    /// <summary>
+    /// STRRET → string。仅以 StrRetToBuf HRESULT 判断成功。
+    /// hr >= 0 → StrRetToBuf 已释放 pOleStr，直接返回 sb。
+    /// hr  < 0 → 手动读取原始 STRRET 并调用 FreeStrRetIfNeeded。
+    /// </summary>
     private static unsafe string GetDisplayNameSafe(IShellFolder folder, nint pidl, uint flags)
     {
         var hr = folder.GetDisplayNameOf(pidl, flags, out CSSTRRET strRet);
@@ -282,10 +316,10 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
 
         var sb = new StringBuilder(512);
         hr = StrRetToBuf(ref strRet, pidl, sb, (uint)sb.Capacity);
-        if (hr >= 0 && sb.Length > 0)
+        if (hr >= 0)
             return sb.ToString();
+        // 以下仅 hr < 0 时执行
 
-        // StrRetToBuf 失败 → 手动回退
         string result;
         if (strRet.uType == 0)
             result = Marshal.PtrToStringUni((nint)strRet.Anonymous.pOleStr.Value) ?? string.Empty;
@@ -308,7 +342,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
                     | SFGAO_FILESYSANCESTOR | SFGAO_BROWSABLE;
         var pidls = new[] { pidl };
         var hr = folder.GetAttributesOf(1, pidls, ref attrs);
-        if (hr < 0) throw new COMException($"GetAttributesOf failed", hr);
+        if (hr < 0) throw new COMException("GetAttributesOf failed", hr);
         return attrs;
     }
 
@@ -334,6 +368,11 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
         return $"display:{displayName}";
     }
 
+    // ═══════════════════════════════════════════════════════════
+    //  COM 生命周期助手
+    // ═══════════════════════════════════════════════════════════
+
+    /// <summary>释放强类型 COM 别名。</summary>
     private static void SafeRelease<T>(ref T? comObject) where T : class
     {
         if (comObject is not null && Marshal.IsComObject(comObject))
@@ -341,6 +380,14 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             Marshal.ReleaseComObject(comObject);
             comObject = null;
         }
+    }
+
+    /// <summary>释放 object 类型的 COM 对象并置 null。用于 out 参数在 HRESULT 失败或类型转换失败后的清理。</summary>
+    private static void SafeReleaseComObject(ref object? comObj)
+    {
+        if (comObj is not null && Marshal.IsComObject(comObj))
+            Marshal.ReleaseComObject(comObj);
+        comObj = null;
     }
 
     internal static string FormatException(Exception ex)
@@ -369,37 +416,71 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
 //  DesktopViewContext — 统一 COM 所有权
 // ═══════════════════════════════════════════════════════════════
 
-/// <summary>
-/// 持有桌面视图查找过程中获得的 COM 对象。
-/// Dispose 时按逆序各释放一次。同一 RCW（如 shellView/folderView）
-/// 只保存并释放一份。
-/// </summary>
 internal sealed class DesktopViewContext : IDisposable
 {
-    private object? _dispatch;         // FindWindowSW 返回
-    private IShellBrowser? _browser;   // QueryService 获得
-    private IShellView? _shellView;    // QueryActiveShellView 获得（也是 folderView 的 RCW）
-    private IShellFolder? _desktopFolder; // GetFolder 获得
-    private IEnumIDList? _enumerator;  // IFolderView.Items 获得
+    private object? _dispatch;
+    private IShellBrowser? _browser;
+    private IShellView? _shellView;       // folderView 同此 RCW，不单独释放
+    private IShellFolder? _desktopFolder;
+    private IEnumIDList? _enumerator;
 
     private bool _disposed;
 
     public IFolderView FolderView => (IFolderView)_shellView!;
-
     public IShellFolder DesktopFolder => _desktopFolder!;
 
-    public void SetDispatch(object d) => _dispatch = d;
-    public void SetBrowser(IShellBrowser b) => _browser = b;
-    public void SetShellView(IShellView sv) => _shellView = sv;
-    public void SetDesktopFolder(IShellFolder sf) => _desktopFolder = sf;
-    public void SetEnumerator(IEnumIDList e) => _enumerator = e;
+    public void SetDispatch(object d)
+    {
+        ThrowIfDisposed();
+        ThrowIfAlreadySet(_dispatch);
+        _dispatch = d;
+    }
+
+    public void SetBrowser(IShellBrowser b)
+    {
+        ThrowIfDisposed();
+        ThrowIfAlreadySet(_browser);
+        _browser = b;
+    }
+
+    public void SetShellView(IShellView sv)
+    {
+        ThrowIfDisposed();
+        ThrowIfAlreadySet(_shellView);
+        _shellView = sv;
+    }
+
+    public void SetDesktopFolder(IShellFolder sf)
+    {
+        ThrowIfDisposed();
+        ThrowIfAlreadySet(_desktopFolder);
+        _desktopFolder = sf;
+    }
+
+    public void SetEnumerator(IEnumIDList e)
+    {
+        ThrowIfDisposed();
+        ThrowIfAlreadySet(_enumerator);
+        _enumerator = e;
+    }
+
+    private static void ThrowIfAlreadySet(object? field)
+    {
+        if (field is not null)
+            throw new InvalidOperationException(
+                $"DesktopViewContext field already set — overwrite would leak a COM object.");
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+    }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
 
-        // 逆序释放，每个独立 RCW 一次
         if (_enumerator is not null && Marshal.IsComObject(_enumerator))
             Marshal.ReleaseComObject(_enumerator);
         if (_desktopFolder is not null && Marshal.IsComObject(_desktopFolder))
