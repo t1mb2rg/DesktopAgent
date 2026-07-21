@@ -275,8 +275,11 @@ internal static class NativeShellMethods
 
     public static readonly Guid SID_STopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
 
-    // SVGIO — CsWin32: _SVGIO enum (U4)
-    public const uint SVGIO_ALLVIEW = 0xFFFFFFFF;
+    // SVGIO — shobjidl_core.h _SVGIO enum
+    public const uint SVGIO_BACKGROUND = 0x00000000;
+    public const uint SVGIO_SELECTION = 0x00000001;
+    public const uint SVGIO_ALLVIEW = 0x00000002;
+    public const uint SVGIO_FLAG_VIEWORDER = 0x80000000;
 
     // SHGDN
     public const uint SHGDN_NORMAL = 0x0000;
