@@ -17,7 +17,7 @@
             <RowDefinition Height="4" />
             <RowDefinition Height="*" />
             <RowDefinition Height="8" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="200" />
         </Grid.RowDefinitions>
 
         <!-- ── 标题栏 ── -->
@@ -163,19 +163,61 @@
 
         <!-- ── 状态栏 ── -->
         <Border Grid.Row="8"
-                Padding="12,8"
+                Padding="8,6"
                 Background="#F3F3F3"
                 CornerRadius="4">
-            <StackPanel>
-                <TextBlock x:Name="StatusText"
-                           Foreground="#555"
-                           Text="等待读取显示器信息。" />
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- 头部：标签 + 复制按钮 -->
+                <DockPanel Grid.Row="0" Margin="0,0,0,4">
+                    <Button x:Name="CopyDiagnosticsButton"
+                            DockPanel.Dock="Right"
+                            Width="80"
+                            Height="26"
+                            FontSize="12"
+                            Click="CopyDiagnostics_Click"
+                            Content="复制诊断" />
+                    <TextBlock DockPanel.Dock="Left"
+                               VerticalAlignment="Center"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               Foreground="#555"
+                               Text="运行状态 / 诊断" />
+                </DockPanel>
+
+                <!-- 可滚动的诊断文本框 -->
+                <TextBox x:Name="StatusText"
+                         Grid.Row="1"
+                         IsReadOnly="True"
+                         IsReadOnlyCaretVisible="True"
+                         AcceptsReturn="True"
+                         AcceptsTab="True"
+                         TextWrapping="NoWrap"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         VerticalContentAlignment="Top"
+                         FontFamily="Consolas"
+                         FontSize="12"
+                         Foreground="#333"
+                         Background="Transparent"
+                         BorderThickness="1"
+                         BorderBrush="#DDD"
+                         Padding="4"
+                         Text="等待读取显示器信息。" />
+
+                <!-- 底部：目标显示器 -->
                 <TextBlock x:Name="TargetText"
-                           Margin="0,3,0,0"
+                           Grid.Row="2"
+                           Margin="0,4,0,0"
                            FontWeight="SemiBold"
                            Foreground="#0078D4"
                            Text="" />
-            </StackPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using DesktopAgent.Core.DesktopIcons;
@@ -126,6 +127,32 @@ public partial class MainWindow : Window
     }
 
     // ═══════════════════════════════════════════════════
+    //  诊断复制
+    // ═══════════════════════════════════════════════════
+
+    private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var text = StatusText.Text;
+            if (string.IsNullOrWhiteSpace(text)) return;
+            Clipboard.SetText(text);
+            CopyDiagnosticsButton.Content = "已复制";
+        }
+        catch (Exception ex)
+        {
+            CopyDiagnosticsButton.Content = "复制失败";
+            Debug.WriteLine($"[M1-02] 复制诊断失败：{ex.Message}");
+        }
+        finally
+        {
+            // 短暂提示后恢复原文字
+            _ = Task.Delay(1500).ContinueWith(_ =>
+                Dispatcher.Invoke(() => CopyDiagnosticsButton.Content = "复制诊断"));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
     //  桌面图标读取
     // ═══════════════════════════════════════════════════
 
@@ -196,6 +223,7 @@ public partial class MainWindow : Window
             StatusText.Text = readResult.FailedItemCount > 0
                 ? $"读取完成（{readResult.Icons.Count} 成功，{readResult.FailedItemCount} 失败）。连接方式：{connectionLabel}。"
                 : $"读取完成：共 {readResult.Icons.Count} 个桌面图标。连接方式：{connectionLabel}。";
+            StatusText.ScrollToHome();
         }
         catch (Exception ex)
         {
@@ -204,6 +232,7 @@ public partial class MainWindow : Window
             // 使用 DesktopShellIconReader 的详细格式化
             var detail = DesktopAgent.WindowsInterop.DesktopIcons.DesktopShellIconReader.FormatException(ex);
             StatusText.Text = $"桌面图标读取失败。诊断：\r\n{detail}";
+            StatusText.ScrollToHome();
             Debug.WriteLine($"[M1-02] 读取失败：\r\n{detail}");
 
             _iconRows.Clear();
