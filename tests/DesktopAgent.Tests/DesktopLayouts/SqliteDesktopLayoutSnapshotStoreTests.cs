@@ -169,6 +169,14 @@ public sealed class SqliteDesktopLayoutSnapshotStoreTests : IDisposable
     // ── Factory tests ──
 
     [Fact]
+    public void Factory_NullIcons_Throws()
+    {
+        var factory = new DesktopLayoutSnapshotFactory();
+        Assert.Throws<ArgumentNullException>(() =>
+            factory.Create(null!, null, ConnectionMethod.FindWindowSW));
+    }
+
+    [Fact]
     public void Factory_UsesTimeProvider()
     {
         var fixedTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);

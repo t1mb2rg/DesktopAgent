@@ -24,6 +24,7 @@ public sealed class DesktopLayoutSnapshotFactory
         string? targetMonitorDeviceName,
         ConnectionMethod connectionMethod)
     {
+        ArgumentNullException.ThrowIfNull(icons);
         var items = new List<DesktopIconSnapshotItem>(icons.Count);
         for (var i = 0; i < icons.Count; i++)
         {

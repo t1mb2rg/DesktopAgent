@@ -2,7 +2,13 @@
 
 ## 实验目标
 
-在 M1-02 只读图标读取的基础上，建立桌面布局快照的领域模型和持久化存储，为 M1-03B 的图标移动与恢复提供数据基础。
+在 M1-02 只读图标读取的基础上，建立桌面布局快照的领域模型和持久化存储，为 M1-03B 接入 PoC 保存快照功能提供数据基础。
+
+## 路线
+
+- **M1-03A**：领域模型和 SQLite 持久化
+- **M1-03B**：PoC 保存快照与快照列表
+- **M1-04**：小范围图标移动与恢复验证
 
 ## 为什么保存快照必须先于图标移动
 
@@ -44,7 +50,14 @@ M1-03A 不移动图标、不恢复布局，仅验证模型和存储层的正确�
 
 ### DesktopLayoutSnapshotFactory
 
-工厂方法 `Create(readResult, snapshotId, target, createdAtUtc)` 将 `DesktopIconDescriptor` 映射为 `DesktopIconSnapshotItem`，按顺序分配 Ordinal。
+工厂方法将 `DesktopIconDescriptor` 映射为 `DesktopIconSnapshotItem`，按顺序分配 Ordinal。SnapshotId 和 CreatedAtUtc 由 Factory 内部生成，调用方不需要提供。
+
+```csharp
+public DesktopLayoutSnapshot Create(
+    IReadOnlyList<DesktopIconDescriptor> icons,
+    string? targetMonitorDeviceName,
+    ConnectionMethod connectionMethod);
+```
 
 ## SQLite 表结构
 
@@ -54,8 +67,8 @@ desktop_layout_snapshots (
     created_at_utc           TEXT NOT NULL,       -- ISO 8601 round-trip
     target_monitor_device_name TEXT NULL,
     connection_method        INTEGER NOT NULL,    -- ConnectionMethod enum
-    format_version           INTEGER NOT NULL,    -- 当前固定为 1
-    icon_count               INTEGER NOT NULL
+    format_version           INTEGER NOT NULL CHECK(format_version > 0),
+    icon_count               INTEGER NOT NULL CHECK(icon_count >= 0)
 );
 
 desktop_layout_snapshot_items (
@@ -83,16 +96,18 @@ CREATE INDEX idx_snapshots_created_at_utc_desc
 ## 事务边界
 
 `SaveAsync` 在单个事务中完成：
-1. 检查 SnapshotId 是否已存在（重复插入拒绝）
-2. 插入父记录
-3. 循环插入所有图标项
-4. Commit
+
+1. 直接插入父记录；
+2. PRIMARY KEY 冲突转换为重复 SnapshotId 异常；
+3. 插入图标记录；
+4. Commit；
+5. 失败时整体回滚。
 
 任何步骤失败都会回滚，保证父记录和图标项要么全部成功，要么全部失败。
 
 ## FormatVersion 的作用
 
-- 当前固定为 1
+- 当前固定为 1（由 `DesktopLayoutSnapshot.CurrentFormatVersion` 常量定义）
 - 读取时校验 `>= 1`，低于 1 时抛出 `InvalidOperationException`
 - 保存时校验 `>= 1`，低于 1 时抛出 `ArgumentException`
 - 严禁静默接受未知版本
@@ -141,9 +156,10 @@ public interface IDesktopLayoutSnapshotStore
 - Microsoft.Data.Sqlite 10.0.10
 - SQLitePCLRaw.bundle_e_sqlite3 2.1.12（固定 bundle 为解决旧传递原生 SQLite 包 `lib.e_sqlite3 2.1.11` 的 NU1903 安全警告）
 
-## M1-03B 后续接入计划
+## 最终验证结果
 
-1. 在 PoC UI 增加"保存快照"按钮
-2. 点击后创建快照并写入 SQLite
-3. 增加"查看快照列表"功能
-4. M1-04 实现图标移动后再接入恢复逻辑
+- **NuGet 漏洞检查**：无易受攻击的软件包
+- **Build**：0 Warning，0 Error
+- **Test**：86/86 passed
+- **GitHub Actions**：通过
+- **PoC**：未运行
