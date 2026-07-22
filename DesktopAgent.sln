@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopAgent.Poc", "src\Des
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopAgent.Tests", "tests\DesktopAgent.Tests\DesktopAgent.Tests.csproj", "{B5A16D71-AC97-427C-B798-728A2C70FDAF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopAgent.Persistence", "src\DesktopAgent.Persistence\DesktopAgent.Persistence.csproj", "{BBA614BA-D020-4373-BE52-90185B334BFB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,6 +52,14 @@ Global
 		{B5A16D71-AC97-427C-B798-728A2C70FDAF}.Debug|x64.Build.0 = Debug|Any CPU
 		{B5A16D71-AC97-427C-B798-728A2C70FDAF}.Release|x64.ActiveCfg = Release|Any CPU
 		{B5A16D71-AC97-427C-B798-728A2C70FDAF}.Release|x64.Build.0 = Release|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Debug|x64.Build.0 = Debug|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Release|x64.ActiveCfg = Release|Any CPU
+		{BBA614BA-D020-4373-BE52-90185B334BFB}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
