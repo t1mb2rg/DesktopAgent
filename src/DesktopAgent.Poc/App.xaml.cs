@@ -1,5 +1,6 @@
 using System.Windows;
 using DesktopAgent.Core.Displays;
+using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.Displays;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +25,8 @@ public partial class App : Application
             .ConfigureServices(services =>
             {
                 services.AddSingleton<IDisplayTopologyReader, NativeDisplayTopologyReader>();
+                services.AddSingleton<IDesktopIconReader, DesktopShellIconReader>();
+                services.AddSingleton<StaThreadExecutor>();
                 services.AddSingleton<MainWindow>();
             })
             .Build();
