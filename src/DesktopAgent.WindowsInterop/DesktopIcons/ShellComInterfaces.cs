@@ -215,6 +215,47 @@ internal interface IFolderView
 
 #endregion
 
+#region IFolderView2Compat — IFolderView2 IID 的 ABI 前缀投影
+
+/// <summary>
+/// IFolderView2 IID ({1AF3A467-214F-4298-908E-06B03E0B39F9}) 的平铺 COM 投影。
+/// 实机诊断：桌面 IShellView 的 QI 对 IID_IFolderView 返回 E_NOINTERFACE，
+/// 但对 IID_IFolderView2 返回 S_OK。
+///
+/// 这是 IFolderView2 的 ABI 前缀投影，并非 C# 接口继承。
+/// 不写 "interface IFolderView2Compat : IFolderView"——
+/// ComImport 不会自动展开 C# 接口继承为正确 vtable，可能导致槽位错位。
+///
+/// IFolderView 的全部 14 个方法按原生 vtable 顺序显式复制于此。
+/// M1-02 只使用 GetFolder / ItemCount / Items / GetItemPosition 四个只读方法。
+/// 其余方法仅为保持 vtable 完整性而声明，禁止实际调用。
+/// </summary>
+[ComImport, Guid("1AF3A467-214F-4298-908E-06B03E0B39F9")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IFolderView2Compat
+{
+    [PreserveSig] int GetCurrentViewMode(out uint pViewMode);
+    [PreserveSig] int SetCurrentViewMode(uint ViewMode);
+    [PreserveSig] int GetFolder([MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out object? ppv);
+    [PreserveSig] int Item(int iItemIndex, out nint ppidl);
+    [PreserveSig] int ItemCount(uint uFlags, out int pcItems);
+    [PreserveSig] int Items(uint uFlags, [MarshalAs(UnmanagedType.LPStruct)] Guid riid,
+        [MarshalAs(UnmanagedType.Interface)] out object? ppv);
+    [PreserveSig] int GetSelectionMarkedItem(out int piItem);
+    [PreserveSig] int GetFocusedItem(out int piItem);
+    [PreserveSig] int GetItemPosition(nint pidl, out Point ppt);
+    [PreserveSig] int GetSpacing(out Point ppt);
+    [PreserveSig] int GetDefaultSpacing(out Point ppt);
+    [PreserveSig] int GetAutoArrange();
+    [PreserveSig] int SelectItem(int iItem, uint dwFlags);
+    [PreserveSig] int SelectAndPositionItems(uint cidl,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] nint[] apidl,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] Point[]? apt, uint dwFlags);
+}
+
+#endregion
+
 #region IShellFolder — 对照 CsWin32 Windows.Win32.UI.Shell.IShellFolder
 
 [ComImport, Guid("000214E6-0000-0000-C000-000000000046")]

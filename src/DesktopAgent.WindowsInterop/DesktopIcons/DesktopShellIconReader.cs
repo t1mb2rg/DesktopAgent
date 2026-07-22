@@ -19,13 +19,13 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
         using (ctx)
         {
             var hr = ctx.FolderView.ItemCount(SVGIO_ALLVIEW, out var itemCount);
-            if (hr < 0) throw new COMException("IFolderView.ItemCount failed", hr);
+            if (hr < 0) throw new COMException("IFolderView2.ItemCount failed", hr);
             if (itemCount <= 0)
             { stopwatch.Stop(); return new DesktopIconReadResult(Array.Empty<DesktopIconDescriptor>(), 0, connectionMethod, stopwatch.Elapsed, primaryEx); }
 
             hr = ctx.FolderView.Items(SVGIO_ALLVIEW, IidIEnumIDList, out var enumObj);
-            if (hr < 0) { SafeReleaseComObject(ref enumObj); throw new COMException("IFolderView.Items failed", hr); }
-            if (enumObj is not IEnumIDList enumerator) { SafeReleaseComObject(ref enumObj); throw new InvalidOperationException("IFolderView.Items did not return IEnumIDList."); }
+            if (hr < 0) { SafeReleaseComObject(ref enumObj); throw new COMException("IFolderView2.Items failed", hr); }
+            if (enumObj is not IEnumIDList enumerator) { SafeReleaseComObject(ref enumObj); throw new InvalidOperationException("IFolderView2.Items did not return IEnumIDList."); }
             ctx.SetEnumerator(enumerator);
 
             var icons = new List<DesktopIconDescriptor>(itemCount);
@@ -130,7 +130,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     {
         var sb = new StringBuilder(256);
         var count = shellWindows.GetCount();
-        if (count == 0) throw new InvalidOperationException("ShellWindows 当前没有可枚举的普通 Shell 窗口。桌面对象已由 FindWindowSW 找到，但 IFolderView 获取失败。");
+        if (count == 0) throw new InvalidOperationException("ShellWindows 当前没有可枚举的普通 Shell 窗口。桌面对象已由 FindWindowSW 找到，但 IFolderView2 获取失败。");
         var skipReasons = new List<string>();
 
         for (var i = 0; i < count; i++)
@@ -183,7 +183,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     // ═══════════════════════════════════════════════════════════
 
     internal sealed record FolderViewAcquisition(
-        IFolderView FolderView,
+        IFolderView2Compat FolderView,
         ComIdentityRelation IdentityRelation,
         string Method,
         string Diagnostics);
@@ -197,14 +197,14 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
         var qiDiag = DiagnoseShellViewInterfaces(shellView, hwnd, hwndClass);
 
         // ── Direct QI ──
-        Exception? directQiEx = null; IFolderView? folderView = null;
-        try { folderView = shellView as IFolderView; } catch (Exception ex) { directQiEx = ex; }
+        Exception? directQiEx = null; IFolderView2Compat? folderView = null;
+        try { folderView = shellView as IFolderView2Compat; } catch (Exception ex) { directQiEx = ex; }
 
         if (folderView is not null)
         {
             var (rel, cmpEx) = CompareComIdentity(shellView, folderView);
-            var diag = BuildAcquisitionDiagnostics(qiDiag, "DirectQI", rel, cmpEx);
-            return new FolderViewAcquisition(folderView, rel, "DirectQI", diag);
+            var diag = BuildAcquisitionDiagnostics(qiDiag, "DirectQI(IFolderView2)", rel, cmpEx);
+            return new FolderViewAcquisition(folderView, rel, "DirectQI(IFolderView2)", diag);
         }
 
         var directQiDesc = directQiEx is not null
@@ -212,19 +212,19 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             : "Direct QI: null";
 
         // ── GetItemObject 降级 ──
-        var hr = shellView.GetItemObject(SVGIO_BACKGROUND, IidIFolderView, out var fvObj);
-        if (hr < 0) { SafeReleaseComObject(ref fvObj); throw new InvalidOperationException($"[4] IFolderView 获取失败。\nhwnd={hwnd}(0x{hwnd:X}) class={hwndClass}\n{directQiDesc}\nGetItemObject: HR=0x{hr:X8}\n{qiDiag}"); }
+        var hr = shellView.GetItemObject(SVGIO_BACKGROUND, IidIFolderView2, out var fvObj);
+        if (hr < 0) { SafeReleaseComObject(ref fvObj); throw new InvalidOperationException($"[4] IFolderView2 获取失败。\nhwnd={hwnd}(0x{hwnd:X}) class={hwndClass}\n{directQiDesc}\nGetItemObject: HR=0x{hr:X8}\n{qiDiag}"); }
 
-        IFolderView? gioFv = null; ComIdentityRelation? cachedRel = null;
+        IFolderView2Compat? gioFv = null; ComIdentityRelation? cachedRel = null;
         try
         {
-            gioFv = fvObj as IFolderView;
-            if (gioFv is null) { SafeReleaseComObject(ref fvObj); throw new InvalidOperationException($"[4] IFolderView 获取失败。\nhwnd={hwnd}(0x{hwnd:X}) class={hwndClass}\n{directQiDesc}\nGetItemObject: HR=0x{hr:X8} but not IFolderView\n{qiDiag}"); }
+            gioFv = fvObj as IFolderView2Compat;
+            if (gioFv is null) { SafeReleaseComObject(ref fvObj); throw new InvalidOperationException($"[4] IFolderView2 获取失败。\nhwnd={hwnd}(0x{hwnd:X}) class={hwndClass}\n{directQiDesc}\nGetItemObject: HR=0x{hr:X8} but not IFolderView2Compat\n{qiDiag}"); }
 
             var (rel, cmpEx) = CompareComIdentity(shellView, gioFv);
             cachedRel = rel;
-            var diag = BuildAcquisitionDiagnostics(qiDiag, "GetItemObject", rel, cmpEx);
-            return new FolderViewAcquisition(gioFv, rel, "GetItemObject", diag);
+            var diag = BuildAcquisitionDiagnostics(qiDiag, "GetItemObject(IFolderView2)", rel, cmpEx);
+            return new FolderViewAcquisition(gioFv, rel, "GetItemObject(IFolderView2)", diag);
         }
         catch (Exception ex) when (ex is not InvalidOperationException)
         {
@@ -363,7 +363,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     }
 
     /// <summary>AcquireFolderView 内部异常时，用已缓存的 cachedRel 清理（不重新比较）。</summary>
-    private static void ReleaseAfterFailedAcquisition(IFolderView? gioFv, ref object? fvObj, ComIdentityRelation? cachedRel)
+    private static void ReleaseAfterFailedAcquisition(IFolderView2Compat? gioFv, ref object? fvObj, ComIdentityRelation? cachedRel)
     {
         if (cachedRel.HasValue)
         {
@@ -407,7 +407,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     //  图标读取
     // ═══════════════════════════════════════════════════════════
 
-    private static DesktopIconDescriptor? ReadSingleIcon(IFolderView folderView, IShellFolder desktopFolder, nint pidl)
+    private static DesktopIconDescriptor? ReadSingleIcon(IFolderView2Compat folderView, IShellFolder desktopFolder, nint pidl)
     {
         var hr = folderView.GetItemPosition(pidl, out Point pt); if (hr < 0) throw new COMException("GetItemPosition failed", hr);
         var position = new PixelPoint(pt.X, pt.Y);
@@ -464,20 +464,20 @@ internal sealed class DesktopViewContext : IDisposable
     private object? _dispatch;
     private IShellBrowser? _browser;
     private IShellView? _shellView;
-    private IFolderView? _folderView;
+    private IFolderView2Compat? _folderView;
     private ComIdentityRelation _folderViewIdentityRelation = ComIdentityRelation.Unknown;
     private IShellFolder? _desktopFolder;
     private IEnumIDList? _enumerator;
     private bool _disposed;
 
-    public IFolderView FolderView => _folderView!;
+    public IFolderView2Compat FolderView => _folderView!;
     public IShellFolder DesktopFolder => _desktopFolder!;
 
     public void SetDispatch(object d) { ThrowIfDisposed(); ThrowIfAlreadySet(_dispatch); _dispatch = d; }
     public void SetBrowser(IShellBrowser b) { ThrowIfDisposed(); ThrowIfAlreadySet(_browser); _browser = b; }
     public void SetShellView(IShellView sv) { ThrowIfDisposed(); ThrowIfAlreadySet(_shellView); _shellView = sv; }
 
-    public void SetFolderView(IFolderView fv, ComIdentityRelation identityRelation)
+    public void SetFolderView(IFolderView2Compat fv, ComIdentityRelation identityRelation)
     { ThrowIfDisposed(); ThrowIfAlreadySet(_folderView); _folderView = fv; _folderViewIdentityRelation = identityRelation; }
 
     public void SetDesktopFolder(IShellFolder sf) { ThrowIfDisposed(); ThrowIfAlreadySet(_desktopFolder); _desktopFolder = sf; }
