@@ -33,6 +33,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var dir = Path.GetDirectoryName(_databasePath);
         if (dir is not null && !Directory.Exists(dir))
             Directory.CreateDirectory(dir);
@@ -48,8 +49,8 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
                 created_at_utc           TEXT NOT NULL,
                 target_monitor_device_name TEXT NULL,
                 connection_method        INTEGER NOT NULL,
-                format_version           INTEGER NOT NULL,
-                icon_count               INTEGER NOT NULL
+                format_version           INTEGER NOT NULL CHECK(format_version > 0),
+                icon_count               INTEGER NOT NULL CHECK(icon_count >= 0)
             );
 
             CREATE TABLE IF NOT EXISTS desktop_layout_snapshot_items (
@@ -89,6 +90,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
 
     public async Task SaveAsync(DesktopLayoutSnapshot snapshot, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (snapshot is null) throw new ArgumentNullException(nameof(snapshot));
         if (snapshot.FormatVersion < 1)
             throw new ArgumentException($"Unsupported FormatVersion: {snapshot.FormatVersion}");
@@ -151,6 +153,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
             ins.ExecuteNonQuery();
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         tx.Commit();
         await Task.CompletedTask;
     }
@@ -158,6 +161,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
     public async Task<DesktopLayoutSnapshot?> GetAsync(
         Guid snapshotId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (snapshotId == Guid.Empty)
             throw new ArgumentException("SnapshotId 不能为 Guid.Empty。");
 
@@ -247,8 +251,8 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
     public async Task<IReadOnlyList<DesktopLayoutSnapshotSummary>> ListAsync(
         int limit = 50, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (limit <= 0) throw new ArgumentOutOfRangeException(nameof(limit), "limit 必须大于 0。");
-        if (limit > 500) throw new ArgumentOutOfRangeException(nameof(limit), "limit 不能超过 500。");
 
         using var connection = CreateConnection();
         using var sel = connection.CreateCommand();
@@ -256,7 +260,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
             SELECT snapshot_id, created_at_utc, target_monitor_device_name,
                    connection_method, icon_count, format_version
             FROM desktop_layout_snapshots
-            ORDER BY created_at_utc DESC, snapshot_id ASC
+            ORDER BY created_at_utc DESC, snapshot_id DESC
             LIMIT @limit
         ";
         sel.Parameters.AddWithValue("@limit", limit);
@@ -286,6 +290,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
     public async Task<bool> DeleteAsync(
         Guid snapshotId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (snapshotId == Guid.Empty)
             throw new ArgumentException("SnapshotId 不能为 Guid.Empty。");
 

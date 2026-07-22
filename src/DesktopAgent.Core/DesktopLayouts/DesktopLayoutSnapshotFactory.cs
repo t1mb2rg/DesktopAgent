@@ -45,10 +45,7 @@ public sealed class DesktopLayoutSnapshotFactory
             _timeProvider.GetUtcNow(),
             targetMonitorDeviceName,
             connectionMethod,
-            DesktopLayoutSnapshotFactory.CurrentFormatVersion,
+            DesktopLayoutSnapshot.CurrentFormatVersion,
             items);
     }
-
-    /// <summary>当前快照格式版本。</summary>
-    public static int CurrentFormatVersion => 1;
 }

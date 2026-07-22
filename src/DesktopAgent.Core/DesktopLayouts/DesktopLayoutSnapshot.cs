@@ -14,6 +14,8 @@ public sealed record DesktopLayoutSnapshot
     public int FormatVersion { get; }
     public IReadOnlyList<DesktopIconSnapshotItem> Icons { get; }
 
+    public const int CurrentFormatVersion = 1;
+
     public DesktopLayoutSnapshot(
         Guid snapshotId,
         DateTimeOffset createdAtUtc,

@@ -148,8 +148,22 @@ public sealed class SqliteDesktopLayoutSnapshotStoreTests : IDisposable
             Guid.NewGuid(), DateTimeOffset.UtcNow, null, ConnectionMethod.FindWindowSW, 1, icons);
         icons.Clear();
         Assert.Single(snapshot.Icons);
-        Assert.Throws<NotSupportedException>(() => ((List<DesktopIconSnapshotItem>)snapshot.Icons).Add(
-            new(0, "x", "y", null, ItemKind.File, default, null, false, true)));
+
+        var collection =
+            Assert.IsAssignableFrom<ICollection<DesktopIconSnapshotItem>>(
+                snapshot.Icons);
+        Assert.True(collection.IsReadOnly);
+        Assert.Throws<NotSupportedException>(() =>
+            collection.Add(new DesktopIconSnapshotItem(
+                ordinal: 0,
+                stableId: "x",
+                displayName: "y",
+                parsingName: null,
+                itemKind: ItemKind.File,
+                pixelPosition: default,
+                monitorDeviceName: null,
+                isSystemItem: false,
+                isFileSystemItem: true)));
     }
 
     // ── Factory tests ──
@@ -399,7 +413,6 @@ public sealed class SqliteDesktopLayoutSnapshotStoreTests : IDisposable
     {
         var store = CreateStore(); await store.InitializeAsync();
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.ListAsync(0));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => store.ListAsync(501));
     }
 
     [Fact]
@@ -598,24 +611,33 @@ public sealed class SqliteDesktopLayoutSnapshotStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task UnsupportedFormatVersion_Throws()
+    public async Task Get_InvalidFormatVersion_Throws()
     {
         var store = CreateStore(); await store.InitializeAsync();
-        // Save 拒绝 FormatVersion < 1
-        var bad = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, null,
-            ConnectionMethod.FindWindowSW, 0, []);
-        // Already rejected by domain model — test via raw SQL
+        var snapshotId = new Guid("11111111-1111-1111-1111-111111111111");
+
         using var conn = new SqliteConnection(
             new SqliteConnectionStringBuilder { DataSource = _dbPath, Mode = SqliteOpenMode.ReadWriteCreate }.ConnectionString);
         conn.Open();
+
+        using (var pragmaCmd = conn.CreateCommand())
+        { pragmaCmd.CommandText = "PRAGMA ignore_check_constraints = ON"; pragmaCmd.ExecuteNonQuery(); }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO desktop_layout_snapshots
                 (snapshot_id, created_at_utc, connection_method, format_version, icon_count)
-            VALUES ('11111111-1111-1111-1111-111111111111', '2026-07-22T00:00:00.0000000+00:00', 0, 0, 1);
-        "; cmd.ExecuteNonQuery();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            store.GetAsync(new Guid("11111111-1111-1111-1111-111111111111")));
+            VALUES (@id, '2026-07-22T00:00:00.0000000+00:00', 0, 0, 1);
+        ";
+        cmd.Parameters.AddWithValue("@id", snapshotId.ToString());
+        cmd.ExecuteNonQuery();
+
+        using (var pragmaCmd = conn.CreateCommand())
+        { pragmaCmd.CommandText = "PRAGMA ignore_check_constraints = OFF"; pragmaCmd.ExecuteNonQuery(); }
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            store.GetAsync(snapshotId));
+        Assert.Contains("0", ex.Message);
     }
 
     [Fact]
@@ -638,12 +660,9 @@ public sealed class SqliteDesktopLayoutSnapshotStoreTests : IDisposable
 
         var list = await store.ListAsync(limit: 10);
         Assert.True(list.Count >= 3);
-        // 相同时间按 snapshot_id DESC → id3 在前, id1 在后
-        var idx1 = list.ToList().FindIndex(x => x.SnapshotId == id1);
-        var idx2 = list.ToList().FindIndex(x => x.SnapshotId == id2);
-        var idx3 = list.ToList().FindIndex(x => x.SnapshotId == id3);
-        Assert.True(idx3 < idx2);
-        Assert.True(idx2 < idx1);
+        Assert.Equal(
+            new[] { id3, id2, id1 },
+            list.Select(x => x.SnapshotId).ToArray());
     }
 
     [Fact]
@@ -722,6 +741,31 @@ public sealed class SqliteDesktopLayoutSnapshotStoreTests : IDisposable
         Assert.Contains(s.SnapshotId.ToString("D"), ex.Message);
         Assert.Contains("5", ex.Message);
         Assert.Contains("2", ex.Message);
+    }
+
+    [Fact]
+    public async Task SaveAsync_PreCanceledToken_DoesNotPersistSnapshot()
+    {
+        var store = CreateStore(); await store.InitializeAsync();
+        var snapshot = CreateSimpleSnapshot();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => store.SaveAsync(snapshot, cts.Token));
+
+        // 确认未写入
+        Assert.Null(await store.GetAsync(snapshot.SnapshotId));
+
+        using var conn = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _dbPath, Mode = SqliteOpenMode.ReadWriteCreate }.ConnectionString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(1) FROM desktop_layout_snapshots WHERE snapshot_id = @id";
+        cmd.Parameters.AddWithValue("@id", snapshot.SnapshotId.ToString());
+        Assert.Equal(0L, cmd.ExecuteScalar());
+        cmd.CommandText = "SELECT COUNT(1) FROM desktop_layout_snapshot_items WHERE snapshot_id = @id";
+        Assert.Equal(0L, cmd.ExecuteScalar());
     }
 
     private sealed class TestTimeProvider : TimeProvider
