@@ -46,7 +46,8 @@
                                FontWeight="SemiBold"
                                Text="显示器拓扑"
                                VerticalAlignment="Center" />
-                    <Button DockPanel.Dock="Right"
+                    <Button x:Name="RefreshDisplaysButton"
+                            DockPanel.Dock="Right"
                             Width="110"
                             Height="32"
                             Click="RefreshDisplays_Click"
@@ -182,6 +183,7 @@
                 <TextBlock x:Name="SnapshotStatsText"
                            Margin="0,2,0,0"
                            Foreground="Gray"
+                           TextWrapping="Wrap"
                            Text="正在初始化…" />
             </StackPanel>
             <Button x:Name="RefreshSnapshotsButton"
@@ -189,7 +191,8 @@
                     Width="90"
                     Height="32"
                     Click="RefreshSnapshots_Click"
-                    Content="刷新列表" />
+                    Content="刷新列表"
+                    IsEnabled="False" />
         </DockPanel>
 
         <!-- ── 快照列表 ── -->

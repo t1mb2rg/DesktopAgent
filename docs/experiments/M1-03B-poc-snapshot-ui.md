@@ -7,7 +7,7 @@
 ## 实际 UI 功能
 
 - **保存当前快照**：用户点击按钮，将最近一次成功的桌面图标读取结果保存为快照
-- **快照列表**：显示所有已保存的快照摘要（创建时间、图标数、目标显示器、连接方式等）
+- **快照列表**：显示最近 100 条快照摘要（创建时间、图标数、目标显示器、连接方式等）
 - **持久化**：PoC 重启后仍可查看历史快照
 - **安全约束**：读取不完整时禁止保存，显示器拓扑变化后使旧结果失效
 
@@ -22,6 +22,30 @@ Shell 只读读取 (M1-02)
   → SqliteDesktopLayoutSnapshotStore.SaveAsync(snapshot)
   → 快照列表 (ListAsync)
 ```
+
+## 异常边界设计
+
+### 初始化阶段
+
+数据库初始化失败与快照列表加载失败是两种不同的故障模式：
+
+- **InitializeAsync 失败**：禁用保存和刷新按钮，图标读取仍可使用
+- **InitializeAsync 成功，ListAsync 失败**：`_snapshotStoreReady` 保持 `true`，刷新按钮保持可用，保存快照不受影响，列表加载错误单独显示
+
+### 保存阶段
+
+保存快照和刷新列表是两个独立阶段：
+
+- **保存失败**：显示完整异常，不执行列表刷新
+- **保存成功、列表刷新失败**：明确显示"快照已保存，但列表刷新失败"、已保存的 SnapshotId 和刷新异常，提示可手动重试。快照已写入数据库，不会丢失。
+
+### 读取阶段
+
+读取桌面图标期间：
+
+- 禁用显示器刷新按钮（`RefreshDisplaysButton`）
+- 禁用显示器表格（`DisplaysGrid`）
+- 防止用户在执行 Shell COM 期间切换目标或刷新拓扑
 
 ## 为什么读取不完整时禁止保存
 
@@ -61,17 +85,18 @@ Shell 只读读取 (M1-02)
 
 ## 如何清理测试快照数据库
 
-手动操作（不要在程序中自动删除）：
+手动操作（不要在程序中自动删除）。
+
+先关闭 PoC，然后执行：
 
 ```powershell
-Remove-Item "$env:LocalAppData\DesktopAgent\desktop-agent.db"
+$dir = Join-Path $env:LocalAppData "DesktopAgent"
+Remove-Item (Join-Path $dir "desktop-agent.db") -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dir "desktop-agent.db-wal") -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $dir "desktop-agent.db-shm") -ErrorAction SilentlyContinue
 ```
 
-或者删除整个目录：
-
-```powershell
-Remove-Item -Recurse "$env:LocalAppData\DesktopAgent"
-```
+只删除数据库文件本身，不要删除目录中的其他设置或数据。
 
 ## M1-04 后续边界
 

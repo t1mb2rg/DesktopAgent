@@ -66,33 +66,47 @@ public partial class MainWindow : Window
         // 1. 读取显示器拓扑
         RefreshDisplays();
 
-        // 2. 初始化 SQLite
+        var dbPath = DesktopAgentDataPaths.DefaultDatabasePath;
+
+        // ── 阶段 1：初始化 SQLite ──
         try
         {
             await _snapshotStore.InitializeAsync();
             _snapshotStoreReady = true;
-
-            // 3. 加载快照列表
-            await RefreshSnapshotsAsync();
-
-            var dbPath = DesktopAgent.Persistence.DesktopLayouts.DesktopAgentDataPaths.DefaultDatabasePath;
-            StatusText.Text = $"[M1-03B] SQLite 已初始化。\r\n数据库路径：{dbPath}\r\n当前快照数量：{_snapshotRows.Count}\r\n请先读取桌面图标，然后保存快照。";
-            StatusText.ScrollToHome();
-
-            UpdateSnapshotStats();
+            RefreshSnapshotsButton.IsEnabled = true;
         }
         catch (Exception ex)
         {
             _snapshotStoreReady = false;
+            SaveSnapshotButton.IsEnabled = false;
+            RefreshSnapshotsButton.IsEnabled = false;
 
-            var dbPath = DesktopAgent.Persistence.DesktopLayouts.DesktopAgentDataPaths.DefaultDatabasePath;
             StatusText.Text = $"[M1-03B] SQLite 初始化失败！\r\n数据库路径：{dbPath}\r\n异常：{ex}\r\n\r\n图标读取功能仍可使用，但保存和刷新快照已禁用。";
             StatusText.ScrollToHome();
 
             SnapshotStatsText.Text = $"数据库初始化失败（路径：{dbPath}）";
-            SaveSnapshotButton.IsEnabled = false;
-            RefreshSnapshotsButton.IsEnabled = false;
+            return;
         }
+
+        // ── 阶段 2：加载快照列表 ──
+        try
+        {
+            await RefreshSnapshotsAsync();
+
+            StatusText.Text = $"[M1-03B] SQLite 已初始化。\r\n数据库路径：{dbPath}\r\n当前快照数量：{_snapshotRows.Count}\r\n请先读取桌面图标，然后保存快照。";
+            StatusText.ScrollToHome();
+        }
+        catch (Exception ex)
+        {
+            // 列表加载失败不能改 _snapshotStoreReady，数据库已成功初始化
+            StatusText.Text = $"[M1-03B] SQLite 已初始化，但快照列表加载失败。\r\n数据库路径：{dbPath}\r\n异常：{ex}\r\n\r\n可点击「刷新列表」重试。";
+            StatusText.ScrollToHome();
+
+            SnapshotStatsText.Text = $"数据库已初始化，列表加载失败（路径：{dbPath}）";
+            return;
+        }
+
+        UpdateSnapshotStats();
     }
 
     // ═══════════════════════════════════════════════════
@@ -220,11 +234,6 @@ public partial class MainWindow : Window
             && _lastReadResult.FailedItemCount == 0;
 
         SaveSnapshotButton.IsEnabled = canSave;
-
-        if (_lastReadResult is not null && _lastReadResult.FailedItemCount > 0)
-        {
-            IconStatsText.Text += " 本次读取不完整，不能保存为可恢复快照，请重新读取。";
-        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -259,6 +268,8 @@ public partial class MainWindow : Window
     private async void ReadDesktopIcons_Click(object sender, RoutedEventArgs e)
     {
         ReadIconsButton.IsEnabled = false;
+        RefreshDisplaysButton.IsEnabled = false;
+        DisplaysGrid.IsEnabled = false;
 
         // 开始新一次读取时清空旧结果
         _lastReadResult = null;
@@ -270,7 +281,6 @@ public partial class MainWindow : Window
         try
         {
             var displays = _cachedDisplays;
-            var targetDeviceName = _currentTarget?.DeviceName;
 
             // 在专用 STA 线程中执行 Shell COM 操作
             var readResult = await _staExecutor.RunAsync(() =>
@@ -290,17 +300,9 @@ public partial class MainWindow : Window
                     result.ReadTime, result.PrimaryPathException);
             });
 
-            // 缓存成功读取结果
+            // 缓存成功读取结果，并通过 RebuildIconRowsFromLastRead 构建图标列表
             _lastReadResult = readResult;
-
-            // 更新图标列表
-            _iconRows.Clear();
-            foreach (var icon in readResult.Icons)
-            {
-                var isOnTarget = targetDeviceName is not null
-                    && icon.MonitorDeviceName == targetDeviceName;
-                _iconRows.Add(IconRow.From(icon, isOnTarget));
-            }
+            RebuildIconRowsFromLastRead();
 
             // 构建连接方式诊断文本
             var connectionLabel = readResult.ConnectionMethod switch
@@ -314,23 +316,35 @@ public partial class MainWindow : Window
                 ? $"  |  主路径失败：{readResult.PrimaryPathException.Message}"
                 : string.Empty;
 
-            var errorInfo = readResult.FailedItemCount > 0
-                ? $"；{readResult.FailedItemCount} 个读取失败"
-                : string.Empty;
+            if (readResult.FailedItemCount > 0)
+            {
+                var errorInfo = $"；{readResult.FailedItemCount} 个读取失败";
 
-            IconStatsText.Text = string.Format(
-                "成功 {0} 项{1}  |  连接：{2}{3}  |  耗时 {4:F1} 秒  |  {5}",
-                readResult.Icons.Count,
-                errorInfo,
-                connectionLabel,
-                fallbackNote,
-                readResult.ReadTime.TotalSeconds,
-                DateTime.Now.ToString("HH:mm:ss"));
+                IconStatsText.Text = string.Format(
+                    "成功 {0} 项{1}  |  连接：{2}{3}  |  耗时 {4:F1} 秒  |  {5}",
+                    readResult.Icons.Count,
+                    errorInfo,
+                    connectionLabel,
+                    fallbackNote,
+                    readResult.ReadTime.TotalSeconds,
+                    DateTime.Now.ToString("HH:mm:ss"));
 
-            StatusText.Text = readResult.FailedItemCount > 0
-                ? $"读取完成（{readResult.Icons.Count} 成功，{readResult.FailedItemCount} 失败）。连接方式：{connectionLabel}。"
-                : $"读取完成：共 {readResult.Icons.Count} 个桌面图标。连接方式：{connectionLabel}。";
-            StatusText.ScrollToHome();
+                StatusText.Text = $"读取完成（{readResult.Icons.Count} 成功，{readResult.FailedItemCount} 失败）。连接方式：{connectionLabel}。\r\n本次读取不完整，不能保存为可恢复快照，请重新读取。";
+                StatusText.ScrollToHome();
+            }
+            else
+            {
+                IconStatsText.Text = string.Format(
+                    "成功 {0} 项  |  连接：{1}{2}  |  耗时 {3:F1} 秒  |  {4}",
+                    readResult.Icons.Count,
+                    connectionLabel,
+                    fallbackNote,
+                    readResult.ReadTime.TotalSeconds,
+                    DateTime.Now.ToString("HH:mm:ss"));
+
+                StatusText.Text = $"读取完成：共 {readResult.Icons.Count} 个桌面图标。连接方式：{connectionLabel}。";
+                StatusText.ScrollToHome();
+            }
 
             UpdateSnapshotButtonState();
         }
@@ -351,6 +365,8 @@ public partial class MainWindow : Window
         finally
         {
             ReadIconsButton.IsEnabled = true;
+            RefreshDisplaysButton.IsEnabled = true;
+            DisplaysGrid.IsEnabled = true;
         }
     }
 
@@ -360,6 +376,8 @@ public partial class MainWindow : Window
 
     private async void SaveSnapshot_Click(object sender, RoutedEventArgs e)
     {
+        if (_snapshotOperationInProgress) return;
+
         // 防卫性检查
         if (!_snapshotStoreReady)
         {
@@ -394,27 +412,46 @@ public partial class MainWindow : Window
                 currentTargetDeviceName,
                 readResult.ConnectionMethod);
 
-            await _snapshotStore.SaveAsync(snapshot);
+            // ── 阶段 1：保存 ──
+            try
+            {
+                await _snapshotStore.SaveAsync(snapshot);
+            }
+            catch (Exception saveEx)
+            {
+                StatusText.Text = $"[M1-03B] 保存快照失败：\r\n{saveEx}";
+                StatusText.ScrollToHome();
+                Debug.WriteLine($"[M1-03B] 保存快照失败：{saveEx}");
+                return;
+            }
 
-            await RefreshSnapshotsAsync();
-
+            // ── 阶段 2：刷新列表 ──
             var dbPath = DesktopAgentDataPaths.DefaultDatabasePath;
-            StatusText.Text = string.Format(
-                "[M1-03B] 快照已保存。\r\nSnapshotId：{0:D}\r\n图标数量：{1}\r\n目标显示器：{2}\r\nConnectionMethod：{3}\r\n数据库路径：{4}",
-                snapshot.SnapshotId,
-                snapshot.Icons.Count,
-                currentTargetDeviceName ?? "—",
-                readResult.ConnectionMethod,
-                dbPath);
-            StatusText.ScrollToHome();
+            try
+            {
+                await RefreshSnapshotsAsync();
+                UpdateSnapshotStats();
 
-            UpdateSnapshotStats();
-        }
-        catch (Exception ex)
-        {
-            StatusText.Text = $"[M1-03B] 保存快照失败：\r\n{ex}";
-            StatusText.ScrollToHome();
-            Debug.WriteLine($"[M1-03B] 保存快照失败：{ex}");
+                StatusText.Text = string.Format(
+                    "[M1-03B] 快照已保存。\r\nSnapshotId：{0:D}\r\n图标数量：{1}\r\n目标显示器：{2}\r\nConnectionMethod：{3}\r\n数据库路径：{4}",
+                    snapshot.SnapshotId,
+                    snapshot.Icons.Count,
+                    currentTargetDeviceName ?? "—",
+                    readResult.ConnectionMethod,
+                    dbPath);
+                StatusText.ScrollToHome();
+            }
+            catch (Exception refreshEx)
+            {
+                StatusText.Text = string.Format(
+                    "[M1-03B] 快照已保存，但列表刷新失败。\r\n\r\nSnapshotId：{0:D}\r\n图标数量：{1}\r\n数据库路径：{2}\r\n\r\n刷新异常：{3}\r\n\r\n可点击「刷新列表」重试。",
+                    snapshot.SnapshotId,
+                    snapshot.Icons.Count,
+                    dbPath,
+                    refreshEx);
+                StatusText.ScrollToHome();
+                Debug.WriteLine($"[M1-03B] 保存后刷新列表失败：{refreshEx}");
+            }
         }
         finally
         {
@@ -430,11 +467,17 @@ public partial class MainWindow : Window
 
     private async void RefreshSnapshots_Click(object sender, RoutedEventArgs e)
     {
+        if (_snapshotOperationInProgress) return;
+
         if (!_snapshotStoreReady)
         {
             StatusText.Text = "[M1-03B] 数据库未初始化，无法刷新快照列表。";
             return;
         }
+
+        _snapshotOperationInProgress = true;
+        SaveSnapshotButton.IsEnabled = false;
+        RefreshSnapshotsButton.IsEnabled = false;
 
         try
         {
@@ -447,25 +490,29 @@ public partial class MainWindow : Window
             StatusText.Text = $"[M1-03B] 刷新快照列表失败：\r\n{ex}";
             Debug.WriteLine($"[M1-03B] 刷新快照列表失败：{ex}");
         }
+        finally
+        {
+            _snapshotOperationInProgress = false;
+            RefreshSnapshotsButton.IsEnabled = _snapshotStoreReady;
+            UpdateSnapshotButtonState();
+        }
     }
 
     private async Task RefreshSnapshotsAsync()
     {
-        try
-        {
-            var list = await _snapshotStore.ListAsync(limit: 100);
+        var list = await _snapshotStore.ListAsync(limit: 100);
 
-            _snapshotRows.Clear();
-            foreach (var summary in list)
-            {
-                _snapshotRows.Add(SnapshotRow.From(summary));
-            }
-        }
-        catch (Exception ex)
+        // 原子更新：先生成完整临时列表，再提交
+        var rows = new List<SnapshotRow>(list.Count);
+        foreach (var summary in list)
         {
-            Debug.WriteLine($"[M1-03B] 加载快照列表失败：{ex}");
-            // 不清除已有列表
-            throw;
+            rows.Add(SnapshotRow.From(summary));
+        }
+
+        _snapshotRows.Clear();
+        foreach (var row in rows)
+        {
+            _snapshotRows.Add(row);
         }
     }
 
