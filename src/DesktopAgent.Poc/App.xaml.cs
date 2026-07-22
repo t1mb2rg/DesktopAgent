@@ -1,5 +1,8 @@
 using System.Windows;
+using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.Displays;
+using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.Displays;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,6 +30,10 @@ public partial class App : Application
                 services.AddSingleton<IDisplayTopologyReader, NativeDisplayTopologyReader>();
                 services.AddSingleton<IDesktopIconReader, DesktopShellIconReader>();
                 services.AddSingleton<StaThreadExecutor>();
+                services.AddSingleton<DesktopLayoutSnapshotFactory>();
+                services.AddSingleton<IDesktopLayoutSnapshotStore>(
+                    new SqliteDesktopLayoutSnapshotStore(
+                        DesktopAgentDataPaths.DefaultDatabasePath));
                 services.AddSingleton<MainWindow>();
             })
             .Build();

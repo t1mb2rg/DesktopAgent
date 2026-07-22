@@ -1,11 +1,11 @@
 <Window x:Class="DesktopAgent.Poc.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DesktopAgent PoC — M1-02 桌面图标读取"
-        Width="1000"
-        Height="780"
-        MinWidth="820"
-        MinHeight="600"
+        Title="DesktopAgent PoC — M1-03B 布局快照"
+        Width="1040"
+        Height="920"
+        MinWidth="860"
+        MinHeight="780"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="20">
         <Grid.RowDefinitions>
@@ -16,6 +16,10 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="4" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="12" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="4" />
+            <RowDefinition Height="140" />
             <RowDefinition Height="8" />
             <RowDefinition Height="200" />
         </Grid.RowDefinitions>
@@ -25,11 +29,11 @@
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock FontSize="22"
                            FontWeight="SemiBold"
-                           Text="DesktopAgent PoC — M1-02" />
+                           Text="DesktopAgent PoC — M1-03B" />
                 <TextBlock Margin="0,4,0,0"
                            Foreground="Gray"
                            TextWrapping="Wrap"
-                           Text="M1-01 显示器拓扑 + 目标选择  |  M1-02 只读桌面图标枚举" />
+                           Text="M1-01 显示器拓扑  |  M1-02 只读桌面图标枚举  |  M1-03B SQLite 布局快照" />
             </StackPanel>
         </DockPanel>
 
@@ -104,13 +108,21 @@
                            Foreground="Gray"
                            Text="尚未读取。" />
             </StackPanel>
-            <Button x:Name="ReadIconsButton"
-                    DockPanel.Dock="Right"
-                    Width="130"
-                    Height="32"
-                    Click="ReadDesktopIcons_Click"
-                    Content="读取桌面图标"
-                    IsEnabled="True" />
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="SaveSnapshotButton"
+                        Width="135"
+                        Height="32"
+                        Margin="0,0,8,0"
+                        Click="SaveSnapshot_Click"
+                        Content="保存当前快照"
+                        IsEnabled="False" />
+                <Button x:Name="ReadIconsButton"
+                        Width="130"
+                        Height="32"
+                        Click="ReadDesktopIcons_Click"
+                        Content="读取桌面图标"
+                        IsEnabled="True" />
+            </StackPanel>
         </DockPanel>
 
         <!-- ── 图标列表 ── -->
@@ -161,8 +173,57 @@
             </DataGrid.Columns>
         </DataGrid>
 
+        <!-- ── 布局快照区 ── -->
+        <DockPanel Grid.Row="8">
+            <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
+                <TextBlock FontSize="15"
+                           FontWeight="SemiBold"
+                           Text="布局快照" />
+                <TextBlock x:Name="SnapshotStatsText"
+                           Margin="0,2,0,0"
+                           Foreground="Gray"
+                           Text="正在初始化…" />
+            </StackPanel>
+            <Button x:Name="RefreshSnapshotsButton"
+                    DockPanel.Dock="Right"
+                    Width="90"
+                    Height="32"
+                    Click="RefreshSnapshots_Click"
+                    Content="刷新列表" />
+        </DockPanel>
+
+        <!-- ── 快照列表 ── -->
+        <DataGrid x:Name="SnapshotsGrid"
+                  Grid.Row="10"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  IsReadOnly="True"
+                  SelectionMode="Single"
+                  RowHeight="26">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="创建时间（本地）"
+                                    Width="160"
+                                    Binding="{Binding CreatedAtLocal}" />
+                <DataGridTextColumn Header="图标数"
+                                    Width="65"
+                                    Binding="{Binding IconCount}" />
+                <DataGridTextColumn Header="目标显示器"
+                                    Width="140"
+                                    Binding="{Binding TargetMonitorDeviceName}" />
+                <DataGridTextColumn Header="连接方式"
+                                    Width="120"
+                                    Binding="{Binding ConnectionMethod}" />
+                <DataGridTextColumn Header="格式版本"
+                                    Width="70"
+                                    Binding="{Binding FormatVersion}" />
+                <DataGridTextColumn Header="SnapshotId"
+                                    Width="*"
+                                    Binding="{Binding SnapshotId}" />
+            </DataGrid.Columns>
+        </DataGrid>
+
         <!-- ── 状态栏 ── -->
-        <Border Grid.Row="8"
+        <Border Grid.Row="12"
                 Padding="8,6"
                 Background="#F3F3F3"
                 CornerRadius="4">
