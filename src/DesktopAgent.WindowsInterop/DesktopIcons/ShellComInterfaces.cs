@@ -207,7 +207,7 @@ internal interface IFolderView
     [PreserveSig] int GetDefaultSpacing(out Point ppt);
     [PreserveSig] int GetAutoArrange();
     [PreserveSig] int SelectItem(int iItem, uint dwFlags);
-    // SelectAndPositionItems: 保留为 vtable 完整性，M1 不调用
+    // SelectAndPositionItems: M1-02 只读路径不调用；M1-04A DesktopShellIconPositionWriter 仅在严格安全检查后调用
     [PreserveSig] int SelectAndPositionItems(uint cidl,
         [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] nint[] apidl,
         [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] Point[]? apt, uint dwFlags);
@@ -228,7 +228,9 @@ internal interface IFolderView
 ///
 /// IFolderView 的全部 14 个方法按原生 vtable 顺序显式复制于此。
 /// M1-02 只使用 GetFolder / ItemCount / Items / GetItemPosition 四个只读方法。
-/// 其余方法仅为保持 vtable 完整性而声明，禁止实际调用。
+/// 其余方法仅为保持 vtable 完整性而声明。
+/// M1-02 只读路径不调用 SelectAndPositionItems；
+/// M1-04A DesktopShellIconPositionWriter 仅在严格安全检查后调用。
 /// </summary>
 [ComImport, Guid("1AF3A467-214F-4298-908E-06B03E0B39F9")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -321,6 +323,9 @@ internal static class NativeShellMethods
     public const uint SVGIO_SELECTION = 0x00000001;
     public const uint SVGIO_ALLVIEW = 0x00000002;
     public const uint SVGIO_FLAG_VIEWORDER = 0x80000000;
+
+    // SVSI — _SVSIF enum
+    internal const uint SVSI_POSITIONITEM = 0x00000080;
 
     // SHGDN
     public const uint SHGDN_NORMAL = 0x0000;

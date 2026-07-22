@@ -54,7 +54,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     //  查找桌面视图
     // ═══════════════════════════════════════════════════════════
 
-    private static (DesktopViewContext ctx, ConnectionMethod method, Exception? primaryEx)
+    internal static (DesktopViewContext ctx, ConnectionMethod method, Exception? primaryEx)
         FindDesktopView(ShellWindowsLateBound shellWindows)
     {
         var primaryCtx = new DesktopViewContext();
@@ -407,7 +407,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     //  图标读取
     // ═══════════════════════════════════════════════════════════
 
-    private static DesktopIconDescriptor? ReadSingleIcon(IFolderView2Compat folderView, IShellFolder desktopFolder, nint pidl)
+    internal static DesktopIconDescriptor? ReadSingleIcon(IFolderView2Compat folderView, IShellFolder desktopFolder, nint pidl)
     {
         var hr = folderView.GetItemPosition(pidl, out Point pt); if (hr < 0) throw new COMException("GetItemPosition failed", hr);
         var position = new PixelPoint(pt.X, pt.Y);
@@ -432,7 +432,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
 
     private static void SafeRelease<T>(ref T? comObject) where T : class
     { if (comObject is not null && Marshal.IsComObject(comObject)) { Marshal.ReleaseComObject(comObject); comObject = null; } }
-    private static void SafeReleaseComObject(ref object? comObj)
+    internal static void SafeReleaseComObject(ref object? comObj)
     { if (comObj is not null && Marshal.IsComObject(comObj)) { Marshal.ReleaseComObject(comObj); comObj = null; } }
 
     internal static string FormatException(Exception ex)
