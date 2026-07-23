@@ -79,7 +79,8 @@ public partial class MainWindow : Window
         PixelPoint OriginalPosition,
         PixelPoint RequestedPosition,
         PixelPoint LastKnownPosition,
-        DateTime StartedAtUtc);
+        DateTime StartedAtUtc,
+        bool IsPositionUncertain = false);
 
     // ═══════════════════════════════════════════════════
     //  统一交互状态
@@ -95,18 +96,13 @@ public partial class MainWindow : Window
         ReadIconsButton.IsEnabled = !busy && !hasSession;
         IconsGrid.IsEnabled = !busy && !hasSession;
 
-        // 快照保存按钮
         var canSaveSnapshot = !busy && !hasSession && _snapshotStoreReady
             && _lastReadResult is not null && _lastReadResult.FailedItemCount == 0;
         SaveSnapshotButton.IsEnabled = canSaveSnapshot;
 
-        // 快照刷新按钮
         RefreshSnapshotsButton.IsEnabled = !busy && !hasSession && _snapshotStoreReady;
-
-        // 移动确认框
         MoveConsentCheckBox.IsEnabled = !busy && !hasSession;
 
-        // 移动按钮
         var canMove = !busy && !hasSession && _snapshotStoreReady
             && MoveConsentCheckBox.IsChecked == true
             && _lastReadResult is not null && _lastReadResult.FailedItemCount == 0
@@ -118,16 +114,18 @@ public partial class MainWindow : Window
             && string.Equals(selectedIconRow.MonitorDeviceName, _currentTarget.DeviceName, StringComparison.Ordinal);
         MoveSelectedIconButton.IsEnabled = canMove;
 
-        // 恢复按钮
         RestoreOriginalPositionButton.IsEnabled = hasSession && !busy;
 
         if (hasSession && !busy)
         {
             var s = _activeMoveSession!;
+            var posLabel = s.IsPositionUncertain
+                ? $"位置状态：不确定；最后确认位置：({s.LastKnownPosition.X},{s.LastKnownPosition.Y})"
+                : $"最后确认位置：({s.LastKnownPosition.X},{s.LastKnownPosition.Y})";
             MoveSessionText.Text = string.Format(
-                "⚠ 活跃恢复会话 — 图标: {0}  |  原位置: ({1},{2})  |  当前位置: ({3},{4})  |  安全快照: {5:D}",
+                "⚠ 活跃恢复会话 — 图标: {0}  |  原位置: ({1},{2})  |  {3}  |  安全快照: {4:D}",
                 s.DisplayName, s.OriginalPosition.X, s.OriginalPosition.Y,
-                s.LastKnownPosition.X, s.LastKnownPosition.Y, s.SafetySnapshotId);
+                posLabel, s.SafetySnapshotId);
         }
     }
 
@@ -181,6 +179,7 @@ public partial class MainWindow : Window
 
     private void RefreshDisplays_Click(object sender, RoutedEventArgs e)
     {
+        if (IsAnyOperationInProgress) return;
         if (_activeMoveSession is not null)
         {
             StatusText.Text = "[M1-04B] 有活跃恢复会话，请先恢复原位置后再刷新显示器拓扑。";
@@ -195,7 +194,8 @@ public partial class MainWindow : Window
         if (_suppressSelectionChanged) return;
         if (DisplaysGrid.SelectedItem is DisplayRow selectedRow)
         {
-            var matched = _cachedDisplays.FirstOrDefault(d => d.DeviceName == selectedRow.DeviceName);
+            var matched = _cachedDisplays.FirstOrDefault(
+                d => string.Equals(d.DeviceName, selectedRow.DeviceName, StringComparison.Ordinal));
             if (matched is not null)
             {
                 _currentTarget = matched;
@@ -219,7 +219,8 @@ public partial class MainWindow : Window
             _displayRows.Clear();
             foreach (var display in displays)
             {
-                var isTarget = target is not null && display.DeviceName == target.DeviceName;
+                var isTarget = target is not null
+                    && string.Equals(display.DeviceName, target.DeviceName, StringComparison.Ordinal);
                 _displayRows.Add(DisplayRow.From(display, isTarget));
             }
             SyncDataGridSelection(target);
@@ -235,7 +236,7 @@ public partial class MainWindow : Window
         {
             if (target is null) { DisplaysGrid.SelectedItem = null; return; }
             foreach (var row in _displayRows)
-                if (row.DeviceName == target.DeviceName)
+                if (string.Equals(row.DeviceName, target.DeviceName, StringComparison.Ordinal))
                 { DisplaysGrid.SelectedItem = row; DisplaysGrid.ScrollIntoView(row); return; }
             DisplaysGrid.SelectedItem = null;
         }
@@ -271,7 +272,8 @@ public partial class MainWindow : Window
         _iconRows.Clear();
         foreach (var icon in _lastReadResult.Icons)
         {
-            var isOnTarget = targetDeviceName is not null && icon.MonitorDeviceName == targetDeviceName;
+            var isOnTarget = targetDeviceName is not null
+                && string.Equals(icon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal);
             _iconRows.Add(IconRow.From(icon, isOnTarget));
         }
     }
@@ -293,20 +295,23 @@ public partial class MainWindow : Window
     private bool TryUpdateCachedIconPosition(string stableId, PixelPoint actualPosition)
     {
         if (_lastReadResult is null) return false;
-        var icons = new List<DesktopIconDescriptor>(_lastReadResult.Icons.Count);
-        DesktopIconDescriptor? match = null;
-        var matchCount = 0;
-        foreach (var icon in _lastReadResult.Icons)
-        {
-            if (string.Equals(icon.StableId, stableId, StringComparison.Ordinal))
-            { matchCount++; match = icon; }
-            icons.Add(icon);
-        }
-        if (matchCount != 1 || match is null) return false;
 
-        var idx = icons.IndexOf(match);
+        var matchCount = 0;
+        var matchIndex = -1;
+        for (var i = 0; i < _lastReadResult.Icons.Count; i++)
+        {
+            if (string.Equals(_lastReadResult.Icons[i].StableId, stableId, StringComparison.Ordinal))
+            { matchCount++; matchIndex = i; }
+        }
+        if (matchCount != 1 || matchIndex < 0) return false;
+
+        var icons = _lastReadResult.Icons.ToList();
         var monitor = DisplayAssignmentService.AssignMonitor(actualPosition, _cachedDisplays);
-        icons[idx] = match with { PixelPosition = actualPosition, MonitorDeviceName = monitor?.DeviceName };
+        icons[matchIndex] = icons[matchIndex] with
+        {
+            PixelPosition = actualPosition,
+            MonitorDeviceName = monitor?.DeviceName
+        };
 
         _lastReadResult = new DesktopIconReadResult(
             icons, _lastReadResult.FailedItemCount, _lastReadResult.ConnectionMethod,
@@ -338,6 +343,7 @@ public partial class MainWindow : Window
 
     private async void ReadDesktopIcons_Click(object sender, RoutedEventArgs e)
     {
+        if (IsAnyOperationInProgress) return;
         if (_activeMoveSession is not null)
         {
             StatusText.Text = "[M1-04B] 有活跃恢复会话，请先恢复原位置后再重新读取。";
@@ -366,7 +372,8 @@ public partial class MainWindow : Window
                 ConnectionMethod.EnumerationFallback => "EnumFallback",
                 _ => readResult.ConnectionMethod.ToString(),
             };
-            var fallbackNote = readResult.PrimaryPathException is not null ? $"  |  主路径失败：{readResult.PrimaryPathException.Message}" : "";
+            var fallbackNote = readResult.PrimaryPathException is not null
+                ? $"  |  主路径失败：{readResult.PrimaryPathException.Message}" : "";
 
             if (readResult.FailedItemCount > 0)
             {
@@ -393,11 +400,7 @@ public partial class MainWindow : Window
             StatusText.Text = $"桌面图标读取失败。诊断：\r\n{DesktopShellIconReader.FormatException(ex)}";
             StatusText.ScrollToHome();
         }
-        finally
-        {
-            _iconReadInProgress = false;
-            UpdateInteractiveState();
-        }
+        finally { _iconReadInProgress = false; UpdateInteractiveState(); }
     }
 
     // ═══════════════════════════════════════════════════
@@ -477,15 +480,8 @@ public partial class MainWindow : Window
             : "数据库初始化失败";
     }
 
-    private void IconsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        UpdateInteractiveState();
-    }
-
-    private void MoveConsentChanged(object sender, RoutedEventArgs e)
-    {
-        UpdateInteractiveState();
-    }
+    private void IconsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateInteractiveState();
+    private void MoveConsentChanged(object sender, RoutedEventArgs e) => UpdateInteractiveState();
 
     // ═══════════════════════════════════════════════════
     //  移动到相邻空位
@@ -513,7 +509,6 @@ public partial class MainWindow : Window
 
         try
         {
-            // ── 重新读取能力和完整桌面 ──
             var (capabilities, freshRawResult) = await _staExecutor.RunAsync(() =>
             {
                 var cap = _desktopIconPositionWriter.GetCapabilities();
@@ -522,15 +517,12 @@ public partial class MainWindow : Window
             });
             var freshAssignedReadResult = AssignMonitorOwnership(freshRawResult, displaysSnapshot);
 
-            // ── Preparation Service ──
-            var targetDisplay = displaysSnapshot.FirstOrDefault(
-                d => string.Equals(d.DeviceName, targetDeviceName, StringComparison.Ordinal));
-            if (targetDisplay is null) throw new InvalidOperationException("目标显示器在显示器列表中不再存在。");
+            var targetDisplay = UniqueDisplaySelector.FindByDeviceName(
+                displaysSnapshot, targetDeviceName);
 
             var preparation = DesktopIconMovePreparationService.Prepare(
                 selectedStableId, freshAssignedReadResult, targetDisplay, capabilities);
 
-            // ── 最终确认框 ──
             var confirmResult = MessageBox.Show(
                 string.Format("即将真实移动一个桌面图标。\r\n\r\n图标：{0}\r\nStableId：{1}\r\n目标显示器：{2}\r\n原位置：({3}, {4})\r\n目标位置：({5}, {6})\r\n方向：{7}\r\n图标间距：({8}, {9})\r\n\r\n将先保存并验证完整安全快照。移动后必须点击「恢复原位置」还原。",
                     preparation.SelectedIcon.DisplayName, selectedStableId, targetDeviceName,
@@ -541,18 +533,13 @@ public partial class MainWindow : Window
                 "确认移动桌面图标", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
 
             if (confirmResult != MessageBoxResult.Yes)
-            {
-                StatusText.Text = "[M1-04B] 用户取消移动操作。";
-                return;
-            }
+            { StatusText.Text = "[M1-04B] 用户取消移动操作。"; return; }
 
-            // ── 保存安全快照 ──
             StatusText.Text = "[M1-04B] 正在保存安全快照…";
             var snapshot = _snapshotFactory.Create(
                 freshAssignedReadResult.Icons, targetDeviceName, freshAssignedReadResult.ConnectionMethod);
             await _snapshotStore.SaveAsync(snapshot);
 
-            // ── 回读验证 ──
             var verified = await _snapshotStore.GetAsync(snapshot.SnapshotId);
             if (verified is null || verified.SnapshotId != snapshot.SnapshotId)
                 throw new InvalidOperationException("安全快照回读失败：返回为 null 或 SnapshotId 不匹配。");
@@ -565,13 +552,11 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException($"安全快照中 StableId 匹配 {stableIdMatchCount} 次。");
             var verifiedItem = verified.Icons.First(item => string.Equals(item.StableId, selectedStableId, StringComparison.Ordinal));
             if (verifiedItem.PixelPosition != preparation.SelectedIcon.PixelPosition)
-                throw new InvalidOperationException($"安全快照位置不一致：快照中 ({verifiedItem.PixelPosition.X},{verifiedItem.PixelPosition.Y})，内存中 ({preparation.SelectedIcon.PixelPosition.X},{preparation.SelectedIcon.PixelPosition.Y})。");
+                throw new InvalidOperationException($"安全快照位置不一致。");
 
-            // 刷新快照列表（失败也终止移动）
             try { await RefreshSnapshotsAsync(); UpdateSnapshotStats(); }
-            catch (Exception refreshEx) { throw new InvalidOperationException("安全快照已保存但列表刷新失败，为保证零真实写入策略终止移动。", refreshEx); }
+            catch (Exception refreshEx) { throw new InvalidOperationException("安全快照已保存但列表刷新失败。", refreshEx); }
 
-            // ── 创建恢复会话（必须在 Writer 调用之前）──
             _activeMoveSession = new MoveRecoverySession(
                 snapshot.SnapshotId,
                 preparation.SelectedIcon.StableId,
@@ -580,17 +565,20 @@ public partial class MainWindow : Window
                 preparation.SelectedIcon.PixelPosition,
                 preparation.Plan.TargetPosition,
                 preparation.SelectedIcon.PixelPosition,
-                DateTime.UtcNow);
+                DateTime.UtcNow,
+                IsPositionUncertain: false);
 
-            // ── 调用真实 Writer ──
             StatusText.Text = "[M1-04B] 正在移动图标…";
             var result = await _staExecutor.RunAsync(() =>
                 _desktopIconPositionWriter.MoveDesktopIcon(
                     _activeMoveSession!.StableId,
                     _activeMoveSession.RequestedPosition));
 
-            // ── 处理结果 ──
-            _activeMoveSession = _activeMoveSession! with { LastKnownPosition = result!.ActualPosition };
+            _activeMoveSession = _activeMoveSession! with
+            {
+                LastKnownPosition = result!.ActualPosition,
+                IsPositionUncertain = false
+            };
 
             if (result.ActualPosition == _activeMoveSession.OriginalPosition)
             {
@@ -601,14 +589,19 @@ public partial class MainWindow : Window
             }
             else
             {
-                TryUpdateCachedIconPosition(_activeMoveSession!.StableId, result.ActualPosition);
-                StatusText.Text = string.Format(
+                var msg = string.Format(
                     "[M1-04B] 图标已移动。\r\nSafetySnapshotId：{0:D}\r\n原位置：({1},{2})\r\n请求位置：({3},{4})\r\n实际位置：({5},{6})\r\nIsExact：{7}\r\n\r\n请点击「恢复原位置」还原图标。",
                     _activeMoveSession.SafetySnapshotId,
                     _activeMoveSession.OriginalPosition.X, _activeMoveSession.OriginalPosition.Y,
                     _activeMoveSession.RequestedPosition.X, _activeMoveSession.RequestedPosition.Y,
                     _activeMoveSession.LastKnownPosition.X, _activeMoveSession.LastKnownPosition.Y,
                     result.IsExact);
+
+                var cacheOk = TryUpdateCachedIconPosition(_activeMoveSession!.StableId, result.ActualPosition);
+                if (!cacheOk)
+                    msg += "\r\n\r\n警告：桌面实际位置已返回，但 PoC 缓存未更新，请恢复后重新读取桌面图标。";
+
+                StatusText.Text = msg;
                 StatusText.ScrollToHome();
             }
         }
@@ -621,8 +614,9 @@ public partial class MainWindow : Window
             }
             else
             {
+                _activeMoveSession = _activeMoveSession with { IsPositionUncertain = true };
                 StatusText.Text = string.Format(
-                    "[M1-04B] 移动调用失败或结果不确定，恢复会话已保留。\r\nSafetySnapshotId：{0:D}\r\nStableId：{1}\r\n原位置：({2},{3})\r\n异常：{4}",
+                    "[M1-04B] 移动调用失败或结果不确定，恢复会话已保留。\r\nSafetySnapshotId：{0:D}\r\nStableId：{1}\r\n原位置：({2},{3})\r\n位置状态：不确定\r\n异常：{4}",
                     _activeMoveSession.SafetySnapshotId, _activeMoveSession.StableId,
                     _activeMoveSession.OriginalPosition.X, _activeMoveSession.OriginalPosition.Y, ex);
                 StatusText.ScrollToHome();
@@ -651,19 +645,28 @@ public partial class MainWindow : Window
                 _desktopIconPositionWriter.MoveDesktopIcon(
                     session.StableId, session.OriginalPosition));
 
-            _activeMoveSession = _activeMoveSession! with { LastKnownPosition = result!.ActualPosition };
+            _activeMoveSession = _activeMoveSession! with
+            {
+                LastKnownPosition = result!.ActualPosition,
+                IsPositionUncertain = false
+            };
 
             if (result.ActualPosition == session.OriginalPosition)
             {
-                TryUpdateCachedIconPosition(session.StableId, result.ActualPosition);
-                _activeMoveSession = null;
-                MoveConsentCheckBox.IsChecked = false;
-                MoveSessionText.Text = "恢复成功，当前没有待恢复的移动会话。";
-                StatusText.Text = string.Format(
+                var msg = string.Format(
                     "[M1-04B] 恢复完成。\r\nSafetySnapshotId：{0:D}\r\n原位置：({1},{2})\r\n恢复实际位置：({3},{4})",
                     session.SafetySnapshotId,
                     session.OriginalPosition.X, session.OriginalPosition.Y,
                     result.ActualPosition.X, result.ActualPosition.Y);
+
+                var cacheOk = TryUpdateCachedIconPosition(session.StableId, result.ActualPosition);
+                if (!cacheOk)
+                    msg += "\r\n\r\n警告：PoC 缓存未更新，请重新读取桌面图标。";
+
+                _activeMoveSession = null;
+                MoveConsentCheckBox.IsChecked = false;
+                MoveSessionText.Text = "恢复成功，当前没有待恢复的移动会话。";
+                StatusText.Text = msg;
             }
             else
             {
@@ -676,7 +679,10 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"[M1-04B] 恢复调用失败（可重试）。\r\n异常：{ex}";
+            if (_activeMoveSession is not null)
+                _activeMoveSession = _activeMoveSession with { IsPositionUncertain = true };
+
+            StatusText.Text = $"[M1-04B] 恢复调用失败（可重试）。\r\n位置状态：不确定\r\n异常：{ex}";
             StatusText.ScrollToHome();
         }
         finally { _moveOperationInProgress = false; UpdateInteractiveState(); }
@@ -690,19 +696,24 @@ public partial class MainWindow : Window
     {
         if (IsAnyOperationInProgress)
         {
-            MessageBox.Show("有操作正在进行中，请等待完成后再关闭窗口。", "无法关闭", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("有操作正在进行中，请等待完成后再关闭窗口。", "无法关闭",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
             e.Cancel = true;
             return;
         }
 
         if (_activeMoveSession is null) return;
 
+        var s = _activeMoveSession;
+        var posInfo = s.IsPositionUncertain
+            ? $"位置状态：不确定；最后确认位置：({s.LastKnownPosition.X},{s.LastKnownPosition.Y})"
+            : $"最后已知位置：({s.LastKnownPosition.X},{s.LastKnownPosition.Y})";
+
         var result = MessageBox.Show(
-            string.Format("有一个图标尚未确认恢复！\r\n\r\n图标：{0}\r\n原位置：({1},{2})\r\n最后已知位置：({3},{4})\r\n安全快照：{5:D}\r\n\r\n仍然关闭窗口？（图标将保持在当前位置，不会自动恢复）",
-                _activeMoveSession.DisplayName,
-                _activeMoveSession.OriginalPosition.X, _activeMoveSession.OriginalPosition.Y,
-                _activeMoveSession.LastKnownPosition.X, _activeMoveSession.LastKnownPosition.Y,
-                _activeMoveSession.SafetySnapshotId),
+            string.Format("有一个图标尚未确认恢复！\r\n\r\n图标：{0}\r\n原位置：({1},{2})\r\n{3}\r\n安全快照：{4:D}\r\n\r\n仍然关闭窗口？（图标将保持在当前位置，不会自动恢复）",
+                s.DisplayName,
+                s.OriginalPosition.X, s.OriginalPosition.Y,
+                posInfo, s.SafetySnapshotId),
             "未恢复的移动会话", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
 
         if (result != MessageBoxResult.Yes) e.Cancel = true;

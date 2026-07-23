@@ -1,5 +1,3 @@
-using DesktopAgent.Core.Geometry;
-
 namespace DesktopAgent.Core.DesktopIcons;
 
 /// <summary>

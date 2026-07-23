@@ -15,14 +15,14 @@ public static class DesktopIconMovePreparationService
         DisplayDescriptor targetDisplay,
         DesktopIconPositioningCapabilities capabilities)
     {
-        ArgumentNullException.ThrowIfNull(readResult);
-        ArgumentNullException.ThrowIfNull(targetDisplay);
-        ArgumentNullException.ThrowIfNull(capabilities);
-
         if (selectedStableId is null)
             throw new ArgumentNullException(nameof(selectedStableId));
         if (string.IsNullOrWhiteSpace(selectedStableId))
             throw new ArgumentException("selectedStableId 不能为空白。", nameof(selectedStableId));
+
+        ArgumentNullException.ThrowIfNull(readResult);
+        ArgumentNullException.ThrowIfNull(targetDisplay);
+        ArgumentNullException.ThrowIfNull(capabilities);
 
         if (readResult.FailedItemCount != 0)
             throw new InvalidOperationException(

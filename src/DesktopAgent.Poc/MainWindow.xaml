@@ -2,78 +2,55 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="DesktopAgent PoC — M1-04B 单图标移动与恢复"
-        Width="1040"
-        Height="1020"
-        MinWidth="860"
-        MinHeight="880"
+        Width="1040" Height="1020" MinWidth="860" MinHeight="880"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="20">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="8" />
-            <RowDefinition Height="160" />
-            <RowDefinition Height="12" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="4" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="12" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="4" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="12" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="4" />
-            <RowDefinition Height="140" />
-            <RowDefinition Height="8" />
-            <RowDefinition Height="200" />
+            <RowDefinition Height="Auto" />   <!-- 0 标题栏 -->
+            <RowDefinition Height="8" />       <!-- 1 间隔 -->
+            <RowDefinition Height="160" />     <!-- 2 显示器拓扑 -->
+            <RowDefinition Height="12" />      <!-- 3 间隔 -->
+            <RowDefinition Height="Auto" />    <!-- 4 图标标题 -->
+            <RowDefinition Height="4" />       <!-- 5 间隔 -->
+            <RowDefinition Height="*" />       <!-- 6 图标列表 -->
+            <RowDefinition Height="12" />      <!-- 7 间隔 -->
+            <RowDefinition Height="Auto" />    <!-- 8 单图标验证 -->
+            <RowDefinition Height="12" />      <!-- 9 间隔 -->
+            <RowDefinition Height="Auto" />    <!-- 10 快照标题 -->
+            <RowDefinition Height="4" />       <!-- 11 间隔 -->
+            <RowDefinition Height="140" />     <!-- 12 快照列表 -->
+            <RowDefinition Height="8" />       <!-- 13 间隔 -->
+            <RowDefinition Height="200" />     <!-- 14 状态栏 -->
         </Grid.RowDefinitions>
 
-        <!-- ── 标题栏 ── -->
+        <!-- ── 0 标题栏 ── -->
         <DockPanel Grid.Row="0">
             <StackPanel DockPanel.Dock="Left">
-                <TextBlock FontSize="22"
-                           FontWeight="SemiBold"
-                           Text="DesktopAgent PoC — M1-04B" />
-                <TextBlock Margin="0,4,0,0"
-                           Foreground="Gray"
-                           TextWrapping="Wrap"
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="DesktopAgent PoC — M1-04B" />
+                <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
                            Text="M1-01 显示器拓扑  |  M1-02 只读图标枚举  |  M1-03B SQLite 快照  |  M1-04B 单图标移动与恢复" />
             </StackPanel>
         </DockPanel>
 
-        <!-- ── 显示器拓扑区 ── -->
+        <!-- ── 2 显示器拓扑 ── -->
         <DockPanel Grid.Row="2">
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                 <DockPanel>
-                    <TextBlock DockPanel.Dock="Left"
-                               FontSize="15"
-                               FontWeight="SemiBold"
-                               Text="显示器拓扑"
-                               VerticalAlignment="Center" />
-                    <Button x:Name="RefreshDisplaysButton"
-                            DockPanel.Dock="Right"
-                            Width="110"
-                            Height="32"
-                            Click="RefreshDisplays_Click"
-                            Content="重新读取" />
+                    <TextBlock DockPanel.Dock="Left" FontSize="15" FontWeight="SemiBold"
+                               Text="显示器拓扑" VerticalAlignment="Center" />
+                    <Button x:Name="RefreshDisplaysButton" DockPanel.Dock="Right"
+                            Width="110" Height="32" Click="RefreshDisplays_Click" Content="重新读取" />
                 </DockPanel>
             </StackPanel>
-
-            <DataGrid x:Name="DisplaysGrid"
-                      AutoGenerateColumns="False"
-                      CanUserAddRows="False"
-                      IsReadOnly="True"
-                      SelectionMode="Single"
-                      SelectionUnit="FullRow"
-                      SelectionChanged="DisplaysGrid_SelectionChanged"
-                      RowHeight="28">
+            <DataGrid x:Name="DisplaysGrid" AutoGenerateColumns="False" CanUserAddRows="False"
+                      IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+                      SelectionChanged="DisplaysGrid_SelectionChanged" RowHeight="28">
                 <DataGrid.Columns>
                     <DataGridTemplateColumn Header="目标" Width="50">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
                                 <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           FontSize="16" Foreground="#0078D4"
-                                           Text="{Binding TargetMarker}" />
+                                           FontSize="16" Foreground="#0078D4" Text="{Binding TargetMarker}" />
                             </DataTemplate>
                         </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>
@@ -87,12 +64,11 @@
             </DataGrid>
         </DockPanel>
 
-        <!-- ── 图标区标题 ── -->
+        <!-- ── 4 图标标题 ── -->
         <DockPanel Grid.Row="4">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="桌面图标" />
-                <TextBlock x:Name="IconStatsText" Margin="0,2,0,0" Foreground="Gray"
-                           Text="尚未读取。" />
+                <TextBlock x:Name="IconStatsText" Margin="0,2,0,0" Foreground="Gray" Text="尚未读取。" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button x:Name="SaveSnapshotButton" Width="135" Height="32" Margin="0,0,8,0"
@@ -102,10 +78,9 @@
             </StackPanel>
         </DockPanel>
 
-        <!-- ── 图标列表 ── -->
-        <DataGrid x:Name="IconsGrid" Grid.Row="6"
-                  AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
-                  SelectionMode="Single" RowHeight="26"
+        <!-- ── 6 图标列表 ── -->
+        <DataGrid x:Name="IconsGrid" Grid.Row="6" AutoGenerateColumns="False" CanUserAddRows="False"
+                  IsReadOnly="True" SelectionMode="Single" RowHeight="26"
                   SelectionChanged="IconsGrid_SelectionChanged">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="显示名称" Width="180" Binding="{Binding DisplayName}" />
@@ -128,19 +103,20 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <!-- ── 单图标实机验证区 ── -->
+        <!-- ── 8 单图标实机验证 ── -->
         <DockPanel Grid.Row="8">
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="单图标实机验证 — M1-04B" />
-                <TextBlock x:Name="MoveSessionText" Margin="0,2,0,0" Foreground="Gray"
-                           TextWrapping="Wrap"
-                           Text="请先读取目标显示器上的桌面图标。只允许文件系统图标。移动后将自动保存安全快照并监控恢复状态。" />
+                <TextBlock x:Name="MoveSessionText" Margin="0,2,0,0" Foreground="Gray" TextWrapping="Wrap"
+                           Text="当前没有待恢复的移动会话。只允许移动文件系统、非系统图标；移动前会保存并回读验证完整安全快照；本功能不是整桌面恢复。" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <CheckBox x:Name="MoveConsentCheckBox" VerticalAlignment="Center"
-                          Width="180" Margin="0,0,8,0"
-                          Checked="MoveConsentChanged" Unchecked="MoveConsentChanged"
-                          Content="我确认将真实移动一个图标" />
+                          Width="200" Margin="0,0,8,0"
+                          Checked="MoveConsentChanged" Unchecked="MoveConsentChanged">
+                    <TextBlock TextWrapping="Wrap"
+                               Text="我确认：该操作会真实移动一个桌面文件系统图标，移动后必须恢复原位置" />
+                </CheckBox>
                 <Button x:Name="MoveSelectedIconButton" Width="135" Height="32" Margin="0,0,8,0"
                         Click="MoveSelectedIcon_Click" Content="移动到相邻空位" IsEnabled="False" />
                 <Button x:Name="RestoreOriginalPositionButton" Width="110" Height="32"
@@ -148,7 +124,7 @@
             </StackPanel>
         </DockPanel>
 
-        <!-- ── 布局快照区 ── -->
+        <!-- ── 10 快照标题 ── -->
         <DockPanel Grid.Row="10">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="布局快照" />
@@ -160,10 +136,9 @@
                     Content="刷新列表" IsEnabled="False" />
         </DockPanel>
 
-        <!-- ── 快照列表 ── -->
-        <DataGrid x:Name="SnapshotsGrid" Grid.Row="12"
-                  AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
-                  SelectionMode="Single" RowHeight="26">
+        <!-- ── 12 快照列表 ── -->
+        <DataGrid x:Name="SnapshotsGrid" Grid.Row="12" AutoGenerateColumns="False"
+                  CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single" RowHeight="26">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="创建时间（本地）" Width="160" Binding="{Binding CreatedAtLocal}" />
                 <DataGridTextColumn Header="图标数" Width="65" Binding="{Binding IconCount}" />
@@ -174,8 +149,8 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <!-- ── 状态栏 ── -->
-        <Border Grid.Row="16" Padding="8,6" Background="#F3F3F3" CornerRadius="4">
+        <!-- ── 14 状态栏 ── -->
+        <Border Grid.Row="14" Padding="8,6" Background="#F3F3F3" CornerRadius="4">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
