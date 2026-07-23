@@ -29,6 +29,7 @@ public partial class App : Application
             {
                 services.AddSingleton<IDisplayTopologyReader, NativeDisplayTopologyReader>();
                 services.AddSingleton<IDesktopIconReader, DesktopShellIconReader>();
+                services.AddSingleton<IDesktopIconPositionWriter, DesktopShellIconPositionWriter>();
                 services.AddSingleton<StaThreadExecutor>();
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
                 services.AddSingleton<IDesktopLayoutSnapshotStore>(
