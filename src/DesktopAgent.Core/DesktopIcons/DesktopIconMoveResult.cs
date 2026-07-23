@@ -26,8 +26,10 @@ public sealed record DesktopIconMoveResult
         ConnectionMethod connectionMethod,
         Exception? primaryPathException)
     {
+        if (stableId is null)
+            throw new ArgumentNullException(nameof(stableId));
         if (string.IsNullOrWhiteSpace(stableId))
-            throw new ArgumentException("StableId 不能为 null 或空白。", nameof(stableId));
+            throw new ArgumentException("StableId 不能为空白。", nameof(stableId));
 
         StableId = stableId;
         PreviousPosition = previousPosition;

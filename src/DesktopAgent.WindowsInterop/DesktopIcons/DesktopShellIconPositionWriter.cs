@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using DesktopAgent.Core.DesktopIcons;
@@ -13,26 +12,42 @@ namespace DesktopAgent.WindowsInterop.DesktopIcons;
 /// </summary>
 public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
 {
+    /// <summary>
+    /// 统一解释 IFolderView2.GetAutoArrange 的 HRESULT。
+    /// S_OK (0) → true, S_FALSE (1) → false, &lt;0 → COMException, 其他正值 → InvalidOperationException。
+    /// </summary>
+    private static bool ReadAutoArrangeState(IFolderView2Compat folderView)
+    {
+        var hr = folderView.GetAutoArrange();
+        if (hr < 0)
+            throw new COMException("IFolderView2.GetAutoArrange failed", hr);
+        if (hr == 0) // S_OK
+            return true;
+        if (hr == 1) // S_FALSE
+            return false;
+        throw new InvalidOperationException(
+            $"IFolderView2.GetAutoArrange 返回意外值：{hr}。无法判断自动排列状态。");
+    }
+
+    /// <summary>Items 返回的 COM 对象释放助手。</summary>
+    private static void SafeReleaseObject(ref object? comObj)
+    {
+        if (comObj is not null && Marshal.IsComObject(comObj))
+        {
+            Marshal.ReleaseComObject(comObj);
+            comObj = null;
+        }
+    }
+
     public DesktopIconPositioningCapabilities GetCapabilities()
     {
         using var shellWindows = new ShellWindowsLateBound();
         var (ctx, connectionMethod, primaryEx) = DesktopShellIconReader.FindDesktopView(shellWindows);
         using (ctx)
         {
-            var hr = ctx.FolderView.GetAutoArrange();
-            if (hr < 0)
-                throw new COMException("IFolderView2.GetAutoArrange failed", hr);
+            var isAutoArrange = ReadAutoArrangeState(ctx.FolderView);
 
-            bool isAutoArrange;
-            if (hr == 0) // S_OK
-                isAutoArrange = true;
-            else if (hr == 1) // S_FALSE
-                isAutoArrange = false;
-            else
-                throw new InvalidOperationException(
-                    $"IFolderView2.GetAutoArrange 返回意外值：{hr}。无法判断自动排列状态。");
-
-            hr = ctx.FolderView.GetSpacing(out Point spacing);
+            var hr = ctx.FolderView.GetSpacing(out Point spacing);
             if (hr < 0)
                 throw new COMException("IFolderView2.GetSpacing failed", hr);
 
@@ -59,16 +74,13 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
         var (ctx, connectionMethod, primaryEx) = DesktopShellIconReader.FindDesktopView(shellWindows);
         using (ctx)
         {
-            // ── 自动排列保护（再次检查，不依赖旧 GetCapabilities 结果）──
-            var hr = ctx.FolderView.GetAutoArrange();
-            if (hr < 0)
-                throw new COMException("IFolderView2.GetAutoArrange failed", hr);
-            if (hr == 0) // S_OK
+            // ── 连接后第一次自动排列检查 ──
+            if (ReadAutoArrangeState(ctx.FolderView))
                 throw new InvalidOperationException(
                     "桌面已启用「自动排列图标」。请先关闭自动排列后再执行移动操作。");
 
             // ── 枚举全部项目，通过 StableId 唯一匹配 PIDL ──
-            hr = ctx.FolderView.ItemCount(SVGIO_ALLVIEW, out var itemCount);
+            var hr = ctx.FolderView.ItemCount(SVGIO_ALLVIEW, out var itemCount);
             if (hr < 0) throw new COMException("IFolderView2.ItemCount failed", hr);
             if (itemCount <= 0)
                 throw new InvalidOperationException("桌面没有图标，无法匹配 StableId。");
@@ -76,67 +88,87 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
             hr = ctx.FolderView.Items(SVGIO_ALLVIEW, IidIEnumIDList, out var enumObj);
             if (hr < 0)
             {
-                DesktopShellIconReader.SafeReleaseComObject(ref enumObj!);
+                SafeReleaseObject(ref enumObj!);
                 throw new COMException("IFolderView2.Items failed", hr);
             }
             if (enumObj is not IEnumIDList enumerator)
             {
-                DesktopShellIconReader.SafeReleaseComObject(ref enumObj!);
+                SafeReleaseObject(ref enumObj!);
                 throw new InvalidOperationException("IFolderView2.Items did not return IEnumIDList.");
             }
             ctx.SetEnumerator(enumerator);
 
             nint matchedPidl = nint.Zero;
             var matchCount = 0;
+            var enumIndex = 0;
 
             try
             {
-                for (var i = 0; i < itemCount; i++)
+                // 枚举到真正结束（不预设 itemCount），即使找到第一个匹配也需确认无第二个
+                while (true)
                 {
                     nint pidl = nint.Zero;
-                    hr = enumerator.Next(1, out pidl, out var fetched);
-                    if (hr < 0) throw new COMException("IEnumIDList.Next failed", hr);
-                    if (hr == 1 || fetched == 0) break;
-
                     try
                     {
-                        var descriptor = DesktopShellIconReader.ReadSingleIcon(
-                            ctx.FolderView, ctx.DesktopFolder, pidl);
+                        hr = enumerator.Next(1, out pidl, out var fetched);
 
-                        if (descriptor is null)
+                        if (hr < 0) throw new COMException("IEnumIDList.Next failed", hr);
+
+                        if (hr == 1) // S_FALSE
                         {
-                            Marshal.FreeCoTaskMem(pidl);
-                            throw new InvalidOperationException(
-                                $"图标 #{i} 元数据读取失败，无法继续匹配。ReadSingleIcon 返回 null。");
+                            if (fetched != 0)
+                                throw new InvalidOperationException(
+                                    $"IEnumIDList.Next 返回 S_FALSE 但 fetched={fetched}（预期 0）。");
+                            break;
                         }
 
+                        if (hr == 0) // S_OK
+                        {
+                            if (fetched != 1)
+                                throw new InvalidOperationException(
+                                    $"IEnumIDList.Next 返回 S_OK 但 fetched={fetched}（预期 1）。");
+                        }
+                        else
+                        {
+                            throw new InvalidOperationException(
+                                $"IEnumIDList.Next 返回意外 HRESULT：0x{hr:X8}。");
+                        }
+
+                        enumIndex++;
+
+                        // ── 内层异常边界：仅包裹 ReadSingleIcon ──
+                        DesktopIconDescriptor descriptor;
+                        try
+                        {
+                            descriptor = DesktopShellIconReader.ReadSingleIcon(
+                                ctx.FolderView, ctx.DesktopFolder, pidl)
+                                ?? throw new InvalidOperationException(
+                                    "ReadSingleIcon 返回 null。");
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException(
+                                $"桌面图标 #{enumIndex} 元数据读取失败，无法继续 StableId 唯一匹配。",
+                                ex);
+                        }
+
+                        // ── 匹配逻辑放在内层 catch 之外 ──
                         if (string.Equals(descriptor.StableId, stableId, StringComparison.Ordinal))
                         {
                             matchCount++;
                             if (matchCount > 1)
-                            {
-                                Marshal.FreeCoTaskMem(pidl);
-                                // 释放之前匹配的 PIDL
-                                if (matchedPidl != nint.Zero)
-                                {
-                                    Marshal.FreeCoTaskMem(matchedPidl);
-                                    matchedPidl = nint.Zero;
-                                }
                                 throw new InvalidOperationException(
                                     $"StableId \"{stableId}\" 在桌面视图中有多个匹配（至少 {matchCount} 个）。无法唯一确定目标图标。");
-                            }
+
+                            // 所有权转移：matchedPidl 由外层 finally 释放，局部 pidl 不再由当前迭代 finally 释放
                             matchedPidl = pidl;
-                        }
-                        else
-                        {
-                            Marshal.FreeCoTaskMem(pidl);
+                            pidl = nint.Zero;
                         }
                     }
-                    catch (Exception ex) when (ex is not InvalidOperationException)
+                    finally
                     {
-                        Marshal.FreeCoTaskMem(pidl);
-                        throw new InvalidOperationException(
-                            $"桌面图标 #{i} 元数据读取失败，无法继续 StableId 匹配。", ex);
+                        if (pidl != nint.Zero)
+                            Marshal.FreeCoTaskMem(pidl);
                     }
                 }
 
@@ -151,6 +183,11 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
                 hr = ctx.FolderView.GetItemPosition(matchedPidl, out Point prevPt);
                 if (hr < 0) throw new COMException("GetItemPosition (previous) failed", hr);
                 var previousPosition = new PixelPoint(prevPt.X, prevPt.Y);
+
+                // ── 移动前第二次自动排列检查（缩小竞态窗口）──
+                if (ReadAutoArrangeState(ctx.FolderView))
+                    throw new InvalidOperationException(
+                        "桌面已启用「自动排列图标」（移动前检查）。请先关闭自动排列后再执行移动操作。");
 
                 // ── 执行移动 ──
                 var pidls = new[] { matchedPidl };
@@ -173,7 +210,6 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
             }
             finally
             {
-                // 精确释放匹配 PIDL（仅一次）
                 if (matchedPidl != nint.Zero)
                     Marshal.FreeCoTaskMem(matchedPidl);
             }

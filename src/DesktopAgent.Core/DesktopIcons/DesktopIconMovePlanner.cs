@@ -27,6 +27,8 @@ public static class DesktopIconMovePlanner
         PixelPoint spacing,
         IReadOnlyCollection<PixelPoint> occupiedPositions)
     {
+        ArgumentNullException.ThrowIfNull(occupiedPositions);
+
         if (spacing.X <= 0)
             throw new ArgumentOutOfRangeException(nameof(spacing), "spacing.X 必须大于 0。");
         if (spacing.Y <= 0)
@@ -43,13 +45,13 @@ public static class DesktopIconMovePlanner
             occupiedRects.Add(PixelRectFromPosition(pos, spacing));
         }
 
-        // 候选方向：Right, Left, Down, Up
+        // 候选方向：Right, Left, Down, Up（使用 checked 避免极端整数环绕）
         var candidates = new (string Direction, PixelPoint Position)[]
         {
-            ("Right", new PixelPoint(originalPosition.X + spacing.X, originalPosition.Y)),
-            ("Left",  new PixelPoint(originalPosition.X - spacing.X, originalPosition.Y)),
-            ("Down",  new PixelPoint(originalPosition.X, originalPosition.Y + spacing.Y)),
-            ("Up",    new PixelPoint(originalPosition.X, originalPosition.Y - spacing.Y)),
+            ("Right", checked(new PixelPoint(originalPosition.X + spacing.X, originalPosition.Y))),
+            ("Left",  checked(new PixelPoint(originalPosition.X - spacing.X, originalPosition.Y))),
+            ("Down",  checked(new PixelPoint(originalPosition.X, originalPosition.Y + spacing.Y))),
+            ("Up",    checked(new PixelPoint(originalPosition.X, originalPosition.Y - spacing.Y))),
         };
 
         foreach (var (direction, candidate) in candidates)
@@ -85,7 +87,7 @@ public static class DesktopIconMovePlanner
     }
 
     private static PixelRect PixelRectFromPosition(PixelPoint position, PixelPoint spacing) =>
-        new(position.X, position.Y, position.X + spacing.X, position.Y + spacing.Y);
+        checked(new PixelRect(position.X, position.Y, position.X + spacing.X, position.Y + spacing.Y));
 
     private static bool RectsOverlap(PixelRect a, PixelRect b) =>
         a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;

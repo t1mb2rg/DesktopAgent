@@ -14,7 +14,6 @@ public sealed class DesktopIconMovePlannerTests
     {
         var occupied = new HashSet<PixelPoint>
         {
-            Origin,
             new(Origin.X - Spacing.X, Origin.Y),  // Left
             new(Origin.X, Origin.Y + Spacing.Y), // Down
             new(Origin.X, Origin.Y - Spacing.Y), // Up
@@ -31,7 +30,6 @@ public sealed class DesktopIconMovePlannerTests
     {
         var occupied = new HashSet<PixelPoint>
         {
-            Origin,
             new(Origin.X + Spacing.X, Origin.Y),  // Right occupied
             new(Origin.X, Origin.Y + Spacing.Y), // Down
             new(Origin.X, Origin.Y - Spacing.Y), // Up
@@ -47,7 +45,6 @@ public sealed class DesktopIconMovePlannerTests
     {
         var occupied = new HashSet<PixelPoint>
         {
-            Origin,
             new(Origin.X + Spacing.X, Origin.Y),  // Right
             new(Origin.X - Spacing.X, Origin.Y),  // Left
             new(Origin.X, Origin.Y - Spacing.Y), // Up
@@ -63,7 +60,6 @@ public sealed class DesktopIconMovePlannerTests
     {
         var occupied = new HashSet<PixelPoint>
         {
-            Origin,
             new(Origin.X + Spacing.X, Origin.Y),  // Right
             new(Origin.X - Spacing.X, Origin.Y),  // Left
             new(Origin.X, Origin.Y + Spacing.Y), // Down
@@ -77,18 +73,13 @@ public sealed class DesktopIconMovePlannerTests
     [Fact]
     public void PlanAdjacentMove_CandidateOutOfBounds_Skips()
     {
-        // 图标在工作区左边缘，Left 会超出 workArea
         var edgePosition = new PixelPoint(0, 240);
         var occupied = new HashSet<PixelPoint>
         {
-            edgePosition,
             new(edgePosition.X + Spacing.X, edgePosition.Y),  // Right occupied
             new(edgePosition.X, edgePosition.Y + Spacing.Y), // Down
         };
-        // Left 超出 → 跳过；Right 占用 → 跳过；Down 空闲但还没到 → Down 选了先...
-        // Wait, order is Right, Left, Down, Up.
-        // Right is occupied. Left is out of bounds. Down should be chosen since it's free (not in occupied).
-        // But wait, Down IS in occupied set. So we should get Up.
+        // Right occupied → Left out of bounds → Down occupied → Up
 
         var plan = DesktopIconMovePlanner.PlanAdjacentMove(
             edgePosition, WorkArea, Spacing, occupied);
@@ -104,7 +95,6 @@ public sealed class DesktopIconMovePlannerTests
         var spacing = new PixelPoint(100, 100);
         var occupied = new HashSet<PixelPoint>
         {
-            negOrigin,
             new(negOrigin.X - spacing.X, negOrigin.Y),  // Left
             new(negOrigin.X, negOrigin.Y + spacing.Y), // Down
             new(negOrigin.X, negOrigin.Y - spacing.Y), // Up
@@ -120,19 +110,16 @@ public sealed class DesktopIconMovePlannerTests
     [Fact]
     public void PlanAdjacentMove_OverlapByRect_NotExactCoordinate_DetectsCollision()
     {
-        // origin = (160, 240), spacing = (80, 80)
-        // Right 候选: (240, 240), 矩形 (240,240)-(320,320)
-        // 占用 (250, 250) — 不在 grid 对齐点上，但矩形 (250,250)-(330,330)
-        // 与 Right 候选的矩形 (240,240)-(320,320) 重叠
+        // Right 候选 (240,240), 矩形 (240,240)-(320,320)
+        // 占用 (250,250), 矩形 (250,250)-(330,330) 与 Right 重叠
         var origin = new PixelPoint(160, 240);
         var occupied = new HashSet<PixelPoint>
         {
-            origin,
             new PixelPoint(250, 250),  // 与 Right 候选矩形重叠
             new(origin.X, origin.Y + Spacing.Y), // Down occupied
             new(origin.X, origin.Y - Spacing.Y), // Up occupied
         };
-        // Right 被矩形重叠阻挡 → Left 空闲
+        // Right → 重叠阻挡；Left 空闲
 
         var plan = DesktopIconMovePlanner.PlanAdjacentMove(
             origin, WorkArea, Spacing, occupied);
@@ -147,11 +134,10 @@ public sealed class DesktopIconMovePlannerTests
         var smallWorkArea = new PixelRect(0, 0, 160, 160);
         var occupied = new HashSet<PixelPoint>
         {
-            origin,
             new(origin.X + Spacing.X, origin.Y),  // Right
-            new(origin.X - Spacing.X, origin.Y),  // Left — 超出 workArea (Left=0)
+            new(origin.X - Spacing.X, origin.Y),  // Left — 超出 workArea
             new(origin.X, origin.Y + Spacing.Y), // Down
-            new(origin.X, origin.Y - Spacing.Y), // Up — 超出 workArea (Top=0)
+            new(origin.X, origin.Y - Spacing.Y), // Up — 超出 workArea
         };
         // Right 占用，Left 超出，Down 占用，Up 超出 → 全部不可用
 
@@ -162,7 +148,6 @@ public sealed class DesktopIconMovePlannerTests
         Assert.Contains("(80, 80)", ex.Message);
         Assert.Contains("(0, 0)", ex.Message);
         Assert.Contains("(160, 160)", ex.Message);
-        Assert.Contains("(80, 80)", ex.Message);
     }
 
     [Fact]
@@ -199,5 +184,27 @@ public sealed class DesktopIconMovePlannerTests
             DesktopIconMovePlanner.PlanAdjacentMove(
                 Origin, new PixelRect(0, 0, 0, 600), Spacing, []));
         Assert.Contains("workarea", ex.Message.ToLowerInvariant());
+    }
+
+    [Fact]
+    public void PlanAdjacentMove_OccupiedPositionsNull_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            DesktopIconMovePlanner.PlanAdjacentMove(
+                Origin, WorkArea, Spacing, null!));
+    }
+
+    [Fact]
+    public void PlanAdjacentMove_Overflow_Throws()
+    {
+        // originalPosition.X + spacing.X 触发 checked 溢出
+        // workArea 宽高有效，originalPosition 在 workArea 内
+        var ex = Assert.Throws<OverflowException>(() =>
+            DesktopIconMovePlanner.PlanAdjacentMove(
+                new PixelPoint(int.MaxValue - 1, 0),
+                new PixelRect(int.MaxValue - 2, -1, int.MaxValue, 1),
+                new PixelPoint(2, 80),
+                []));
+        Assert.NotNull(ex);
     }
 }

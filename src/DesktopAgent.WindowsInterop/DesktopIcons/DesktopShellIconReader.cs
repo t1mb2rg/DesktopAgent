@@ -432,7 +432,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
 
     private static void SafeRelease<T>(ref T? comObject) where T : class
     { if (comObject is not null && Marshal.IsComObject(comObject)) { Marshal.ReleaseComObject(comObject); comObject = null; } }
-    internal static void SafeReleaseComObject(ref object? comObj)
+    private static void SafeReleaseComObject(ref object? comObj)
     { if (comObj is not null && Marshal.IsComObject(comObj)) { Marshal.ReleaseComObject(comObj); comObj = null; } }
 
     internal static string FormatException(Exception ex)

@@ -31,7 +31,7 @@ HRESULT SelectAndPositionItems(
 
 ### IFolderView.GetAutoArrange
 
-返回 `S_OK (0)` 表示自动排列开启，`S_FALSE (1)` 表示关闭。其他正值视为意外状态，禁止猜测。
+返回 `S_OK (0)` 表示自动排列开启，`S_FALSE (1)` 表示关闭。其他正值视为意外状态，禁止猜测。`ReadAutoArrangeState` 统一方法在所有调用点共享此解释。
 
 ### IFolderView.GetSpacing
 
@@ -51,39 +51,64 @@ M1-02 读取操作中的 PIDL 是瞬时有效的——它们来自 `IEnumIDList.
 
 ## 自动排列开启时拒绝移动
 
-`MoveDesktopIcon` 在连接桌面视图后**必须再次调用 `GetAutoArrange`**，不能只依赖之前 `GetCapabilities` 的结果。如果用户在这两次调用之间修改了桌面设置，依赖旧结果会导致在自动排列开启时执行移动操作，Explorer 将忽略或覆盖该移动。
+`MoveDesktopIcon` 在连接桌面视图后**调用 `ReadAutoArrangeState` 两次**：
+1. 连接后、枚举前（第一次检查）
+2. 枚举完成后、`SelectAndPositionItems` 之前（第二次检查，缩小竞态窗口）
+
+不依赖之前 `GetCapabilities` 的结果。
 
 ## 为什么必须唯一匹配
 
-`StableId` 在同一桌面视图中理论上是唯一的（基于 `ParsingName` 或 `DisplayName`）。如果出现 0 个匹配，说明目标图标可能已被删除；如果出现 ≥2 个匹配，说明 `StableId` 策略有缺陷或存在异常重复。两种情况都不应执行移动。
-
-不使用模糊匹配（`StartsWith`、`Contains`、忽略大小写等），避免误移动无关图标。
+`StableId` 在同一桌面视图中理论上是唯一的。0 个匹配 → 图标已被删除；≥2 个匹配 → StableId 策略缺陷或异常重复。不使用模糊匹配。
 
 ## 为什么 Writer 遇到任一枚举项目失败时整体失败
 
-只读 `DesktopShellIconReader` 可以在个别项目读取失败时跳过它并继续，因为其目标是读取"尽可能多"的图标。
-
-`DesktopShellIconPositionWriter` 不同——失败的项目可能就是目标，或可能造成唯一性判断错误（例如目标成功匹配但另一个同名项目读取失败，导致唯一性检查不完整）。因此一旦任一项目失败，整个操作终止。
+失败的项目可能就是目标，或可能造成唯一性判断错误。因此一旦任一项目元数据读取失败，整个操作终止。
 
 ## PIDL 和 COM 生命周期
 
 - `ShellWindowsLateBound` → `using`
 - `DesktopViewContext` → `using`
 - `IEnumIDList` → 交给 `DesktopViewContext` 管理
-- 每个 `Next` 返回的 PIDL → 不匹配的立即 `Marshal.FreeCoTaskMem`
-- 匹配 PIDL → 在 `SelectAndPositionItems` 和 `GetItemPosition`（实际位置）完成后，于 `finally` 中精确释放一次
-- 重复匹配时立即释放新的 PIDL，然后释放之前缓存的匹配 PIDL
+- **每条迭代使用 `try/finally`**：`pidl` 在 `finally` 中 `Marshal.FreeCoTaskMem`
+- **唯一匹配时所有权转移**：`matchedPidl = pidl; pidl = nint.Zero;` — 局部 pidl 清零后当前迭代 finally 不再释放
+- **外层 finally** 只负责 `if (matchedPidl) FreeCoTaskMem(matchedPidl)`
+- **重复匹配**：不手动释放任何 PIDL，直接抛异常；当前 pidl 由迭代 finally 释放，之前的 matchedPidl 由外层 finally 释放
+- **ReadSingleIcon 异常**：由迭代 finally 释放 pidl，包装为 `InvalidOperationException`（含 1-based 序号 + 原始 InnerException）
+- 不使用 `catch ... when (ex is not InvalidOperationException)` 等按异常类型分派释放
 - 不使用 `Marshal.FinalReleaseComObject`
+
+## 枚举以 IEnumIDList.Next 状态为准
+
+```csharp
+while (true)
+{
+    hr = enumerator.Next(1, out pidl, out fetched);
+    // hr < 0 → COMException
+    // hr == 1 (S_FALSE) && fetched == 0 → 结束
+    // hr == 0 (S_OK) && fetched == 1 → 处理该项目
+    // 其他组合 → InvalidOperationException
+}
+```
+
+不使用 `for (i < itemCount)`，确保不因 itemCount 与 Next 的不一致而漏检或提前终止。即使找到第一个匹配也继续枚举，以确认无第二个匹配。
 
 ## 相邻空位规划顺序
 
 固定候选顺序：Right → Left → Down → Up
 
-每个候选位置的图标单元（以 spacing 为大小的矩形）必须：
-1. 完整位于 workArea 内
-2. 不与任何已占用位置的图标单元发生矩形重叠
+碰撞检测使用 AABB 矩形重叠算法（非坐标完全相等），使用 `checked` 运算防止极端 int 输入静默环绕。
 
-碰撞检测使用矩形重叠算法（不是坐标完全相等），因为图标可能未严格对齐网格。
+## Reader 仅暴露两个 internal 方法
+
+- `DesktopShellIconReader.FindDesktopView`
+- `DesktopShellIconReader.ReadSingleIcon`
+
+`SafeReleaseComObject` 为 `private`。Writer 自备小型 `SafeReleaseObject` 辅助方法。
+
+## GitHub Actions 首次失败
+
+首次 Build 失败原因为 `DesktopIconPositioningCapabilities.cs` 未被 Git 跟踪（`??` 状态）。已修复。
 
 ## 本阶段没有运行任何真实移动
 
