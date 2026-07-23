@@ -54,7 +54,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     //  查找桌面视图
     // ═══════════════════════════════════════════════════════════
 
-    private static (DesktopViewContext ctx, ConnectionMethod method, Exception? primaryEx)
+    internal static (DesktopViewContext ctx, ConnectionMethod method, Exception? primaryEx)
         FindDesktopView(ShellWindowsLateBound shellWindows)
     {
         var primaryCtx = new DesktopViewContext();
@@ -407,7 +407,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     //  图标读取
     // ═══════════════════════════════════════════════════════════
 
-    private static DesktopIconDescriptor? ReadSingleIcon(IFolderView2Compat folderView, IShellFolder desktopFolder, nint pidl)
+    internal static DesktopIconDescriptor? ReadSingleIcon(IFolderView2Compat folderView, IShellFolder desktopFolder, nint pidl)
     {
         var hr = folderView.GetItemPosition(pidl, out Point pt); if (hr < 0) throw new COMException("GetItemPosition failed", hr);
         var position = new PixelPoint(pt.X, pt.Y);
