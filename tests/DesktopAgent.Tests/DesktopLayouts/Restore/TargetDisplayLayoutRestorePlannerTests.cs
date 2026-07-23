@@ -13,578 +13,520 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
     private static readonly PixelRect WorkArea = new(0, 0, 800, 600);
     private static int _snapOrdinal;
 
+    public TargetDisplayLayoutRestorePlannerTests() { _snapOrdinal = 0; }
+
     private static DisplayDescriptor MakeDisplay(string name, PixelRect? workArea = null) =>
         new(name, new PixelRect(0, 0, 1920, 1080), workArea ?? WorkArea, 96, 96, name == TargetDevice);
 
-    private static DesktopIconSnapshotItem SnapItem(
-        string stableId, PixelPoint pos, string? monitor = null) =>
-        new(_snapOrdinal++, stableId, $"Name_{stableId}", null, ItemKind.File, pos,
-            monitor ?? TargetDevice, false, true);
+    private static DesktopIconSnapshotItem SnapItem(string sid, PixelPoint pos, string? monitor = null) =>
+        new(_snapOrdinal++, sid, $"Name_{sid}", null, ItemKind.File, pos, monitor ?? TargetDevice, false, true);
 
-    private static DesktopIconDescriptor LiveIcon(
-        string stableId, PixelPoint pos, string? monitor = null, bool isFileSys = true, bool isSys = false) =>
-        new(stableId, $"Name_{stableId}", null, isSys ? ItemKind.SystemItem : ItemKind.File,
+    private static DesktopIconDescriptor LiveIcon(string sid, PixelPoint pos, string? monitor = null,
+        bool isFileSys = true, bool isSys = false) =>
+        new(sid, $"Name_{sid}", null, isSys ? ItemKind.SystemItem : ItemKind.File,
             pos, monitor ?? TargetDevice, isSys, isFileSys);
 
-    private static DesktopLayoutSnapshot MakeSnapshot(
-        IEnumerable<DesktopIconSnapshotItem> icons, string? targetMonitor = null) =>
-        new(Guid.NewGuid(), DateTimeOffset.UtcNow,
-            targetMonitor ?? TargetDevice, ConnectionMethod.FindWindowSW, 1, icons);
+    private static DesktopLayoutSnapshot MakeSnapshot(IEnumerable<DesktopIconSnapshotItem> icons, string? tm = null) =>
+        new(Guid.NewGuid(), DateTimeOffset.UtcNow, tm ?? TargetDevice, ConnectionMethod.FindWindowSW, 1, icons);
 
-    private static DesktopLayoutSnapshot MakeSnapshotWithNullTarget(
-        IEnumerable<DesktopIconSnapshotItem> icons) =>
-        new(Guid.NewGuid(), DateTimeOffset.UtcNow,
-            null, ConnectionMethod.FindWindowSW, 1, icons);
+    private static DesktopLayoutSnapshot MakeSnapshotNullTarget(IEnumerable<DesktopIconSnapshotItem> icons) =>
+        new(Guid.NewGuid(), DateTimeOffset.UtcNow, null, ConnectionMethod.FindWindowSW, 1, icons);
 
-    private static DesktopIconReadResult MakeReadResult(
-        IEnumerable<DesktopIconDescriptor> icons, int failed = 0) =>
+    private static DesktopIconReadResult MakeReadResult(IEnumerable<DesktopIconDescriptor> icons, int failed = 0) =>
         new(icons.ToList(), failed, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-
-    public TargetDisplayLayoutRestorePlannerTests()
-    {
-        _snapOrdinal = 0;
-    }
 
     private static DesktopIconPositioningCapabilities MakeCapabilities(bool autoArrange = false) =>
         new(autoArrange, DefaultSpacing, ConnectionMethod.FindWindowSW, null);
 
-    // ═══ 1-2: 基本 IsNoOp ═══
+    // ═══ 递增批量测试辅助 ═══
+    private TargetDisplayLayoutRestorePlan PlanWithIcons(
+        DesktopIconSnapshotItem[] snaps, DesktopIconDescriptor[] lives)
+        => TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot(snaps), MakeReadResult(lives),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice);
 
-    [Fact]
-    public void AllIconsAlreadyAtTarget_IsNoOp()
+    // ═══ 基本 ═══
+
+    [Fact] public void AllAlreadyAtTarget_IsNoOp()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240)), SnapItem("b", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.IsNoOp);
-        Assert.Equal(2, plan.AlreadyAtTargetCount);
-        Assert.Equal(0, plan.MoveRequiredCount);
-        Assert.False(plan.HasBlockingErrors);
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("b", new(240, 320))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        Assert.True(p.IsNoOp); Assert.Equal(2, p.AlreadyAtTargetCount); Assert.Equal(0, p.MoveRequiredCount);
     }
 
-    [Fact]
-    public void SingleMove_TargetFree()
+    [Fact] public void SingleMove()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(1, plan.MoveRequiredCount);
-        Assert.False(plan.HasBlockingErrors);
-        Assert.False(plan.IsNoOp);
-        Assert.NotNull(plan.MoveExecutionOrder);
-        Assert.Single(plan.MoveExecutionOrder);
-        Assert.Equal("a", plan.MoveExecutionOrder![0]);
+        var p = PlanWithIcons([SnapItem("a", new(240, 320))], [LiveIcon("a", new(160, 240))]);
+        Assert.Equal(1, p.MoveRequiredCount); Assert.False(p.HasBlockingErrors);
+        Assert.NotNull(p.MoveExecutionOrder); Assert.Single(p.MoveExecutionOrder);
     }
 
-    // ═══ 3-4: 全局阻断 ═══
-
-    [Fact]
-    public void IncompleteRead_Throws()
+    [Fact] public void IncompleteRead_Throws()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))], failed: 3);
-
         var ex = Assert.Throws<InvalidOperationException>(() =>
             TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+                MakeSnapshot([SnapItem("a", new(160, 240))]),
+                MakeReadResult([LiveIcon("a", new(160, 240))], failed: 3),
+                new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
         Assert.Contains("3", ex.Message);
     }
 
-    [Fact]
-    public void AutoArrangeEnabled_Throws()
+    [Fact] public void AutoArrange_Throws()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-
         var ex = Assert.Throws<InvalidOperationException>(() =>
             TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(autoArrange: true), TargetDevice));
+                MakeSnapshot([SnapItem("a", new(160, 240))]),
+                MakeReadResult([LiveIcon("a", new(160, 240))]),
+                new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(autoArrange: true), TargetDevice));
         Assert.Contains("自动排列", ex.Message);
     }
 
-    // ═══ 5-6: 目标显示器 ═══
+    [Fact] public void TargetDisplayNotFound_Throws() => Assert.Throws<InvalidOperationException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240))]),
+            MakeReadResult([LiveIcon("a", new(160, 240))]),
+            new[] { MakeDisplay(@"\\.\DISPLAY2") }, MakeCapabilities(), TargetDevice));
 
-    [Fact]
-    public void TargetDisplayNotFound_Throws()
+    [Fact] public void DuplicateTargetDisplay_Throws() => Assert.Throws<InvalidOperationException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240))]),
+            MakeReadResult([LiveIcon("a", new(160, 240))]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(TargetDevice) },
+            MakeCapabilities(), TargetDevice));
+
+    [Fact] public void SnapshotNullMonitor_Throws() => Assert.Throws<InvalidOperationException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshotNullTarget([SnapItem("a", new(160, 240))]),
+            MakeReadResult([LiveIcon("a", new(160, 240))]),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+
+    [Fact] public void SnapshotMonitorMismatch_Throws() => Assert.Throws<InvalidOperationException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240))], tm: @"\\.\DISPLAY2"),
+            MakeReadResult([LiveIcon("a", new(160, 240))]),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+
+    [Fact] public void EmptyTargetSet_IsNoOp()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
+            MakeReadResult([LiveIcon("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
+        Assert.True(p.IsNoOp); Assert.Equal(0, p.SnapshotTargetIconCount);
+    }
 
-        Assert.Throws<InvalidOperationException>(() =>
+    // ═══ 快照级多错误诊断 ═══
+
+    [Fact] public void SnapshotItemMultipleErrors_PreservesAllSnapshotDiagnostics()
+    {
+        // 同一个 StableId 出现两次 + 其中一个与其他图标目标坐标重复
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("a", new(160, 240)),
+             SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(80, 240)), LiveIcon("b", new(400, 400))]);
+        Assert.Equal(3, p.SnapshotTargetIconCount);
+        Assert.Equal(3, p.Items.Count);
+        var dupSidItems = p.Items.Where(i => i.State == TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate).ToList();
+        var dupPosItems = p.Items.Where(i => i.State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition).ToList();
+        Assert.Equal(2, dupSidItems.Count);  // "a" 重复的两个条目
+        Assert.Single(dupPosItems);  // "b" 与 "a" 坐标重复
+        Assert.Contains("出现 2 次", dupSidItems[0].BlockReason); // StableId 重复
+        Assert.Contains("不同 StableId", dupPosItems[0].BlockReason); // 坐标重复
+    }
+
+    // ═══ 不变量 ═══
+
+    [Fact] public void ItemsCount_EqualsSnapshotTargetIconCount()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("b", new(240, 320)), SnapItem("c", new(320, 400))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320)), LiveIcon("c", new(320, 400))]);
+        Assert.Equal(p.SnapshotTargetIconCount, p.Items.Count);
+        Assert.Equal(3, p.Items.Count);
+    }
+
+    // ═══ 快照 StableId 重复 ═══
+
+    [Fact] public void SnapshotSidDuplicate_MarksEveryEntry()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("a", new(240, 320))],
+            [LiveIcon("a", new(160, 240))]);
+        Assert.Equal(2, p.SnapshotTargetIconCount);
+        Assert.Equal(2, p.Items.Count);
+        Assert.All(p.Items, i => Assert.Equal(TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate, i.State));
+    }
+
+    [Fact] public void SnapshotSidTripleDuplicate_MarksEveryEntry()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("a", new(240, 320)), SnapItem("a", new(320, 400))],
+            [LiveIcon("a", new(160, 240))]);
+        Assert.Equal(3, p.Items.Count);
+        Assert.All(p.Items, i => Assert.Equal(TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate, i.State));
+    }
+
+    // ═══ 坐标重复 ═══
+
+    [Fact] public void DuplicatePos_MarksBothEntries()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(80, 240)), LiveIcon("b", new(400, 400))]);
+        Assert.Equal(2, p.Items.Count);
+        var dupItems = p.Items.Where(i => i.State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition).ToList();
+        Assert.Equal(2, dupItems.Count);
+    }
+
+    [Fact] public void DuplicatePos_DetectedWhenOneMissing()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("b", new(160, 240))],
+            [LiveIcon("b", new(400, 400))]); // a 缺失
+        Assert.Equal(2, p.Items.Count);
+        Assert.Equal(2, p.Items.Count(i => i.State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition));
+    }
+
+    [Fact] public void DuplicatePos_NotOverwrittenByOccupancy()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240)), SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(80, 240)), LiveIcon("b", new(80, 240))]); // b 占据 a 的目标附近
+        Assert.True(p.Items.All(i =>
+            i.State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition));
+    }
+
+    // ═══ 全局当前 StableId 重复 ═══
+
+    [Fact] public void GlobalCurrentSidDuplicate_BlocksPlan()
+    {
+        var snaps = new[] { SnapItem("a", new(240, 320)) };
+        var lives = new[] { LiveIcon("a", new(160, 240)), LiveIcon("a", new(320, 400)) };
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot(snaps), MakeReadResult(lives),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice);
+        Assert.True(p.HasBlockingErrors);
+        Assert.Contains(p.Issues, iss => iss.Code == TargetDisplayLayoutRestorePlanIssueCode.DuplicateCurrentStableId);
+    }
+
+    [Fact] public void GlobalCurrentSidDuplicate_BlocksEvenWhenNotTargeted()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(80, 160)), LiveIcon("b", new(240, 320))]);
+        // b 重复但不在快照中 → 全局 Issue
+        Assert.True(p.HasBlockingErrors);
+        Assert.Contains(p.Issues, iss => iss.RelatedStableId == "b");
+    }
+
+    // ═══ 占用分析 ═══
+
+    [Fact] public void Occupancy_SkipsOnlyMatchedCurrentIndex()
+    {
+        // 两个图标同坐标，选中第一个 → 第二个不被排除
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(160, 240))]);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.MoveRequired && i.StableId == "a");
+    }
+
+    [Fact] public void Occupancy_MultipleOccupiers_StationaryBlocks()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("x", new(240, 310)), LiveIcon("y", new(230, 320))]);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon);
+    }
+
+    // ═══ 阻断固定点传播 ═══
+
+    [Fact] public void BlockedOccupier_PropagatesToDependent()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(400, 480))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320)), // b 占据 a 的目标
+             LiveIcon("x", new(400, 480))]); // x 占据 b 的目标（非计划图标）
+        // b → BlockedByStationaryIcon → a → BlockedByStationaryIcon（传播）
+        var aItem = p.Items.First(i => i.StableId == "a");
+        var bItem = p.Items.First(i => i.StableId == "b");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon, bItem.State);
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon, aItem.State);
+    }
+
+    [Fact] public void BlockedChain_PropagatesUntilFixedPoint()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(320, 400)), SnapItem("c", new(400, 480))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320)), LiveIcon("c", new(320, 400)),
+             LiveIcon("x", new(400, 480))]);
+        Assert.All(p.Items, i => Assert.Equal(TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon, i.State));
+    }
+
+    // ═══ 依赖 ═══
+
+    [Fact] public void Dependencies_ContainOnlyFinalMoveRequired()
+    {
+        // 交换场景：两个图标形成环，依赖存在于 SCC 中
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        Assert.NotEmpty(p.Cycles); // 环在 SCC 中检测到
+        Assert.True(p.RequiresTemporaryStaging);
+        Assert.Null(p.MoveExecutionOrder);
+    }
+
+    // ═══ 环 ═══
+
+    [Fact] public void TwoIcons_Cycle_RequiresStaging()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        Assert.True(p.RequiresTemporaryStaging);
+        Assert.Single(p.Cycles);
+        Assert.Equal(new[] { "a", "b" }, p.Cycles[0].StableIds);
+        Assert.Null(p.MoveExecutionOrder);
+    }
+
+    [Fact] public void ThreeIcons_Cycle()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(320, 400)), SnapItem("c", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320)), LiveIcon("c", new(320, 400))]);
+        Assert.True(p.RequiresTemporaryStaging);
+        Assert.Single(p.Cycles);
+        Assert.Equal(new[] { "a", "b", "c" }, p.Cycles[0].StableIds);
+    }
+
+    [Fact] public void CycleWithDownstreamNode_CycleExcludesDownstreamNode()
+    {
+        // a↔b 环 + c 依赖 b（下游不进入环）
+        // a 当前(160,240) 目标(320,400) → b 占用 → b→a
+        // b 当前(320,400) 目标(160,240) → a 占用 → a→b (环 {a,b})
+        // c 当前(80,240)  目标(360,440) → 与 b 矩形重叠 → b→c (链)
+        var p = PlanWithIcons(
+            [SnapItem("a", new(320, 400)), SnapItem("b", new(160, 240)), SnapItem("c", new(360, 440))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(320, 400)), LiveIcon("c", new(80, 240))]);
+        Assert.True(p.RequiresTemporaryStaging);
+        Assert.Single(p.Cycles);
+        Assert.Equal(new[] { "a", "b" }, p.Cycles[0].StableIds);
+        Assert.Null(p.MoveExecutionOrder);
+    }
+
+    [Fact] public void TwoDisjointCycles_ProducesTwoCycles()
+    {
+        // 两组独立交换，矩形完全不重叠
+        // 环 1: a(80,80)↔b(160,80)  环 2: c(80,320)↔d(160,320)
+        var p = PlanWithIcons(
+            [SnapItem("a", new(160, 80)), SnapItem("b", new(80, 80)),
+             SnapItem("c", new(160, 320)), SnapItem("d", new(80, 320))],
+            [LiveIcon("a", new(80, 80)), LiveIcon("b", new(160, 80)),
+             LiveIcon("c", new(80, 320)), LiveIcon("d", new(160, 320))]);
+        Assert.True(p.RequiresTemporaryStaging);
+        Assert.False(p.HasBlockingErrors);
+        Assert.Null(p.MoveExecutionOrder);
+        Assert.Equal(2, p.Cycles.Count);
+        Assert.Contains(p.Cycles, c => c.StableIds.SequenceEqual(new[] { "a", "b" }));
+        Assert.Contains(p.Cycles, c => c.StableIds.SequenceEqual(new[] { "c", "d" }));
+    }
+
+    [Fact] public void TwoDisjointCycles_OrderIsStable()
+    {
+        var p1 = PlanWithIcons(
+            [SnapItem("a", new(160, 80)), SnapItem("b", new(80, 80)),
+             SnapItem("c", new(160, 320)), SnapItem("d", new(80, 320))],
+            [LiveIcon("a", new(80, 80)), LiveIcon("b", new(160, 80)),
+             LiveIcon("c", new(80, 320)), LiveIcon("d", new(160, 320))]);
+        var p2 = PlanWithIcons(
+            [SnapItem("a", new(160, 80)), SnapItem("b", new(80, 80)),
+             SnapItem("c", new(160, 320)), SnapItem("d", new(80, 320))],
+            [LiveIcon("a", new(80, 80)), LiveIcon("b", new(160, 80)),
+             LiveIcon("c", new(80, 320)), LiveIcon("d", new(160, 320))]);
+        Assert.Equal(p1.Cycles.Count, p2.Cycles.Count);
+        for (var i = 0; i < p1.Cycles.Count; i++)
+            Assert.Equal(p1.Cycles[i].StableIds, p2.Cycles[i].StableIds);
+    }
+
+    [Fact] public void CycleOrdering_IsStable()
+    {
+        var p1 = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        var p2 = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        Assert.Equal(p1.Cycles.Count, p2.Cycles.Count);
+        Assert.Equal(p1.Cycles[0].StableIds, p2.Cycles[0].StableIds);
+    }
+
+    // ═══ 依赖链 ═══
+
+    [Fact] public void TwoIcons_ChainDependency()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(320, 400))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        Assert.Equal(2, p.MoveRequiredCount);
+        Assert.Single(p.Dependencies);
+        Assert.Equal("b", p.Dependencies[0].DependsOn);
+        Assert.Equal("a", p.Dependencies[0].ActionItem);
+        Assert.NotNull(p.MoveExecutionOrder);
+        Assert.Equal("b", p.MoveExecutionOrder![0]);
+        Assert.Equal("a", p.MoveExecutionOrder![1]);
+    }
+
+    [Fact] public void ThreeIcons_ChainDependency()
+    {
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(320, 400)), SnapItem("c", new(400, 480))],
+            [LiveIcon("a", new(100, 100)), LiveIcon("b", new(240, 320)), LiveIcon("c", new(320, 400))]);
+        Assert.Equal(3, p.MoveRequiredCount);
+        Assert.Equal(2, p.Dependencies.Count);
+        Assert.Equal("c", p.MoveExecutionOrder![0]);
+        Assert.Equal("b", p.MoveExecutionOrder![1]);
+        Assert.Equal("a", p.MoveExecutionOrder![2]);
+    }
+
+    // ═══ Ordinal 大小写 ═══
+
+    [Fact] public void StableId_OrdinalCase()
+    {
+        var p = PlanWithIcons([SnapItem("SID", new(240, 320))], [LiveIcon("sid", new(160, 240))]);
+        Assert.Equal(1, p.MissingCount);
+    }
+
+    [Fact] public void DeviceName_OrdinalCaseMismatch_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
             TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, new[] { MakeDisplay(@"\\.\DISPLAY2") }, MakeCapabilities(), TargetDevice));
+                MakeSnapshot([SnapItem("a", new(160, 240))]),
+                MakeReadResult([LiveIcon("a", new(160, 240))]),
+                new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(),
+                @"\\.\display1")); // 大小写不同
+        Assert.Contains("0 个匹配", ex.Message);
     }
 
-    [Fact]
-    public void DuplicateTargetDisplay_Throws()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice), MakeDisplay(TargetDevice) };
+    // ═══ 溢出 ═══
 
-        Assert.Throws<InvalidOperationException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, displays, MakeCapabilities(), TargetDevice));
+    [Fact] public void TargetRectOverflow_BecomesBlockedItem()
+    {
+        var snaps = new[] { new DesktopIconSnapshotItem(
+            0, "a", "Name_a", null, ItemKind.File,
+            new PixelPoint(int.MaxValue - 1, 0), TargetDevice, false, true) };
+        var lives = new[] { LiveIcon("a", new(100, 100)) };
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot(snaps), MakeReadResult(lives),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea);
     }
 
-    // ═══ 7-8: 快照目标显示器验证 ═══
-
-    [Fact]
-    public void SnapshotTargetMonitorNull_Throws()
+    [Fact] public void CurrentRectOverflow_BecomesIssue()
     {
-        var snap = MakeSnapshotWithNullTarget([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-
-        Assert.Throws<InvalidOperationException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+        var snaps = new[] { SnapItem("a", new(160, 240)) };
+        var lives = new[] { LiveIcon("a", new(100, 100)),
+            new DesktopIconDescriptor("extra", "Extra", null, ItemKind.File,
+                new PixelPoint(int.MaxValue - 1, 0), TargetDevice, false, true) };
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot(snaps), MakeReadResult(lives),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice);
+        Assert.Contains(p.Issues, iss => iss.Code == TargetDisplayLayoutRestorePlanIssueCode.CurrentRectangleOverflow);
     }
 
-    [Fact]
-    public void SnapshotTargetMonitorMismatch_Throws()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))], targetMonitor: @"\\.\DISPLAY2");
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
+    // ═══ 拓扑排序稳定性 ═══
 
-        Assert.Throws<InvalidOperationException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+    [Fact] public void TopologicalOrder_Stable()
+    {
+        var p1 = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(240, 240)), SnapItem("c", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(80, 160)), LiveIcon("c", new(320, 400))]);
+        var p2 = PlanWithIcons(
+            [SnapItem("a", new(240, 320)), SnapItem("b", new(240, 240)), SnapItem("c", new(160, 240))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(80, 160)), LiveIcon("c", new(320, 400))]);
+        Assert.Equal(p1.MoveExecutionOrder, p2.MoveExecutionOrder);
     }
 
-    // ═══ 9: 目标集合为空 ═══
+    // ═══ 跨显示器 ═══
 
-    [Fact]
-    public void SnapshotTargetSetEmpty_IsNoOp()
+    [Fact] public void IconOnOtherDisplay_PlannedBack()
     {
-        // 快照有图标但不属于目标显示器
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240), monitor: @"\\.\DISPLAY2")]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.IsNoOp);
-        Assert.Equal(0, plan.SnapshotTargetIconCount);
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240))]),
+            MakeReadResult([LiveIcon("a", new(999, 999), monitor: @"\\.\DISPLAY2")]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
+        Assert.Equal(1, p.MoveRequiredCount);
     }
 
-    // ═══ 10: 快照目标 StableId 重复 ═══
-
-    [Fact]
-    public void SnapshotStableIdDuplicate_Blocked()
+    [Fact] public void OtherDisplayIcons_Excluded()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240)), SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.HasBlockingErrors);
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate);
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240), monitor: TargetDevice),
+                SnapItem("b", new(300, 400), monitor: @"\\.\DISPLAY2")]),
+            MakeReadResult([LiveIcon("a", new(160, 240))]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
+        Assert.Equal(1, p.SnapshotTargetIconCount);
+        Assert.Contains(p.Items, i => i.StableId == "a");
+        Assert.DoesNotContain(p.Items, i => i.StableId == "b");
     }
 
-    // ═══ 11: 当前 StableId 重复 ═══
+    // ═══ 状态分类 ═══
 
-    [Fact]
-    public void CurrentStableIdDuplicate_Blocked()
+    [Fact] public void Missing() { var p = PlanWithIcons([SnapItem("a", new(160, 240))], []); Assert.Equal(1, p.MissingCount); }
+    [Fact] public void NotFileSystem_Blocked()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(160, 240)), LiveIcon("a", new(240, 320))
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.HasBlockingErrors);
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.DuplicateCurrentStableId);
+        var p = PlanWithIcons([SnapItem("a", new(240, 320))],
+            [LiveIcon("a", new(160, 240), isFileSys: false, isSys: true)]);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.NotFileSystemItem);
     }
-
-    // ═══ 12: 缺失 ═══
-
-    [Fact]
-    public void MissingFromCurrent()
+    [Fact] public void SystemItem_Blocked()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("b", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(1, plan.MissingCount);
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.MissingFromCurrent);
+        var p = PlanWithIcons([SnapItem("a", new(240, 320))],
+            [LiveIcon("a", new(160, 240), isFileSys: true, isSys: true)]);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.SystemItem);
     }
-
-    // ═══ 13-15: 可移动性 ═══
-
-    [Fact]
-    public void NotFileSystemItem_Blocked()
+    [Fact] public void NoMonitor_Blocked()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240), isFileSys: false, isSys: true)]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.NotFileSystemItem);
-    }
-
-    [Fact]
-    public void SystemItem_Blocked()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240), isFileSys: true, isSys: true)]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.SystemItem);
-    }
-
-    [Fact]
-    public void NoMonitorDeviceName_Blocked()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var icon = new DesktopIconDescriptor(
-            "a", "Name_a", null, ItemKind.File,
+        var icon = new DesktopIconDescriptor("a", "Name_a", null, ItemKind.File,
             new PixelPoint(160, 240), null, false, true);
-        var read = MakeReadResult([icon]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.NoMonitorDeviceName);
+        var p = PlanWithIcons([SnapItem("a", new(240, 320))], [icon]);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.NoMonitorDeviceName);
     }
-
-    // ═══ 16-17: 目标边界 ═══
-
-    [Fact]
-    public void TargetOutsideWorkArea_Blocked()
+    [Fact] public void OutsideWorkArea_Blocked()
     {
-        var snap = MakeSnapshot([SnapItem("a", new(900, 700))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea);
+        var p = PlanWithIcons([SnapItem("a", new(900, 700))], [LiveIcon("a", new(160, 240))]);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea);
     }
-
-    [Fact]
-    public void SupportsNegativeCoordinates()
+    [Fact] public void SupportsNegativeCoords()
     {
-        var negWorkArea = new PixelRect(-800, -400, 0, 0);
-        var display = new DisplayDescriptor(
-            TargetDevice, new PixelRect(-800, -400, 0, 0),
-            negWorkArea, 96, 96, true);
-        var snap = MakeSnapshot([SnapItem("a", new(-400, -200))]);
-        var read = MakeReadResult([LiveIcon("a", new(-320, -200))]);
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, new[] { display }, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(1, plan.MoveRequiredCount);
-        Assert.False(plan.HasBlockingErrors);
+        var display = new DisplayDescriptor(TargetDevice, new PixelRect(-800, -400, 0, 0),
+            new PixelRect(-800, -400, 0, 0), 96, 96, true);
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(-400, -200))]),
+            MakeReadResult([LiveIcon("a", new(-320, -200))]),
+            new[] { display }, MakeCapabilities(), TargetDevice);
+        Assert.Equal(1, p.MoveRequiredCount);
     }
 
-    // ═══ 18: 快照目标坐标重复 ═══
-
-    [Fact]
-    public void SnapshotTargetPositionDuplicate_Blocked()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240)), SnapItem("b", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(80, 240)), LiveIcon("b", new(240, 320))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.HasBlockingErrors);
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition);
-    }
-
-    // ═══ 19-20: 占用与依赖 ═══
-
-    [Fact]
-    public void TargetFree_NoDependency()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Empty(plan.Dependencies);
-    }
-
-    [Fact]
-    public void TargetBlockedByExtraIcon_StaticBlock()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(240, 320))]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(160, 240)),
-            LiveIcon("extra", new(240, 320)) // 占用目标位置的非计划图标
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.HasBlockingErrors);
-        Assert.Contains(plan.Items,
-            i => i.State == TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon);
-    }
-
-    // ═══ 21-22: 依赖链 ═══
-
-    [Fact]
-    public void TwoIcons_ChainDependency()
-    {
-        var snap = MakeSnapshot([
-            SnapItem("a", new(240, 320)), // a → (240,320) which is occupied by b
-            SnapItem("b", new(320, 400)),
-        ]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(160, 240)),
-            LiveIcon("b", new(240, 320)), // b occupies a's target
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(2, plan.MoveRequiredCount);
-        Assert.NotEmpty(plan.Dependencies);
-        Assert.NotNull(plan.MoveExecutionOrder);
-    }
-
-    [Fact]
-    public void ThreeIcons_ChainDependency()
-    {
-        var snap = MakeSnapshot([
-            SnapItem("a", new(240, 320)),
-            SnapItem("b", new(320, 400)),
-            SnapItem("c", new(400, 480)),
-        ]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(100, 100)),
-            LiveIcon("b", new(240, 320)), // occupies a's target
-            LiveIcon("c", new(320, 400)), // occupies b's target
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(3, plan.MoveRequiredCount);
-        Assert.Equal(2, plan.Dependencies.Count);
-        Assert.NotNull(plan.MoveExecutionOrder);
-        // c must move first, then b, then a
-        Assert.Equal("c", plan.MoveExecutionOrder![0]);
-        Assert.Equal("b", plan.MoveExecutionOrder![1]);
-        Assert.Equal("a", plan.MoveExecutionOrder![2]);
-    }
-
-    // ═══ 23-24: 环 ═══
-
-    [Fact]
-    public void TwoIcons_Cycle_RequiresStaging()
-    {
-        var snap = MakeSnapshot([
-            SnapItem("a", new(240, 320)),
-            SnapItem("b", new(160, 240)),
-        ]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(160, 240)), // a at b's target
-            LiveIcon("b", new(240, 320)), // b at a's target
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.RequiresTemporaryStaging);
-        Assert.NotEmpty(plan.Cycles);
-        Assert.Null(plan.MoveExecutionOrder);
-    }
-
-    [Fact]
-    public void ThreeIcons_Cycle()
-    {
-        var snap = MakeSnapshot([
-            SnapItem("a", new(240, 320)),
-            SnapItem("b", new(320, 400)),
-            SnapItem("c", new(160, 240)),
-        ]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(160, 240)), // a at c's target
-            LiveIcon("b", new(240, 320)), // b at a's target
-            LiveIcon("c", new(320, 400)), // c at b's target
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.True(plan.RequiresTemporaryStaging);
-        Assert.NotEmpty(plan.Cycles);
-    }
-
-    // ═══ 25-26: Ordinal 大小写 ═══
-
-    [Fact]
-    public void StableId_OrdinalCase()
-    {
-        var snap = MakeSnapshot([SnapItem("SID", new(240, 320))]);
-        var read = MakeReadResult([LiveIcon("sid", new(160, 240))]); // 大小写不同
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(1, plan.MissingCount); // Ordinal 不匹配，视为缺失
-    }
-
-    [Fact]
-    public void DeviceName_OrdinalCase()
-    {
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-
-        var ex = Assert.Throws<ArgumentException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                snap, read, new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), ""));
-    }
-
-    // ═══ 27: 跨显示器移回 ═══
-
-    [Fact]
-    public void IconOnOtherDisplay_PlannedBackToTarget()
-    {
-        var otherDisplay = @"\\.\DISPLAY2";
-        var snap = MakeSnapshot([SnapItem("a", new(160, 240))]); // 目标 DISPLAY1
-        var read = MakeReadResult([
-            LiveIcon("a", new(999, 999), monitor: otherDisplay) // 当前在 DISPLAY2
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice), MakeDisplay(otherDisplay) };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(1, plan.MoveRequiredCount);
-        Assert.False(plan.HasBlockingErrors);
-    }
-
-    // ═══ 28: 其他显示器图标不参与 ═══
-
-    [Fact]
-    public void OtherDisplayIcons_Excluded()
-    {
-        var snap = MakeSnapshot([
-            SnapItem("a", new(160, 240), monitor: TargetDevice),
-            SnapItem("b", new(300, 400), monitor: @"\\.\DISPLAY2"),
-        ]);
-        var read = MakeReadResult([LiveIcon("a", new(160, 240))]);
-        var displays = new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") };
-
-        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(1, plan.SnapshotTargetIconCount);
-        Assert.Contains(plan.Items, i => i.StableId == "a");
-        Assert.DoesNotContain(plan.Items, i => i.StableId == "b");
-    }
-
-    // ═══ 29: 拓扑排序稳定 ═══
-
-    [Fact]
-    public void TopologicalOrder_Stable()
-    {
-        var snap = MakeSnapshot([
-            SnapItem("a", new(240, 320)),
-            SnapItem("b", new(240, 240)),
-            SnapItem("c", new(160, 240)),
-        ]);
-        var read = MakeReadResult([
-            LiveIcon("a", new(160, 240)),
-            LiveIcon("b", new(80, 160)),
-            LiveIcon("c", new(320, 400)),
-        ]);
-        var displays = new[] { MakeDisplay(TargetDevice) };
-
-        var plan1 = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-        var plan2 = TargetDisplayLayoutRestorePlanner.CreatePlan(
-            snap, read, displays, MakeCapabilities(), TargetDevice);
-
-        Assert.Equal(plan1.MoveExecutionOrder, plan2.MoveExecutionOrder);
-    }
-
-    // ═══ 30: 参数验证 ═══
-
-    [Fact]
-    public void NullSnapshot_Throws() =>
-        Assert.Throws<ArgumentNullException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                null!, MakeReadResult([]), new[] { MakeDisplay(TargetDevice) },
-                MakeCapabilities(), TargetDevice));
-
-    [Fact]
-    public void NullReadResult_Throws() =>
-        Assert.Throws<ArgumentNullException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                MakeSnapshot([]), null!, new[] { MakeDisplay(TargetDevice) },
-                MakeCapabilities(), TargetDevice));
-
-    [Fact]
-    public void NullDisplays_Throws() =>
-        Assert.Throws<ArgumentNullException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                MakeSnapshot([]), MakeReadResult([]), null!,
-                MakeCapabilities(), TargetDevice));
-
-    [Fact]
-    public void NullCapabilities_Throws() =>
-        Assert.Throws<ArgumentNullException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                MakeSnapshot([]), MakeReadResult([]), new[] { MakeDisplay(TargetDevice) },
-                null!, TargetDevice));
-
-    [Fact]
-    public void NullTargetDeviceName_Throws() =>
-        Assert.Throws<ArgumentNullException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                MakeSnapshot([]), MakeReadResult([]), new[] { MakeDisplay(TargetDevice) },
-                MakeCapabilities(), null!));
-
-    [Fact]
-    public void WhitespaceTargetDeviceName_Throws() =>
-        Assert.Throws<ArgumentException>(() =>
-            TargetDisplayLayoutRestorePlanner.CreatePlan(
-                MakeSnapshot([]), MakeReadResult([]), new[] { MakeDisplay(TargetDevice) },
-                MakeCapabilities(), "   "));
+    // ═══ 参数验证 ═══
+    [Fact] public void NullSnapshot_Throws() => Assert.Throws<ArgumentNullException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(null!, MakeReadResult([]),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+    [Fact] public void NullRead_Throws() => Assert.Throws<ArgumentNullException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(MakeSnapshot([]), null!,
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
+    [Fact] public void NullDisplays_Throws() => Assert.Throws<ArgumentNullException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(MakeSnapshot([]), MakeReadResult([]),
+            null!, MakeCapabilities(), TargetDevice));
+    [Fact] public void NullCaps_Throws() => Assert.Throws<ArgumentNullException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(MakeSnapshot([]), MakeReadResult([]),
+            new[] { MakeDisplay(TargetDevice) }, null!, TargetDevice));
+    [Fact] public void NullDevice_Throws() => Assert.Throws<ArgumentNullException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(MakeSnapshot([]), MakeReadResult([]),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), null!));
+    [Fact] public void WhitespaceDevice_Throws() => Assert.Throws<ArgumentException>(() =>
+        TargetDisplayLayoutRestorePlanner.CreatePlan(MakeSnapshot([]), MakeReadResult([]),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), "   "));
 }

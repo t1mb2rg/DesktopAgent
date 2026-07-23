@@ -4,10 +4,6 @@ using DesktopAgent.Core.Geometry;
 
 namespace DesktopAgent.Core.DesktopLayouts.Restore;
 
-/// <summary>
-/// 目标显示器布局恢复规划器。纯逻辑，不访问 Shell COM、SQLite、WPF、WindowsInterop。
-/// 只生成计划，不执行计划。
-/// </summary>
 public static class TargetDisplayLayoutRestorePlanner
 {
     public static TargetDisplayLayoutRestorePlan CreatePlan(
@@ -17,7 +13,7 @@ public static class TargetDisplayLayoutRestorePlanner
         DesktopIconPositioningCapabilities capabilities,
         string targetDeviceName)
     {
-        // ── 参数验证 ──
+        // ═══ 阶段 1: 参数和全局前置验证 ═══
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(currentReadResult);
         ArgumentNullException.ThrowIfNull(currentDisplays);
@@ -27,7 +23,6 @@ public static class TargetDisplayLayoutRestorePlanner
         if (string.IsNullOrWhiteSpace(targetDeviceName))
             throw new ArgumentException("targetDeviceName 不能为空白。", nameof(targetDeviceName));
 
-        // ── 全局前置验证 ──
         if (currentReadResult.FailedItemCount != 0)
             throw new InvalidOperationException(
                 $"当前读取不完整（{currentReadResult.FailedItemCount} 个失败），不能生成恢复计划。");
@@ -38,374 +33,441 @@ public static class TargetDisplayLayoutRestorePlanner
 
         var targetDisplay = UniqueDisplaySelector.FindByDeviceName(currentDisplays, targetDeviceName);
 
-        // 快照目标显示器必须一致
         if (snapshot.TargetMonitorDeviceName is null)
             throw new InvalidOperationException("快照的 TargetMonitorDeviceName 为 null，不能用于指定显示器恢复。");
         if (!string.Equals(snapshot.TargetMonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
             throw new InvalidOperationException(
                 $"快照目标显示器 {snapshot.TargetMonitorDeviceName} 与请求的 {targetDeviceName} 不一致。");
 
-        // ── 快照目标集合：仅属于目标显示器的图标 ──
+        var issues = new List<TargetDisplayLayoutRestorePlanIssue>();
+
+        // ═══ 阶段 2: 建立完整快照目标集合 ═══
         var snapshotTargetIcons = new List<DesktopIconSnapshotItem>();
         foreach (var icon in snapshot.Icons)
         {
             if (icon.MonitorDeviceName is not null
                 && string.Equals(icon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
-            {
                 snapshotTargetIcons.Add(icon);
-            }
         }
-
-        var items = new List<TargetDisplayLayoutRestorePlanItem>();
-        var dependencies = new List<TargetDisplayLayoutRestoreDependency>();
-        var cycles = new List<TargetDisplayLayoutRestoreCycle>();
 
         if (snapshotTargetIcons.Count == 0)
         {
             return new TargetDisplayLayoutRestorePlan(
                 targetDeviceName, 0, 0, 0, 0, 0,
                 false, false, true,
-                items, dependencies, cycles, null);
+                new List<TargetDisplayLayoutRestorePlanItem>(),
+                new List<TargetDisplayLayoutRestoreDependency>(),
+                new List<TargetDisplayLayoutRestoreCycle>(),
+                issues,
+                null);
         }
 
-        // ── 快照目标集合 StableId 唯一性 ──
-        var snapshotStableIds = new Dictionary<string, int>(StringComparer.Ordinal);
+        // ═══ 阶段 3: 快照 StableId 重复分组 ═══
+        var sidCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var sidIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         for (var i = 0; i < snapshotTargetIcons.Count; i++)
         {
             var sid = snapshotTargetIcons[i].StableId;
-            if (snapshotStableIds.ContainsKey(sid))
-            {
-                // 标记重复项
-                var firstIdx = snapshotStableIds[sid];
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    sid, snapshotTargetIcons[i].DisplayName,
-                    snapshotTargetIcons[i].PixelPosition, null, null,
-                    TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate,
-                    snapshotTargetIcons[i].IsFileSystemItem,
-                    snapshotTargetIcons[i].IsSystemItem,
-                    $"快照目标集合中 StableId \"{sid}\" 重复（索引 {firstIdx} 和 {i}）。"));
-                snapshotStableIds[sid] = -1; // 标记为已处理
-                continue;
-            }
-            snapshotStableIds[sid] = i;
+            sidCounts.TryGetValue(sid, out var c);
+            sidCounts[sid] = c + 1;
+            if (!sidIndices.ContainsKey(sid))
+                sidIndices[sid] = new List<int>();
+            sidIndices[sid].Add(i);
         }
 
-        // ── 当前桌面 StableId 索引 ──
-        var currentByStableId = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        // ═══ 阶段 4: 快照目标坐标重复分组 ═══
+        var posIndices = new Dictionary<PixelPoint, List<int>>();
+        for (var i = 0; i < snapshotTargetIcons.Count; i++)
+        {
+            var pos = snapshotTargetIcons[i].PixelPosition;
+            if (!posIndices.ContainsKey(pos))
+                posIndices[pos] = new List<int>();
+            posIndices[pos].Add(i);
+        }
+
+        // ═══ 阶段 5: 当前完整桌面 StableId 分组（全局唯一性）═══
+        var currentBySid = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         for (var i = 0; i < currentReadResult.Icons.Count; i++)
         {
             var sid = currentReadResult.Icons[i].StableId;
-            if (!currentByStableId.ContainsKey(sid))
-                currentByStableId[sid] = new List<int>();
-            currentByStableId[sid].Add(i);
+            if (!currentBySid.ContainsKey(sid))
+                currentBySid[sid] = new List<int>();
+            currentBySid[sid].Add(i);
         }
 
-        // ── 快照目标坐标重复检测 ──
-        var snapshotPosUsage = new Dictionary<PixelPoint, string>();
-        var duplicateSnapshotPositions = new HashSet<PixelPoint>();
+        foreach (var (sid, idxs) in currentBySid)
+        {
+            if (idxs.Count > 1)
+                issues.Add(new TargetDisplayLayoutRestorePlanIssue(
+                    TargetDisplayLayoutRestorePlanIssueCode.DuplicateCurrentStableId,
+                    $"当前桌面中 StableId \"{sid}\" 出现 {idxs.Count} 次（预期恰好 1 次）。",
+                    sid));
+        }
 
-        // ── 对每个快照目标图标分类 ──
-        var moveRequiredItems = new List<(TargetDisplayLayoutRestorePlanItem Item, int ItemIndex)>();
-        var blockReasonsForStableId = new Dictionary<string, string>(StringComparer.Ordinal);
+        // 当前桌面坐标溢出检测
+        for (var i = 0; i < currentReadResult.Icons.Count; i++)
+        {
+            if (!TryCreateIconRect(currentReadResult.Icons[i].PixelPosition, capabilities.Spacing, out _))
+            {
+                issues.Add(new TargetDisplayLayoutRestorePlanIssue(
+                    TargetDisplayLayoutRestorePlanIssueCode.CurrentRectangleOverflow,
+                    $"当前图标 #{i} \"{currentReadResult.Icons[i].DisplayName}\" ({currentReadResult.Icons[i].StableId}) 坐标 " +
+                    $"({currentReadResult.Icons[i].PixelPosition.X},{currentReadResult.Icons[i].PixelPosition.Y}) 计算占用矩形时溢出。",
+                    currentReadResult.Icons[i].StableId));
+            }
+        }
 
+        var hasGlobalBlockingIssue = issues.Any(issue =>
+            issue.Code == TargetDisplayLayoutRestorePlanIssueCode.DuplicateCurrentStableId
+            || issue.Code == TargetDisplayLayoutRestorePlanIssueCode.CurrentRectangleOverflow);
+
+        // ═══ 阶段 6: 为每个快照目标条目建立一个计划项 ═══
+        var items = new List<TargetDisplayLayoutRestorePlanItem>();
         for (var i = 0; i < snapshotTargetIcons.Count; i++)
         {
             var snapIcon = snapshotTargetIcons[i];
-            if (snapshotStableIds[snapIcon.StableId] < 0) continue; // 已处理重复
+            var sidDupCount = sidCounts[snapIcon.StableId];
+            var posDupCount = posIndices[snapIcon.PixelPosition].Count;
 
-            // 当前匹配
-            if (!currentByStableId.TryGetValue(snapIcon.StableId, out var currentMatches))
+            // 快照级错误收集
+            var errorParts = new List<string>();
+
+            if (sidDupCount > 1)
+                errorParts.Add($"快照目标集合中 StableId \"{snapIcon.StableId}\" 出现 {sidDupCount} 次（包括索引 {i}）。");
+
+            if (posDupCount > 1 && posIndices[snapIcon.PixelPosition].FindIndex(idx => idx != i
+                && string.Equals(snapshotTargetIcons[idx].StableId, snapIcon.StableId, StringComparison.Ordinal) == false) >= 0)
             {
+                var otherSids = posIndices[snapIcon.PixelPosition]
+                    .Where(idx => !string.Equals(snapshotTargetIcons[idx].StableId, snapIcon.StableId, StringComparison.Ordinal))
+                    .Select(idx => snapshotTargetIcons[idx].StableId).Distinct(StringComparer.Ordinal);
+                errorParts.Add($"快照目标位置 ({snapIcon.PixelPosition.X},{snapIcon.PixelPosition.Y}) 被 {otherSids.Count() + 1} 个不同 StableId 指向（索引 {i}）。");
+            }
+
+            if (errorParts.Count > 0)
+            {
+                // 优先 SidDuplicate，其次坐标重复
+                var dupState = sidDupCount > 1
+                    ? TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate
+                    : TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition;
+
                 items.Add(new TargetDisplayLayoutRestorePlanItem(
                     snapIcon.StableId, snapIcon.DisplayName,
                     snapIcon.PixelPosition, null, null,
-                    TargetDisplayLayoutRestoreItemState.MissingFromCurrent,
+                    dupState,
                     snapIcon.IsFileSystemItem, snapIcon.IsSystemItem,
-                    $"StableId \"{snapIcon.StableId}\" 在当前桌面中未找到。"));
+                    string.Join(" ", errorParts)));
                 continue;
             }
 
-            if (currentMatches.Count > 1)
+            items.Add(new TargetDisplayLayoutRestorePlanItem(
+                snapIcon.StableId, snapIcon.DisplayName,
+                snapIcon.PixelPosition, null, null,
+                TargetDisplayLayoutRestoreItemState.MissingFromCurrent, // 临时占位
+                snapIcon.IsFileSystemItem, snapIcon.IsSystemItem));
+        }
+
+        // 不变量：items.Count == snapshotTargetIcons.Count
+
+        // ═══ 阶段 7: 当前匹配和基础状态分类 ═══
+        // 保存每个快照项 -> 当前匹配索引
+        var snapToCurrentIndex = new Dictionary<int, int>(); // snapshotIndex -> currentIndex
+
+        for (var si = 0; si < snapshotTargetIcons.Count; si++)
+        {
+            if (items[si].State == TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate
+                || items[si].State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition)
+                continue; // 已在阶段 6 处理
+
+            var snapIcon = snapshotTargetIcons[si];
+
+            if (!currentBySid.TryGetValue(snapIcon.StableId, out var cidxes))
             {
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, null, null,
-                    TargetDisplayLayoutRestoreItemState.DuplicateCurrentStableId,
-                    snapIcon.IsFileSystemItem, snapIcon.IsSystemItem,
-                    $"StableId \"{snapIcon.StableId}\" 在当前桌面中有 {currentMatches.Count} 个匹配。"));
+                items[si] = items[si] with
+                {
+                    State = TargetDisplayLayoutRestoreItemState.MissingFromCurrent,
+                    BlockReason = $"StableId \"{snapIcon.StableId}\" 在当前桌面中未找到。"
+                };
                 continue;
             }
 
-            var currentIcon = currentReadResult.Icons[currentMatches[0]];
+            if (cidxes.Count > 1)
+            {
+                items[si] = items[si] with
+                {
+                    State = TargetDisplayLayoutRestoreItemState.DuplicateCurrentStableId,
+                    BlockReason = $"StableId \"{snapIcon.StableId}\" 在当前桌面中有 {cidxes.Count} 个匹配。"
+                };
+                continue;
+            }
+
+            var ci = cidxes[0];
+            snapToCurrentIndex[si] = ci;
+            var currentIcon = currentReadResult.Icons[ci];
 
             // 可移动性验证
             if (!currentIcon.IsFileSystemItem)
             {
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, currentIcon.PixelPosition,
-                    currentIcon.MonitorDeviceName,
-                    TargetDisplayLayoutRestoreItemState.NotFileSystemItem,
-                    currentIcon.IsFileSystemItem, currentIcon.IsSystemItem,
-                    $"当前图标 \"{currentIcon.DisplayName}\" 不是文件系统项目。"));
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.NotFileSystemItem,
+                    BlockReason = $"当前图标 \"{currentIcon.DisplayName}\" 不是文件系统项目。"
+                };
                 continue;
             }
 
             if (currentIcon.IsSystemItem)
             {
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, currentIcon.PixelPosition,
-                    currentIcon.MonitorDeviceName,
-                    TargetDisplayLayoutRestoreItemState.SystemItem,
-                    currentIcon.IsFileSystemItem, currentIcon.IsSystemItem,
-                    $"当前图标 \"{currentIcon.DisplayName}\" 是系统项目。"));
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.SystemItem,
+                    BlockReason = $"当前图标 \"{currentIcon.DisplayName}\" 是系统项目。"
+                };
                 continue;
             }
 
             if (currentIcon.MonitorDeviceName is null)
             {
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, currentIcon.PixelPosition,
-                    null,
-                    TargetDisplayLayoutRestoreItemState.NoMonitorDeviceName,
-                    currentIcon.IsFileSystemItem, currentIcon.IsSystemItem,
-                    $"当前图标 \"{currentIcon.DisplayName}\" 没有显示器归属。"));
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    State = TargetDisplayLayoutRestoreItemState.NoMonitorDeviceName,
+                    BlockReason = $"当前图标 \"{currentIcon.DisplayName}\" 没有显示器归属。"
+                };
                 continue;
             }
 
-            // 目标坐标边界验证
-            var targetRect = RectFromPosition(snapIcon.PixelPosition, capabilities.Spacing);
+            // 目标坐标验证
+            if (!TryCreateIconRect(snapIcon.PixelPosition, capabilities.Spacing, out var targetRect))
+            {
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea,
+                    BlockReason = $"快照目标位置 ({snapIcon.PixelPosition.X},{snapIcon.PixelPosition.Y}) 计算占用矩形时溢出，视为越出工作区。"
+                };
+                continue;
+            }
+
             if (!RectsFullyContained(targetRect, targetDisplay.WorkArea))
             {
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, currentIcon.PixelPosition,
-                    currentIcon.MonitorDeviceName,
-                    TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea,
-                    currentIcon.IsFileSystemItem, currentIcon.IsSystemItem,
-                    $"快照目标位置 ({snapIcon.PixelPosition.X},{snapIcon.PixelPosition.Y}) 越出当前工作区 " +
-                    $"({targetDisplay.WorkArea.Left},{targetDisplay.WorkArea.Top})-({targetDisplay.WorkArea.Right},{targetDisplay.WorkArea.Bottom})。"));
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea,
+                    BlockReason = $"快照目标位置 ({snapIcon.PixelPosition.X},{snapIcon.PixelPosition.Y}) 越出工作区 " +
+                        $"({targetDisplay.WorkArea.Left},{targetDisplay.WorkArea.Top})-({targetDisplay.WorkArea.Right},{targetDisplay.WorkArea.Bottom})。"
+                };
                 continue;
-            }
-
-            // 检查快照目标坐标重复
-            if (snapshotPosUsage.TryGetValue(snapIcon.PixelPosition, out var otherStableId))
-            {
-                duplicateSnapshotPositions.Add(snapIcon.PixelPosition);
-                blockReasonsForStableId[snapIcon.StableId] =
-                    $"快照目标位置 ({snapIcon.PixelPosition.X},{snapIcon.PixelPosition.Y}) 与 StableId \"{otherStableId}\" 的目标位置重复。";
-                blockReasonsForStableId[otherStableId] =
-                    $"快照目标位置 ({snapIcon.PixelPosition.X},{snapIcon.PixelPosition.Y}) 与 StableId \"{snapIcon.StableId}\" 的目标位置重复。";
-            }
-            else
-            {
-                snapshotPosUsage[snapIcon.PixelPosition] = snapIcon.StableId;
             }
 
             // 已在目标位置？
             if (currentIcon.PixelPosition == snapIcon.PixelPosition)
             {
-                items.Add(new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, currentIcon.PixelPosition,
-                    currentIcon.MonitorDeviceName,
-                    TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
-                    currentIcon.IsFileSystemItem, currentIcon.IsSystemItem));
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                    IsFileSystemItem = currentIcon.IsFileSystemItem,
+                    IsSystemItem = currentIcon.IsSystemItem,
+                };
             }
             else
             {
-                var item = new TargetDisplayLayoutRestorePlanItem(
-                    snapIcon.StableId, snapIcon.DisplayName,
-                    snapIcon.PixelPosition, currentIcon.PixelPosition,
-                    currentIcon.MonitorDeviceName,
-                    TargetDisplayLayoutRestoreItemState.MoveRequired,
-                    currentIcon.IsFileSystemItem, currentIcon.IsSystemItem);
-                items.Add(item);
-                moveRequiredItems.Add((item, items.Count - 1));
-            }
-        }
-
-        // ── 处理快照目标坐标重复 ──
-        for (var i = 0; i < items.Count; i++)
-        {
-            if (duplicateSnapshotPositions.Contains(items[i].SnapshotTargetPosition)
-                && items[i].State != TargetDisplayLayoutRestoreItemState.SnapshotStableIdDuplicate)
-            {
-                items[i] = items[i] with
+                items[si] = items[si] with
                 {
-                    State = TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition,
-                    BlockReason = blockReasonsForStableId.TryGetValue(items[i].StableId, out var r)
-                        ? r : items[i].BlockReason
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.MoveRequired,
+                    IsFileSystemItem = currentIcon.IsFileSystemItem,
+                    IsSystemItem = currentIcon.IsSystemItem,
                 };
             }
         }
 
-        // ── 占用分析：对每个 MoveRequired 项检查目标位置占用 ──
-        foreach (var (item, idx) in moveRequiredItems)
+        // ═══ 阶段 8: 占用关系收集（全量扫描）═══
+        // (actionSi, occupierSi) -> 占用者在目标位置
+        var occupierPairs = new List<(int ActionSi, int OccupierSi)>();
+        // (actionSi, extraCurrentIndex) -> 非计划图标占用
+        var extraOccupierPairs = new List<(int ActionSi, int ExtraCurrentIndex)>();
+
+        for (var si = 0; si < snapshotTargetIcons.Count; si++)
         {
-            var targetPos = item.SnapshotTargetPosition;
-            var targetRect = RectFromPosition(targetPos, capabilities.Spacing);
+            if (items[si].State != TargetDisplayLayoutRestoreItemState.MoveRequired)
+                continue;
 
-            // 检查是否由另一个 MoveRequired 项占用
-            DesktopIconDescriptor? occupyingCurrent = null;
-            foreach (var currentIcon in currentReadResult.Icons)
+            if (!TryCreateIconRect(items[si].SnapshotTargetPosition, capabilities.Spacing, out var targetRect))
+                continue;
+
+            if (!snapToCurrentIndex.TryGetValue(si, out var selfCurrentIdx))
+                continue;
+
+            for (var ci = 0; ci < currentReadResult.Icons.Count; ci++)
             {
-                if (currentIcon.PixelPosition == item.CurrentPosition) continue; // 自身
+                if (ci == selfCurrentIdx) continue; // 排除自身
 
-                var currentRect = RectFromPosition(currentIcon.PixelPosition, capabilities.Spacing);
+                if (!TryCreateIconRect(currentReadResult.Icons[ci].PixelPosition, capabilities.Spacing, out var currentRect))
+                    continue;
+
                 if (RectsOverlap(targetRect, currentRect))
                 {
-                    occupyingCurrent = currentIcon;
-                    break;
-                }
-            }
-
-            if (occupyingCurrent is not null)
-            {
-                // 占用者是否也是 MoveRequired 或 AlreadyAtTarget？
-                var occupierPlanItem = items.FirstOrDefault(
-                    pi => string.Equals(pi.StableId, occupyingCurrent.StableId, StringComparison.Ordinal));
-
-                if (occupierPlanItem is not null
-                    && (occupierPlanItem.State == TargetDisplayLayoutRestoreItemState.MoveRequired
-                        || occupierPlanItem.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget))
-                {
-                    if (occupierPlanItem.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
+                    // 查找该当前图标对应的快照项
+                    var occupierSi = -1;
+                    for (var osi = 0; osi < snapshotTargetIcons.Count; osi++)
                     {
-                        // 依赖：占用者必须先移动
-                        dependencies.Add(new TargetDisplayLayoutRestoreDependency(
-                            occupierPlanItem.StableId, item.StableId));
-                    }
-                    else
-                    {
-                        // AlreadyAtTarget 占用 → 静态阻断
-                        items[idx] = item with
+                        if (snapToCurrentIndex.TryGetValue(osi, out var oci) && oci == ci)
                         {
-                            State = TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon,
-                            BlockReason = $"目标位置被已就位图标 \"{occupierPlanItem.DisplayName}\" ({occupierPlanItem.StableId}) 占用，不会移动。"
-                        };
+                            occupierSi = osi;
+                            break;
+                        }
                     }
-                }
-                else
-                {
-                    // 占用者不在恢复集合中或不可移动 → 静态阻断
-                    items[idx] = item with
-                    {
-                        State = TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon,
-                        BlockReason = $"目标位置被非计划图标 \"{occupyingCurrent.DisplayName}\" ({occupyingCurrent.StableId}) 占用。"
-                    };
+
+                    if (occupierSi >= 0)
+                        occupierPairs.Add((si, occupierSi));
+                    else
+                        extraOccupierPairs.Add((si, ci));
                 }
             }
         }
 
-        // ── 拓扑排序与环检测 ──
-        IReadOnlyList<string>? executionOrder = null;
-        var hasCycle = false;
+        // ═══ 阶段 9: 阻断状态固定点传播 ═══
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
 
+            for (var si = 0; si < snapshotTargetIcons.Count; si++)
+            {
+                if (items[si].State != TargetDisplayLayoutRestoreItemState.MoveRequired)
+                    continue;
+
+                // 收集该动作项的全部占用者状态
+                var blockers = FindAllBlockers(si, occupierPairs, extraOccupierPairs,
+                    currentReadResult, items, snapshotTargetIcons, snapToCurrentIndex);
+
+                if (blockers.stationary.Count > 0 || blockers.blocked.Count > 0)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine($"目标位置 ({items[si].SnapshotTargetPosition.X},{items[si].SnapshotTargetPosition.Y}) 被以下不可移动图标占用：");
+                    foreach (var (bSi, _) in blockers.blocked)
+                        sb.AppendLine($"  被阻断项 \"{items[bSi].DisplayName}\" ({items[bSi].StableId}) — 已不会移动");
+                    foreach (var (_, ci) in blockers.stationary)
+                        sb.AppendLine($"  非计划图标 \"{currentReadResult.Icons[ci].DisplayName}\" ({currentReadResult.Icons[ci].StableId})");
+                    foreach (var (bSi, _) in blockers.alreadyAtTarget)
+                        sb.AppendLine($"  已就位图标 \"{items[bSi].DisplayName}\" ({items[bSi].StableId}) — 不会移动");
+
+                    items[si] = items[si] with
+                    {
+                        State = TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon,
+                        BlockReason = sb.ToString().TrimEnd()
+                    };
+                    changed = true;
+                }
+            }
+        }
+
+        // ═══ 阶段 10: 建立最终依赖图 ═══
+        var dependencies = new List<TargetDisplayLayoutRestoreDependency>();
+        for (var si = 0; si < snapshotTargetIcons.Count; si++)
+        {
+            if (items[si].State != TargetDisplayLayoutRestoreItemState.MoveRequired)
+                continue;
+
+            foreach (var (actionSi, occupierSi) in occupierPairs)
+            {
+                if (actionSi != si) continue;
+                if (items[occupierSi].State != TargetDisplayLayoutRestoreItemState.MoveRequired)
+                    continue; // 占用者已不是 MoveRequired（已被阻断或就位）
+                dependencies.Add(new TargetDisplayLayoutRestoreDependency(
+                    items[occupierSi].StableId, items[actionSi].StableId));
+            }
+        }
+
+        // ═══ 阶段 11: SCC 环检测 (Tarjan) ═══
         var moveItems = items
-            .Where(it => it.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
+            .Select((it, idx) => (Item: it, SnapIdx: idx))
+            .Where(x => x.Item.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
             .ToList();
+
+        var cycles = new List<TargetDisplayLayoutRestoreCycle>();
+        bool hasCycle;
 
         if (moveItems.Count > 0 && dependencies.Count > 0)
         {
-            var inDegree = new Dictionary<string, int>(StringComparer.Ordinal);
-            var adj = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-
-            foreach (var mi in moveItems)
-            {
-                inDegree[mi.StableId] = 0;
-                adj[mi.StableId] = new List<string>();
-            }
-
-            foreach (var dep in dependencies)
-            {
-                if (inDegree.ContainsKey(dep.DependsOn) && inDegree.ContainsKey(dep.ActionItem))
-                {
-                    adj[dep.DependsOn].Add(dep.ActionItem);
-                    inDegree[dep.ActionItem] = inDegree[dep.ActionItem] + 1;
-                }
-            }
-
-            var queue = new Queue<string>();
-            foreach (var mi in moveItems)
-            {
-                if (inDegree[mi.StableId] == 0)
-                    queue.Enqueue(mi.StableId);
-            }
-
-            var sorted = new List<string>();
-            while (queue.Count > 0)
-            {
-                var current = queue.Dequeue();
-                sorted.Add(current);
-                foreach (var neighbor in adj[current])
-                {
-                    inDegree[neighbor]--;
-                    if (inDegree[neighbor] == 0)
-                        queue.Enqueue(neighbor);
-                }
-            }
-
-            if (sorted.Count < moveItems.Count)
-            {
-                // 存在环
-                hasCycle = true;
-                var remaining = new List<string>();
-                foreach (var mi in moveItems)
-                {
-                    if (!sorted.Contains(mi.StableId))
-                        remaining.Add(mi.StableId);
-                }
-                cycles.Add(new TargetDisplayLayoutRestoreCycle(remaining));
-            }
-            else
-            {
-                executionOrder = sorted;
-            }
+            (cycles, hasCycle) = DetectCycles(moveItems, dependencies);
         }
-        else if (moveItems.Count > 0)
+        else
         {
-            // 无依赖，执行顺序为快照顺序（确定性）
-            executionOrder = moveItems.Select(mi => mi.StableId).ToList();
+            hasCycle = false;
         }
 
-        // ── 统计摘要 ──
+        // ═══ 阶段 12: 确定性拓扑排序 ═══
+        IReadOnlyList<string>? executionOrder = null;
+
+        if (!hasCycle)
+        {
+            var anyBlocking = items.Any(it =>
+                it.State != TargetDisplayLayoutRestoreItemState.AlreadyAtTarget
+                && it.State != TargetDisplayLayoutRestoreItemState.MoveRequired
+                && it.State != TargetDisplayLayoutRestoreItemState.MissingFromCurrent);
+
+            if (!anyBlocking && !hasGlobalBlockingIssue && moveItems.Count > 0)
+            {
+                executionOrder = DeterministicTopologicalSort(moveItems, dependencies);
+            }
+            else if (moveItems.Count == 0)
+            {
+                executionOrder = new List<string>();
+            }
+        }
+
+        // ═══ 阶段 13: 生成摘要 ═══
         var alreadyCount = items.Count(it => it.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget);
-        var moveCount = moveItems.Count(it => it.State == TargetDisplayLayoutRestoreItemState.MoveRequired);
+        var moveCount = items.Count(it => it.State == TargetDisplayLayoutRestoreItemState.MoveRequired);
         var missingCount = items.Count(it => it.State == TargetDisplayLayoutRestoreItemState.MissingFromCurrent);
         var blockedCount = items.Count - alreadyCount - moveCount - missingCount;
 
         var hasBlocking = items.Any(it =>
             it.State != TargetDisplayLayoutRestoreItemState.AlreadyAtTarget
             && it.State != TargetDisplayLayoutRestoreItemState.MoveRequired
-            && it.State != TargetDisplayLayoutRestoreItemState.MissingFromCurrent);
+            && it.State != TargetDisplayLayoutRestoreItemState.MissingFromCurrent)
+            || hasGlobalBlockingIssue;
 
-        // MoveRequired 被阻断的也要算
-        var finalMoveRequiredCount = moveItems.Count(it => it.State == TargetDisplayLayoutRestoreItemState.MoveRequired);
-
-        // 0 个 MoveRequired 且无阻断 → IsNoOp
-        var isNoOp = finalMoveRequiredCount == 0 && !hasBlocking && missingCount == 0;
+        var isNoOp = moveCount == 0 && !hasBlocking && missingCount == 0;
 
         return new TargetDisplayLayoutRestorePlan(
             targetDeviceName,
             snapshotTargetIcons.Count,
-            alreadyCount,
-            finalMoveRequiredCount,
-            missingCount,
-            blockedCount,
-            hasBlocking,
-            hasCycle,
-            isNoOp,
-            items,
-            dependencies,
-            cycles,
-            hasBlocking || hasCycle ? null : executionOrder);
+            alreadyCount, moveCount, missingCount, blockedCount,
+            hasBlocking, hasCycle, isNoOp,
+            items, dependencies, cycles, issues,
+            (hasBlocking || hasCycle) ? null : executionOrder);
     }
 
-    private static PixelRect RectFromPosition(PixelPoint position, PixelPoint spacing) =>
-        checked(new PixelRect(position.X, position.Y, position.X + spacing.X, position.Y + spacing.Y));
+    // ═══════════════════════════════════════════════════
+    //  辅助类型和方法
+    // ═══════════════════════════════════════════════════
+
+    private static bool TryCreateIconRect(PixelPoint position, PixelPoint spacing, out PixelRect rect)
+    {
+        try
+        {
+            rect = checked(new PixelRect(position.X, position.Y, position.X + spacing.X, position.Y + spacing.Y));
+            return true;
+        }
+        catch (OverflowException)
+        {
+            rect = default;
+            return false;
+        }
+    }
 
     private static bool RectsFullyContained(PixelRect inner, PixelRect outer) =>
         inner.Left >= outer.Left && inner.Top >= outer.Top
@@ -413,4 +475,200 @@ public static class TargetDisplayLayoutRestorePlanner
 
     private static bool RectsOverlap(PixelRect a, PixelRect b) =>
         a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
+
+    private static (
+        List<(int snapIdx, int currentIdx)> stationary,
+        List<(int snapIdx, int currentIdx)> alreadyAtTarget,
+        List<(int snapIdx, int currentIdx)> blocked)
+        FindAllBlockers(
+            int actionSi,
+            List<(int ActionSi, int OccupierSi)> occupierPairs,
+            List<(int ActionSi, int ExtraCurrentIndex)> extraOccupierPairs,
+            DesktopIconReadResult currentReadResult,
+            List<TargetDisplayLayoutRestorePlanItem> items,
+            List<DesktopIconSnapshotItem> snapshotTargetIcons,
+            Dictionary<int, int> snapToCurrentIndex)
+    {
+        var stationary = new List<(int, int)>();
+        var alreadyAtTarget = new List<(int, int)>();
+        var blocked = new List<(int, int)>();
+
+        foreach (var (asi, osi) in occupierPairs)
+        {
+            if (asi != actionSi) continue;
+            var state = items[osi].State;
+            if (state == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
+                alreadyAtTarget.Add((osi, snapToCurrentIndex.GetValueOrDefault(osi, -1)));
+            else if (state != TargetDisplayLayoutRestoreItemState.MoveRequired)
+                blocked.Add((osi, snapToCurrentIndex.GetValueOrDefault(osi, -1)));
+        }
+
+        foreach (var (asi, eci) in extraOccupierPairs)
+        {
+            if (asi != actionSi) continue;
+            stationary.Add((siByCurrentIndex(eci), eci));
+        }
+
+        return (stationary, alreadyAtTarget, blocked);
+
+        int siByCurrentIndex(int ci)
+        {
+            foreach (var kvp in snapToCurrentIndex)
+                if (kvp.Value == ci) return kvp.Key;
+            return -1;
+        }
+    }
+
+    // ═══ Tarjan SCC ═══
+
+    private static (List<TargetDisplayLayoutRestoreCycle> Cycles, bool HasCycle)
+        DetectCycles(
+            List<(TargetDisplayLayoutRestorePlanItem Item, int SnapIdx)> moveItems,
+            List<TargetDisplayLayoutRestoreDependency> dependencies)
+    {
+        var sidToIdx = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < moveItems.Count; i++)
+            sidToIdx[moveItems[i].Item.StableId] = i;
+
+        var adj = new List<int>[moveItems.Count];
+        for (var i = 0; i < moveItems.Count; i++)
+            adj[i] = new List<int>();
+
+        foreach (var dep in dependencies)
+        {
+            if (sidToIdx.TryGetValue(dep.DependsOn, out var from)
+                && sidToIdx.TryGetValue(dep.ActionItem, out var to))
+            {
+                adj[from].Add(to);
+            }
+        }
+
+        var index = 0;
+        var stack = new Stack<int>();
+        var indices = new int[moveItems.Count];
+        var lowLink = new int[moveItems.Count];
+        var onStack = new bool[moveItems.Count];
+        var allCycles = new List<List<int>>();
+
+        for (var i = 0; i < moveItems.Count; i++)
+            indices[i] = -1;
+
+        for (var v = 0; v < moveItems.Count; v++)
+            if (indices[v] == -1)
+                StrongConnect(v, ref index, stack, indices, lowLink, onStack, adj, allCycles);
+
+        var cycles = new List<TargetDisplayLayoutRestoreCycle>();
+        foreach (var comp in allCycles)
+        {
+            if (comp.Count > 1 || (comp.Count == 1 && adj[comp[0]].Contains(comp[0])))
+            {
+                var sids = comp.Select(i => moveItems[i].Item.StableId)
+                    .OrderBy(s => s, StringComparer.Ordinal).ToList();
+                cycles.Add(new TargetDisplayLayoutRestoreCycle(sids));
+            }
+        }
+
+        // 确定性顺序：按第一个 StableId
+        cycles = cycles.OrderBy(c => c.StableIds[0], StringComparer.Ordinal).ToList();
+
+        return (cycles, cycles.Count > 0);
+    }
+
+    private static void StrongConnect(
+        int v, ref int index, Stack<int> stack,
+        int[] indices, int[] lowLink, bool[] onStack,
+        List<int>[] adj, List<List<int>> allCycles)
+    {
+        indices[v] = index;
+        lowLink[v] = index;
+        index++;
+        stack.Push(v);
+        onStack[v] = true;
+
+        // 相邻节点按 StableId 确定性顺序
+        foreach (var w in adj[v].OrderBy(w => w))
+        {
+            if (indices[w] == -1)
+            {
+                StrongConnect(w, ref index, stack, indices, lowLink, onStack, adj, allCycles);
+                lowLink[v] = Math.Min(lowLink[v], lowLink[w]);
+            }
+            else if (onStack[w])
+            {
+                lowLink[v] = Math.Min(lowLink[v], indices[w]);
+            }
+        }
+
+        if (lowLink[v] == indices[v])
+        {
+            var comp = new List<int>();
+            int w;
+            do
+            {
+                w = stack.Pop();
+                onStack[w] = false;
+                comp.Add(w);
+            } while (w != v);
+            allCycles.Add(comp);
+        }
+    }
+
+    // ═══ 确定性拓扑排序 ═══
+
+    private static IReadOnlyList<string> DeterministicTopologicalSort(
+        List<(TargetDisplayLayoutRestorePlanItem Item, int SnapIdx)> moveItems,
+        List<TargetDisplayLayoutRestoreDependency> dependencies)
+    {
+        var sidToIdx = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < moveItems.Count; i++)
+            sidToIdx[moveItems[i].Item.StableId] = i;
+
+        var adj = new List<int>[moveItems.Count];
+        for (var i = 0; i < moveItems.Count; i++)
+            adj[i] = new List<int>();
+
+        var inDegree = new int[moveItems.Count];
+
+        foreach (var dep in dependencies)
+        {
+            if (sidToIdx.TryGetValue(dep.DependsOn, out var from)
+                && sidToIdx.TryGetValue(dep.ActionItem, out var to))
+            {
+                adj[from].Add(to);
+                inDegree[to]++;
+            }
+        }
+
+        // 零入度候选使用快照索引顺序（确定性）
+        var cmp = Comparer<int>.Create((a, b) =>
+        {
+            var oa = moveItems[a].SnapIdx;
+            var ob = moveItems[b].SnapIdx;
+            var c = oa.CompareTo(ob);
+            if (c != 0) return c;
+            return string.CompareOrdinal(moveItems[a].Item.StableId, moveItems[b].Item.StableId);
+        });
+
+        var available = new SortedSet<int>(cmp);
+        for (var i = 0; i < moveItems.Count; i++)
+            if (inDegree[i] == 0)
+                available.Add(i);
+
+        var sorted = new List<string>();
+        while (available.Count > 0)
+        {
+            var v = available.Min;
+            available.Remove(v);
+            sorted.Add(moveItems[v].Item.StableId);
+
+            foreach (var w in adj[v].OrderBy(w => w, cmp))
+            {
+                inDegree[w]--;
+                if (inDegree[w] == 0)
+                    available.Add(w);
+            }
+        }
+
+        return sorted;
+    }
 }

@@ -18,6 +18,7 @@ public sealed record TargetDisplayLayoutRestorePlan
     public IReadOnlyList<TargetDisplayLayoutRestorePlanItem> Items { get; }
     public IReadOnlyList<TargetDisplayLayoutRestoreDependency> Dependencies { get; }
     public IReadOnlyList<TargetDisplayLayoutRestoreCycle> Cycles { get; }
+    public IReadOnlyList<TargetDisplayLayoutRestorePlanIssue> Issues { get; }
     public IReadOnlyList<string>? MoveExecutionOrder { get; }
 
     public TargetDisplayLayoutRestorePlan(
@@ -33,6 +34,7 @@ public sealed record TargetDisplayLayoutRestorePlan
         IReadOnlyList<TargetDisplayLayoutRestorePlanItem> items,
         IReadOnlyList<TargetDisplayLayoutRestoreDependency> dependencies,
         IReadOnlyList<TargetDisplayLayoutRestoreCycle> cycles,
+        IReadOnlyList<TargetDisplayLayoutRestorePlanIssue> issues,
         IReadOnlyList<string>? moveExecutionOrder)
     {
         TargetDeviceName = targetDeviceName;
@@ -47,6 +49,7 @@ public sealed record TargetDisplayLayoutRestorePlan
         Items = items;
         Dependencies = dependencies;
         Cycles = cycles;
+        Issues = issues;
         MoveExecutionOrder = moveExecutionOrder;
     }
 }
