@@ -50,18 +50,6 @@ public static class TargetDisplayLayoutRestorePlanner
                 snapshotTargetIcons.Add(icon);
         }
 
-        if (snapshotTargetIcons.Count == 0)
-        {
-            return new TargetDisplayLayoutRestorePlan(
-                targetDeviceName, 0, 0, 0, 0, 0,
-                false, false, true,
-                new List<TargetDisplayLayoutRestorePlanItem>(),
-                new List<TargetDisplayLayoutRestoreDependency>(),
-                new List<TargetDisplayLayoutRestoreCycle>(),
-                issues,
-                null);
-        }
-
         // ═══ 阶段 3: 快照 StableId 重复分组 ═══
         var sidCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var sidIndices = new Dictionary<string, List<int>>(StringComparer.Ordinal);
@@ -107,7 +95,7 @@ public static class TargetDisplayLayoutRestorePlanner
         // 当前桌面坐标溢出检测
         for (var i = 0; i < currentReadResult.Icons.Count; i++)
         {
-            if (!TryCreateIconRect(currentReadResult.Icons[i].PixelPosition, capabilities.Spacing, out _))
+            if (!DesktopIconLayoutGeometry.TryCreateRect(currentReadResult.Icons[i].PixelPosition, capabilities.Spacing, out _))
             {
                 issues.Add(new TargetDisplayLayoutRestorePlanIssue(
                     TargetDisplayLayoutRestorePlanIssueCode.CurrentRectangleOverflow,
@@ -120,6 +108,19 @@ public static class TargetDisplayLayoutRestorePlanner
         var hasGlobalBlockingIssue = issues.Any(issue =>
             issue.Code == TargetDisplayLayoutRestorePlanIssueCode.DuplicateCurrentStableId
             || issue.Code == TargetDisplayLayoutRestorePlanIssueCode.CurrentRectangleOverflow);
+
+        // 目标集合为空：仍必须完成全局校验
+        if (snapshotTargetIcons.Count == 0)
+        {
+            return new TargetDisplayLayoutRestorePlan(
+                targetDeviceName, 0, 0, 0, 0, 0,
+                hasGlobalBlockingIssue, false, !hasGlobalBlockingIssue,
+                new List<TargetDisplayLayoutRestorePlanItem>(),
+                new List<TargetDisplayLayoutRestoreDependency>(),
+                new List<TargetDisplayLayoutRestoreCycle>(),
+                issues,
+                null);
+        }
 
         // ═══ 阶段 6: 为每个快照目标条目建立一个计划项 ═══
         var items = new List<TargetDisplayLayoutRestorePlanItem>();
@@ -242,7 +243,7 @@ public static class TargetDisplayLayoutRestorePlanner
             }
 
             // 目标坐标验证
-            if (!TryCreateIconRect(snapIcon.PixelPosition, capabilities.Spacing, out var targetRect))
+            if (!DesktopIconLayoutGeometry.TryCreateRect(snapIcon.PixelPosition, capabilities.Spacing, out var targetRect))
             {
                 items[si] = items[si] with
                 {
@@ -254,7 +255,7 @@ public static class TargetDisplayLayoutRestorePlanner
                 continue;
             }
 
-            if (!RectsFullyContained(targetRect, targetDisplay.WorkArea))
+            if (!DesktopIconLayoutGeometry.IsFullyContained(targetRect, targetDisplay.WorkArea))
             {
                 items[si] = items[si] with
                 {
@@ -267,8 +268,9 @@ public static class TargetDisplayLayoutRestorePlanner
                 continue;
             }
 
-            // 已在目标位置？
-            if (currentIcon.PixelPosition == snapIcon.PixelPosition)
+            // 已在目标位置？（需同时验证坐标和显示器身份）
+            if (currentIcon.PixelPosition == snapIcon.PixelPosition
+                && string.Equals(currentIcon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
             {
                 items[si] = items[si] with
                 {
@@ -303,7 +305,7 @@ public static class TargetDisplayLayoutRestorePlanner
             if (items[si].State != TargetDisplayLayoutRestoreItemState.MoveRequired)
                 continue;
 
-            if (!TryCreateIconRect(items[si].SnapshotTargetPosition, capabilities.Spacing, out var targetRect))
+            if (!DesktopIconLayoutGeometry.TryCreateRect(items[si].SnapshotTargetPosition, capabilities.Spacing, out var targetRect))
                 continue;
 
             if (!snapToCurrentIndex.TryGetValue(si, out var selfCurrentIdx))
@@ -313,10 +315,10 @@ public static class TargetDisplayLayoutRestorePlanner
             {
                 if (ci == selfCurrentIdx) continue; // 排除自身
 
-                if (!TryCreateIconRect(currentReadResult.Icons[ci].PixelPosition, capabilities.Spacing, out var currentRect))
+                if (!DesktopIconLayoutGeometry.TryCreateRect(currentReadResult.Icons[ci].PixelPosition, capabilities.Spacing, out var currentRect))
                     continue;
 
-                if (RectsOverlap(targetRect, currentRect))
+                if (DesktopIconLayoutGeometry.Overlaps(targetRect, currentRect))
                 {
                     // 查找该当前图标对应的快照项
                     var occupierSi = -1;
@@ -352,10 +354,11 @@ public static class TargetDisplayLayoutRestorePlanner
                 var blockers = FindAllBlockers(si, occupierPairs, extraOccupierPairs,
                     currentReadResult, items, snapshotTargetIcons, snapToCurrentIndex);
 
-                if (blockers.stationary.Count > 0 || blockers.blocked.Count > 0)
+                if (blockers.stationary.Count > 0 || blockers.blocked.Count > 0 || blockers.alreadyAtTarget.Count > 0)
                 {
                     var sb = new System.Text.StringBuilder();
-                    sb.AppendLine($"目标位置 ({items[si].SnapshotTargetPosition.X},{items[si].SnapshotTargetPosition.Y}) 被以下不可移动图标占用：");
+                    sb.Append($"被恢复项 \"{items[si].DisplayName}\" ({items[si].StableId}) 的目标位置 ");
+                    sb.AppendLine($"({items[si].SnapshotTargetPosition.X},{items[si].SnapshotTargetPosition.Y}) 被以下不可移动图标占用：");
                     foreach (var (bSi, _) in blockers.blocked)
                         sb.AppendLine($"  被阻断项 \"{items[bSi].DisplayName}\" ({items[bSi].StableId}) — 已不会移动");
                     foreach (var (_, ci) in blockers.stationary)
@@ -454,27 +457,6 @@ public static class TargetDisplayLayoutRestorePlanner
     // ═══════════════════════════════════════════════════
     //  辅助类型和方法
     // ═══════════════════════════════════════════════════
-
-    private static bool TryCreateIconRect(PixelPoint position, PixelPoint spacing, out PixelRect rect)
-    {
-        try
-        {
-            rect = checked(new PixelRect(position.X, position.Y, position.X + spacing.X, position.Y + spacing.Y));
-            return true;
-        }
-        catch (OverflowException)
-        {
-            rect = default;
-            return false;
-        }
-    }
-
-    private static bool RectsFullyContained(PixelRect inner, PixelRect outer) =>
-        inner.Left >= outer.Left && inner.Top >= outer.Top
-        && inner.Right <= outer.Right && inner.Bottom <= outer.Bottom;
-
-    private static bool RectsOverlap(PixelRect a, PixelRect b) =>
-        a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
 
     private static (
         List<(int snapIdx, int currentIdx)> stationary,

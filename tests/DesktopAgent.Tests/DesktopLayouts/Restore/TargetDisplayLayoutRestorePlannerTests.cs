@@ -107,7 +107,7 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
             MakeReadResult([LiveIcon("a", new(160, 240))]),
             new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
 
-    [Fact] public void EmptyTargetSet_IsNoOp()
+    [Fact] public void EmptyTargetSet_WithoutGlobalIssue_IsNoOp()
     {
         var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
             MakeSnapshot([SnapItem("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
@@ -115,6 +115,28 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
             new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
             MakeCapabilities(), TargetDevice);
         Assert.True(p.IsNoOp); Assert.Equal(0, p.SnapshotTargetIconCount);
+        Assert.False(p.HasBlockingErrors); Assert.Empty(p.Issues);
+    }
+
+    [Fact] public void EmptyTargetSet_GlobalDuplicateCurrentStableId_Blocks()
+    {
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
+            MakeReadResult([LiveIcon("x", new(160, 240)), LiveIcon("x", new(320, 400))]), // x 重复
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") }, MakeCapabilities(), TargetDevice);
+        Assert.False(p.IsNoOp); Assert.True(p.HasBlockingErrors);
+        Assert.Contains(p.Issues, iss => iss.Code == TargetDisplayLayoutRestorePlanIssueCode.DuplicateCurrentStableId);
+    }
+
+    [Fact] public void EmptyTargetSet_CurrentRectangleOverflow_Blocks()
+    {
+        var overIcon = new DesktopIconDescriptor("x", "Overflow", null, ItemKind.File,
+            new PixelPoint(int.MaxValue - 1, 0), TargetDevice, false, true);
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
+            MakeReadResult([overIcon]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") }, MakeCapabilities(), TargetDevice);
+        Assert.Contains(p.Issues, iss => iss.Code == TargetDisplayLayoutRestorePlanIssueCode.CurrentRectangleOverflow);
     }
 
     // ═══ 快照级多错误诊断 ═══
@@ -132,8 +154,13 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
         var dupPosItems = p.Items.Where(i => i.State == TargetDisplayLayoutRestoreItemState.DuplicateSnapshotTargetPosition).ToList();
         Assert.Equal(2, dupSidItems.Count);  // "a" 重复的两个条目
         Assert.Single(dupPosItems);  // "b" 与 "a" 坐标重复
-        Assert.Contains("出现 2 次", dupSidItems[0].BlockReason); // StableId 重复
-        Assert.Contains("不同 StableId", dupPosItems[0].BlockReason); // 坐标重复
+        // 每个 "a" 重复项必须同时包含 StableId 重复和坐标重复信息
+        foreach (var item in dupSidItems)
+        {
+            Assert.Contains("出现 2 次", item.BlockReason); // StableId 重复
+            Assert.Contains("不同 StableId", item.BlockReason); // 坐标重复
+        }
+        Assert.Contains("不同 StableId", dupPosItems[0].BlockReason); // b 的坐标重复
     }
 
     // ═══ 不变量 ═══
@@ -225,10 +252,70 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
 
     [Fact] public void Occupancy_SkipsOnlyMatchedCurrentIndex()
     {
-        // 两个图标同坐标，选中第一个 → 第二个不被排除
+        // a 当前(160,240) 目标(200,240); b 也位于(160,240)
+        // a 的目标矩形(200,240)-(280,320) 与 b 矩形(160,240)-(240,320) 重叠
+        // 排除 a 自身索引后，b 仍占用目标 → a 被阻断
         var p = PlanWithIcons(
-            [SnapItem("a", new(240, 320))],
+            [SnapItem("a", new(200, 240))],
             [LiveIcon("a", new(160, 240)), LiveIcon("b", new(160, 240))]);
+        var aItem = p.Items.First(i => i.StableId == "a");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon, aItem.State);
+        Assert.Contains("b", aItem.BlockReason);
+        Assert.Contains("Name_b", aItem.BlockReason);
+    }
+
+    [Fact] public void AlreadyAtTargetOccupier_BlocksMove()
+    {
+        // b AlreadyAtTarget at (240,320), a 目标 (280,360) 与 b 矩形重叠但不能是同一坐标
+        // b 矩形 (240,320)-(320,400), a 目标矩形 (280,360)-(360,440) → 重叠 → a 被阻断
+        var p = PlanWithIcons(
+            [SnapItem("a", new(280, 360)), SnapItem("b", new(240, 320))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(240, 320))]);
+        Assert.True(p.HasBlockingErrors);
+        var aItem = p.Items.First(i => i.StableId == "a");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon, aItem.State);
+        Assert.Contains("a", aItem.BlockReason);
+        var bItem = p.Items.First(i => i.StableId == "b");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, bItem.State);
+        Assert.Null(p.MoveExecutionOrder);
+    }
+
+    [Fact] public void MultipleOccupiers_IncludingAlreadyAtTarget_Blocks()
+    {
+        // A 当前(80,80) 目标(200,240)
+        // B 当前(160,240) 目标(400,400) — MoveRequired，矩形与 A 目标重叠
+        // C 当前(240,240) 目标(240,240) — AlreadyAtTarget，矩形与 A 目标重叠
+        // A 目标(200,240) 矩形(200,240)-(280,320)
+        // B 当前(160,240) 矩形(160,240)-(240,320) → 重叠 ✓
+        // C 当前(240,240) 矩形(240,240)-(320,320) → 重叠 ✓
+        var p = PlanWithIcons(
+            [SnapItem("a", new(200, 240)), SnapItem("b", new(400, 400)), SnapItem("c", new(240, 240))],
+            [LiveIcon("a", new(80, 80)), LiveIcon("b", new(160, 240)), LiveIcon("c", new(240, 240))]);
+        Assert.True(p.HasBlockingErrors);
+        Assert.Null(p.MoveExecutionOrder);
+        var aItem = p.Items.First(i => i.StableId == "a");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon, aItem.State);
+        Assert.Contains("a", aItem.BlockReason);
+        Assert.Contains("(200,240)", aItem.BlockReason);
+        Assert.Contains("c", aItem.BlockReason);
+        Assert.Contains("Name_c", aItem.BlockReason);
+        Assert.Contains("已就位", aItem.BlockReason);
+        // b 是 MoveRequired，不进入静态阻断诊断
+        var bItem = p.Items.First(i => i.StableId == "b");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.MoveRequired, bItem.State);
+        var cItem = p.Items.First(i => i.StableId == "c");
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, cItem.State);
+        Assert.DoesNotContain(p.Dependencies, d => d.ActionItem == "a");
+    }
+
+    [Fact] public void IconOnOtherDisplay_SamePixelPosition_StillMoveRequired()
+    {
+        // a 当前位置和快照目标相同，但在另一个显示器 → 应标记 MoveRequired
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(160, 240))]),
+            MakeReadResult([LiveIcon("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
         Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.MoveRequired && i.StableId == "a");
     }
 

@@ -42,7 +42,7 @@ public static class DesktopIconMovePlanner
         var occupiedRects = new List<PixelRect>(occupiedPositions.Count);
         foreach (var pos in occupiedPositions)
         {
-            occupiedRects.Add(PixelRectFromPosition(pos, spacing));
+            occupiedRects.Add(DesktopIconLayoutGeometry.CreateRectChecked(pos, spacing));
         }
 
         // 候选方向：Right, Left, Down, Up（使用 checked 避免极端整数环绕）
@@ -56,18 +56,17 @@ public static class DesktopIconMovePlanner
 
         foreach (var (direction, candidate) in candidates)
         {
-            var candidateRect = PixelRectFromPosition(candidate, spacing);
+            var candidateRect = DesktopIconLayoutGeometry.CreateRectChecked(candidate, spacing);
 
             // 候选必须完整位于 workArea 内
-            if (candidateRect.Left < workArea.Left || candidateRect.Top < workArea.Top
-                || candidateRect.Right > workArea.Right || candidateRect.Bottom > workArea.Bottom)
+            if (!DesktopIconLayoutGeometry.IsFullyContained(candidateRect, workArea))
                 continue;
 
             // 候选不能与任何已占用位置重叠
             var overlaps = false;
             foreach (var occupied in occupiedRects)
             {
-                if (RectsOverlap(candidateRect, occupied))
+                if (DesktopIconLayoutGeometry.Overlaps(candidateRect, occupied))
                 {
                     overlaps = true;
                     break;
@@ -85,10 +84,4 @@ public static class DesktopIconMovePlanner
             $"spacing：({spacing.X}, {spacing.Y})\r\n" +
             $"候选方向（Right/Left/Down/Up）均不可用。");
     }
-
-    private static PixelRect PixelRectFromPosition(PixelPoint position, PixelPoint spacing) =>
-        checked(new PixelRect(position.X, position.Y, position.X + spacing.X, position.Y + spacing.Y));
-
-    private static bool RectsOverlap(PixelRect a, PixelRect b) =>
-        a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
 }
