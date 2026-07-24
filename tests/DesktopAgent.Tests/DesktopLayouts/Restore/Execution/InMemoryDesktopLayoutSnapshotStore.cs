@@ -6,6 +6,8 @@ public sealed class InMemoryDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotS
 {
     private readonly Dictionary<Guid, DesktopLayoutSnapshot> _snapshots = new();
 
+    /// <summary>成功保存次数。</summary>
+    public int SaveCount { get; private set; }
     /// <summary>设为 true 时下一次 SaveAsync 将抛出 SaveException。</summary>
     public bool ShouldThrowOnSave { get; set; }
     public Exception? SaveException { get; set; }
@@ -18,6 +20,7 @@ public sealed class InMemoryDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotS
             throw SaveException ?? new InvalidOperationException("模拟保存失败。");
         if (!_snapshots.TryAdd(snapshot.SnapshotId, snapshot))
             throw new InvalidOperationException($"重复 SnapshotId：{snapshot.SnapshotId}。");
+        SaveCount++;
         return Task.CompletedTask;
     }
 

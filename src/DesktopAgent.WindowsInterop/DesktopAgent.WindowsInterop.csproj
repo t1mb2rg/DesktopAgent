@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="DesktopAgent.Poc" />
+    <InternalsVisibleTo Include="DesktopAgent.Tests" />
   </ItemGroup>
 
   <!-- NativeMethods.txt for CsWin32 source generation -->

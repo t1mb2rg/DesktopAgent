@@ -1,45 +1,31 @@
 namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 
 /// <summary>
-/// 不可变的恢复会话模型，用于追踪已部分执行的正向和回滚步骤。
-/// 纯数据，不含 COM/PIDL/HWND/WPF。
+/// 不可变的恢复会话模型。
+/// 构造函数深度冻结所有输入集合。
 /// </summary>
 public sealed record TargetDisplayLayoutRecoverySession
 {
-    /// <summary>唯一会话标识。</summary>
     public Guid SessionId { get; }
-
-    /// <summary>安全快照标识。</summary>
     public Guid SafetySnapshotId { get; }
-
-    /// <summary>目标显示器 DeviceName。</summary>
     public string TargetDeviceName { get; }
-
-    /// <summary>会话开始 UTC 时间。</summary>
     public DateTimeOffset StartedAtUtc { get; }
 
-    /// <summary>源恢复计划（只读副本）。</summary>
-    public IReadOnlyList<TargetDisplayLayoutRestorePlanItem> SourceRestorePlanItems { get; }
+    /// <summary>深度冻结的源恢复计划。</summary>
+    public TargetDisplayLayoutRestorePlan SourceRestorePlan { get; }
 
-    /// <summary>执行计划（只读副本）。</summary>
-    public IReadOnlyList<TargetDisplayLayoutExecutionStep> ExecutionPlanSteps { get; }
+    /// <summary>深度冻结的执行计划。</summary>
+    public TargetDisplayLayoutExecutionPlan ExecutionPlan { get; }
 
-    /// <summary>已完成的正向步骤索引。</summary>
-    public IReadOnlyList<int> CompletedForwardSteps { get; }
+    /// <summary>已完成的正向步骤索引（仅 ExactSuccess）。</summary>
+    public IReadOnlyList<int> CompletedForwardStepIndexes { get; }
 
-    /// <summary>已完成的回滚步骤索引。</summary>
-    public IReadOnlyList<int> CompletedRollbackSteps { get; }
+    /// <summary>已完成的回滚步骤的源步骤索引。</summary>
+    public IReadOnlyList<int> CompletedRollbackSourceStepIndexes { get; }
 
-    /// <summary>最后失败步骤的索引（无失败时为 null）。</summary>
     public int? LastFailedStepIndex { get; }
-
-    /// <summary>是否需要人工恢复。</summary>
     public bool RequiresManualRecovery { get; }
-
-    /// <summary>是否至少有一个图标位置不确定。</summary>
     public bool IsPositionUncertain { get; }
-
-    /// <summary>恢复状态文本。</summary>
     public string Status { get; }
 
     public TargetDisplayLayoutRecoverySession(
@@ -47,33 +33,69 @@ public sealed record TargetDisplayLayoutRecoverySession
         Guid safetySnapshotId,
         string targetDeviceName,
         DateTimeOffset startedAtUtc,
-        IReadOnlyList<TargetDisplayLayoutRestorePlanItem> sourceRestorePlanItems,
-        IReadOnlyList<TargetDisplayLayoutExecutionStep> executionPlanSteps,
-        IReadOnlyList<int> completedForwardSteps,
-        IReadOnlyList<int> completedRollbackSteps,
+        TargetDisplayLayoutRestorePlan sourceRestorePlan,
+        TargetDisplayLayoutExecutionPlan executionPlan,
+        IReadOnlyList<int> completedForwardStepIndexes,
+        IReadOnlyList<int> completedRollbackSourceStepIndexes,
         int? lastFailedStepIndex,
         bool requiresManualRecovery,
         bool isPositionUncertain,
         string status)
     {
         ArgumentNullException.ThrowIfNull(targetDeviceName);
-        ArgumentNullException.ThrowIfNull(sourceRestorePlanItems);
-        ArgumentNullException.ThrowIfNull(executionPlanSteps);
-        ArgumentNullException.ThrowIfNull(completedForwardSteps);
-        ArgumentNullException.ThrowIfNull(completedRollbackSteps);
+        ArgumentNullException.ThrowIfNull(sourceRestorePlan);
+        ArgumentNullException.ThrowIfNull(executionPlan);
+        ArgumentNullException.ThrowIfNull(completedForwardStepIndexes);
+        ArgumentNullException.ThrowIfNull(completedRollbackSourceStepIndexes);
         ArgumentNullException.ThrowIfNull(status);
 
         SessionId = sessionId;
         SafetySnapshotId = safetySnapshotId;
         TargetDeviceName = targetDeviceName;
         StartedAtUtc = startedAtUtc;
-        SourceRestorePlanItems = Array.AsReadOnly(sourceRestorePlanItems.ToArray());
-        ExecutionPlanSteps = Array.AsReadOnly(executionPlanSteps.ToArray());
-        CompletedForwardSteps = Array.AsReadOnly(completedForwardSteps.ToArray());
-        CompletedRollbackSteps = Array.AsReadOnly(completedRollbackSteps.ToArray());
+
+        // 深度冻结 SourceRestorePlan
+        SourceRestorePlan = FreezeRestorePlan(sourceRestorePlan);
+
+        // ExecutionPlan 已经防御性复制（Array.AsReadOnly），直接使用
+        ExecutionPlan = executionPlan;
+
+        CompletedForwardStepIndexes = Array.AsReadOnly(completedForwardStepIndexes.ToArray());
+        CompletedRollbackSourceStepIndexes = Array.AsReadOnly(completedRollbackSourceStepIndexes.ToArray());
         LastFailedStepIndex = lastFailedStepIndex;
         RequiresManualRecovery = requiresManualRecovery;
         IsPositionUncertain = isPositionUncertain;
         Status = status;
+    }
+
+    /// <summary>创建恢复计划的深度冻结副本。</summary>
+    internal static TargetDisplayLayoutRestorePlan FreezeRestorePlan(TargetDisplayLayoutRestorePlan source)
+    {
+        var frozenItems = source.Items.Select(it => it).ToList().AsReadOnly();
+        var frozenDeps = source.Dependencies.ToList().AsReadOnly();
+        var frozenCycles = source.Cycles
+            .Select(c => new TargetDisplayLayoutRestoreCycle(
+                Array.AsReadOnly(c.StableIds.ToArray())))
+            .ToList().AsReadOnly();
+        IReadOnlyList<string>? frozenOrder = null;
+        if (source.MoveExecutionOrder is not null)
+            frozenOrder = Array.AsReadOnly(source.MoveExecutionOrder.ToArray());
+        var frozenIssues = source.Issues.ToList().AsReadOnly();
+
+        return new TargetDisplayLayoutRestorePlan(
+            source.TargetDeviceName,
+            source.SnapshotTargetIconCount,
+            source.AlreadyAtTargetCount,
+            source.MoveRequiredCount,
+            source.MissingCount,
+            source.BlockedCount,
+            source.HasBlockingErrors,
+            source.RequiresTemporaryStaging,
+            source.IsNoOp,
+            frozenItems,
+            frozenDeps,
+            frozenCycles,
+            frozenIssues,
+            frozenOrder);
     }
 }
