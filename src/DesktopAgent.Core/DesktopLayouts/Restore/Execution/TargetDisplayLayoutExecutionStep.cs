@@ -10,5 +10,4 @@ public sealed record TargetDisplayLayoutExecutionStep(
     PixelPoint ToPosition,
     TargetDisplayLayoutExecutionStepKind Kind,
     string ExpectedMonitorDeviceName,
-    int? StagingSequence = null,
-    IReadOnlyList<string>? RelatedCycleStableIds = null);
+    int? StagingSequence = null);

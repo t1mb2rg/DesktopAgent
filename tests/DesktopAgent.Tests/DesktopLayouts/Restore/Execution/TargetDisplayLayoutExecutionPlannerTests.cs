@@ -17,14 +17,15 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
 
     private static DisplayDescriptor MakeD(string name = null!) =>
         new(name ?? TD, new PixelRect(0, 0, 1920, 1080), WA, 96, 96, (name ?? TD) == TD);
-    private static DesktopIconPositioningCapabilities MakeCaps() => new(false, Sp, ConnectionMethod.FindWindowSW, null);
+    private static DesktopIconPositioningCapabilities MakeCaps() =>
+        new(false, Sp, ConnectionMethod.FindWindowSW, null);
 
     private static DesktopIconSnapshotItem Snap(string sid, PixelPoint pos) =>
         new(_ord++, sid, $"N_{sid}", null, ItemKind.File, pos, TD, false, true);
     private static DesktopIconDescriptor Live(string sid, PixelPoint pos) =>
         new(sid, $"N_{sid}", null, ItemKind.File, pos, TD, false, true);
 
-    // Helper: plan → execution, returning both
+    // Helper: plan → execution via M1-05A (normal cases)
     private TargetDisplayLayoutExecutionPlan Exec(
         DesktopIconSnapshotItem[] snaps, DesktopIconDescriptor[] lives,
         string targetMonitor = null!)
@@ -38,7 +39,27 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
         return TargetDisplayLayoutExecutionPlanner.CreatePlan(restorePlan, read, displays, MakeCaps());
     }
 
-    // ═══ 参数 ═══
+    // Helper: execution from a manually-constructed restore plan (for inconsistency tests)
+    private static TargetDisplayLayoutExecutionPlan ExecRaw(
+        TargetDisplayLayoutRestorePlan plan,
+        DesktopIconReadResult read,
+        DisplayDescriptor[] displays = null!,
+        DesktopIconPositioningCapabilities caps = null!)
+    {
+        return TargetDisplayLayoutExecutionPlanner.CreatePlan(
+            plan, read, displays ?? new[] { MakeD() }, caps ?? MakeCaps());
+    }
+
+    // Helper: construct a consistent plan item
+    private static TargetDisplayLayoutRestorePlanItem PlanItem(
+        string sid, PixelPoint target, TargetDisplayLayoutRestoreItemState state,
+        PixelPoint? currentPos = null, string? monitor = null) =>
+        new(sid, $"N_{sid}", target, currentPos, monitor, state, true, false);
+
+    // ═══════════════════════════════════════════
+    // 参数验证
+    // ═══════════════════════════════════════════
+
     [Fact] public void NullRestorePlan_Throws() => Assert.Throws<ArgumentNullException>(() =>
         TargetDisplayLayoutExecutionPlanner.CreatePlan(null!, MakeRead([]), new[] { MakeD() }, MakeCaps()));
     [Fact] public void NullCurrentRead_Throws() => Assert.Throws<ArgumentNullException>(() =>
@@ -48,7 +69,10 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
     [Fact] public void NullCapabilities_Throws() => Assert.Throws<ArgumentNullException>(() =>
         TargetDisplayLayoutExecutionPlanner.CreatePlan(MakeRestore([]), MakeRead([]), new[] { MakeD() }, null!));
 
-    // ═══ 前置 ═══
+    // ═══════════════════════════════════════════
+    // 前置验证
+    // ═══════════════════════════════════════════
+
     [Fact] public void IncompleteRead_Issue()
     {
         var rp = MakeRestore([Snap("a", new(160, 240))]);
@@ -56,6 +80,8 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
         var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, rd, new[] { MakeD() }, MakeCaps());
         Assert.False(ep.IsExecutable);
         Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.CurrentReadIncomplete);
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
     }
 
     [Fact] public void AutoArrange_Issue()
@@ -63,27 +89,36 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
         var rp = MakeRestore([]);
         var caps = new DesktopIconPositioningCapabilities(true, Sp, ConnectionMethod.FindWindowSW, null);
         var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, MakeRead([]), new[] { MakeD() }, caps);
+        Assert.False(ep.IsExecutable);
         Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.AutoArrangeEnabled);
     }
 
     [Fact] public void SourcePlanBlocking_NoSteps()
     {
-        // Duplicate StableId → blocking
         var ep = Exec([Snap("a", new(160, 240)), Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
         Assert.False(ep.IsExecutable);
         Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanHasBlockingErrors);
         Assert.Empty(ep.Steps);
     }
 
-    [Fact] public void SourcePlanItemCountMismatch_Issue() { /* covered by SourcePlanInconsistent when dup Sids exist */ }
+    // ═══════════════════════════════════════════
+    // 当前桌面防陈旧验证
+    // ═══════════════════════════════════════════
 
-    // ═══ 陈旧 ═══
     [Fact] public void CurrentStableIdDuplicate_Issue()
     {
-        // Duplicate StableId in current → SourcesPlanHasBlockingErrors from M1-05A first
-        var ep = Exec([Snap("a", new(240, 320))], [Live("a", new(160, 240)), Live("a", new(320, 400))]);
+        // 1. 用唯一 StableId 生成合法 RestorePlan
+        var rp = MakeRestore([Snap("a", new(160, 240))]);
+        // 2. 创建新的 currentReadResult，其中同一 StableId 出现两次
+        var rd = new DesktopIconReadResult(
+            [Live("a", new(160, 240)), Live("a", new(320, 400))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        // 3. 将合法 RestorePlan 和重复的新 currentReadResult 传给 ExecutionPlanner
+        var ep = ExecRaw(rp, rd);
         Assert.False(ep.IsExecutable);
-        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanHasBlockingErrors);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.DuplicateCurrentStableId);
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
     }
 
     [Fact] public void CurrentPositionChanged_Stale()
@@ -91,7 +126,7 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
         var snapshot = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1, [Snap("a", new(240, 320))]);
         var rd1 = new DesktopIconReadResult([Live("a", new(160, 240))], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
         var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snapshot, rd1, new[] { MakeD() }, MakeCaps(), TD);
-        var rd2 = new DesktopIconReadResult([Live("a", new(200, 300))], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null); // moved!
+        var rd2 = new DesktopIconReadResult([Live("a", new(200, 300))], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
         var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, rd2, new[] { MakeD() }, MakeCaps());
         Assert.False(ep.IsExecutable);
         Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanStale);
@@ -99,16 +134,514 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
 
     [Fact] public void StableIdComparison_IsOrdinal()
     {
-        // "SID" ≠ "sid" → MissingFromCurrent → IsExecutable but NOT IsNoOp
         var ep = Exec([Snap("SID", new(240, 320))], [Live("sid", new(160, 240))]);
         Assert.True(ep.IsExecutable); Assert.False(ep.IsNoOp); Assert.Empty(ep.Steps);
     }
 
+    [Fact] public void CurrentRectOverflow_Issue()
+    {
+        var restorePlan = MakeRestore([]);
+        var over = new DesktopIconDescriptor("x", "X", null, ItemKind.File, new PixelPoint(int.MaxValue - 1, 0), TD, false, true);
+        var rd = new DesktopIconReadResult([over], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(restorePlan, rd, new[] { MakeD() }, MakeCaps());
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.CurrentRectangleOverflow);
+    }
 
-    // ═══ 基础执行 ═══
+    [Fact] public void OverlappingFinalTargets_Issue()
+    {
+        var ep = Exec(
+            [Snap("a", new(160, 240)), Snap("b", new(200, 240))],
+            [Live("a", new(80, 240)), Live("b", new(400, 400))]);
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.OverlappingFinalTargets);
+    }
+
+    // ═══════════════════════════════════════════
+    // 源计划摘要重新计算验证
+    // ═══════════════════════════════════════════
+
+    [Fact] public void SourcePlanItemCountMismatch_ReturnsIssue()
+    {
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 99, alreadyAtTargetCount: 0, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: true, items: Array.Empty<TargetDisplayLayoutRestorePlanItem>(),
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("SnapshotTargetIconCount"));
+    }
+
+    [Fact] public void SourcePlanAlreadyCountMismatch_ReturnsIssue()
+    {
+        var items = new[] { PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+            new(160, 240), TD) };
+        // AlreadyAtTargetCount should be 1 but we pass 0
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("AlreadyAtTargetCount"));
+    }
+
+    [Fact] public void SourcePlanMoveCountMismatch_ReturnsIssue()
+    {
+        var items = new[] { PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+            new(160, 240), TD) };
+        // MoveRequiredCount should be 1 but we pass 99
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 99,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("MoveRequiredCount"));
+    }
+
+    [Fact] public void SourcePlanMissingCountMismatch_ReturnsIssue()
+    {
+        var items = new[] { PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MissingFromCurrent) };
+        // MissingCount should be 1 but we pass 0
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("MissingCount"));
+    }
+
+    [Fact] public void SourcePlanBlockedCountMismatch_ReturnsIssue()
+    {
+        var items = new[] { PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.DuplicateCurrentStableId) };
+        // BlockedCount should be 1 but we pass 0
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: true, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("BlockedCount"));
+    }
+
+    [Fact] public void SourcePlanBlockingStateButFlagFalse_ReturnsIssue()
+    {
+        var items = new[] { PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.DuplicateCurrentStableId) };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 1, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("HasBlockingErrors"));
+    }
+
+    // ═══════════════════════════════════════════
+    // AlreadyAtTarget 内部一致性
+    // ═══════════════════════════════════════════
+
+    [Fact] public void AlreadyAtTargetMissingCurrentPosition_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                currentPos: null, monitor: TD)
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("CurrentPosition"));
+    }
+
+    [Fact] public void AlreadyAtTargetMissingMonitor_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                currentPos: new(160, 240), monitor: null)
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("CurrentMonitorDeviceName"));
+    }
+
+    [Fact] public void AlreadyAtTargetPositionNotAtTarget_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                currentPos: new(160, 240), monitor: TD)
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("AlreadyAtTarget") && i.Message.Contains("SnapshotTargetPosition"));
+    }
+
+    [Fact] public void AlreadyAtTargetMonitorNotTarget_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                currentPos: new(160, 240), monitor: @"\\.\DISPLAY2")
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("TargetDeviceName"));
+    }
+
+    [Fact] public void MoveRequiredActuallyAtTarget_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 240), monitor: TD)
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("MoveRequired") && i.Message.Contains("已经在目标位置"));
+    }
+
+    // ═══════════════════════════════════════════
+    // IsNoOp 一致性
+    // ═══════════════════════════════════════════
+
+    [Fact] public void SourcePlanIsNoOpFalseButEverythingAtTarget_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                currentPos: new(160, 240), monitor: TD)
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("IsNoOp"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void SourcePlanIsNoOpTrueButHasMissingItem_ReturnsIssue()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MissingFromCurrent)
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 0,
+            missingCount: 1, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: true, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("IsNoOp"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    // ═══════════════════════════════════════════
+    // 无环路径
+    // ═══════════════════════════════════════════
+
+    [Fact] public void AcyclicPlan_StrictlyFollowsMoveExecutionOrder()
+    {
+        // a current(80,80)→(160,80), b current(160,80)→(240,80)
+        // MoveExecutionOrder = [b, a] — b 必须先移动
+        var ep = Exec(
+            [Snap("a", new(160, 80)), Snap("b", new(240, 80))],
+            [Live("a", new(80, 80)), Live("b", new(160, 80))]);
+        Assert.True(ep.IsExecutable);
+        Assert.False(ep.UsesTemporaryStaging);
+        Assert.Equal(2, ep.Steps.Count);
+        Assert.Equal("b", ep.Steps[0].StableId);
+        Assert.Equal("a", ep.Steps[1].StableId);
+        Assert.All(ep.Steps, s => Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, s.Kind));
+        Assert.Equal(TD, ep.Steps[0].ExpectedMonitorDeviceName);
+        Assert.Equal(TD, ep.Steps[1].ExpectedMonitorDeviceName);
+    }
+
+    [Fact] public void AcyclicPlan_DoesNotSkipBlockedFirstItem()
+    {
+        // 手工构造：MoveExecutionOrder = ["a", "b"]，但 a 的目标被 b 占用
+        // 无环路径应该返回 SimulationDeadlock，而不是跳过 a
+        var items = new[]
+        {
+            PlanItem("a", new(160, 80), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(80, 80), monitor: TD),
+            PlanItem("b", new(240, 80), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 80), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a", "b" }); // 错误顺序：a 先，但 b 占用 a 的目标
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(80, 80)), Live("b", new(160, 80))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SimulationDeadlock);
+        Assert.Empty(ep.Steps);
+    }
+
+    [Fact] public void AcyclicPlan_NeverIntroducesStaging()
+    {
+        // 正常链：MoveExecutionOrder 正确时不应生成 staging
+        var items = new[]
+        {
+            PlanItem("a", new(160, 80), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(80, 80), monitor: TD),
+            PlanItem("b", new(240, 80), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 80), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "b", "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(80, 80)), Live("b", new(160, 80))]));
+        Assert.True(ep.IsExecutable);
+        Assert.False(ep.UsesTemporaryStaging);
+        Assert.Equal(0, ep.StagingMoveStepCount);
+        Assert.Empty(ep.StagingAssignments);
+        Assert.All(ep.Steps, s => Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, s.Kind));
+    }
+
+    [Fact] public void AcyclicPlan_MissingExecutionOrder_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 240), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null); // 缺失
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("MoveExecutionOrder 为 null"));
+    }
+
+    [Fact] public void AcyclicPlan_DuplicateExecutionOrderId_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 240), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a", "a" }); // 重复
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("重复"));
+    }
+
+    [Fact] public void AcyclicPlan_ExecutionOrderMissingItem_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(80, 240), monitor: TD),
+            PlanItem("b", new(320, 400), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 240), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" }); // 缺失 b
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(80, 240)), Live("b", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("数量"));
+    }
+
+    [Fact] public void AcyclicPlan_ExecutionOrderHasExtraItem_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(80, 240), monitor: TD),
+            PlanItem("b", new(320, 400), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(160, 240), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a", "x" }); // x 不在 MoveRequired 中
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(80, 240)), Live("b", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("额外"));
+    }
+
+    // ═══════════════════════════════════════════
+    // 有环标志一致性
+    // ═══════════════════════════════════════════
+
+    [Fact] public void CycleFlag_WithExecutionOrder_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(80, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(0, 0), monitor: TD),
+            PlanItem("b", new(0, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(80, 0), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: new[] { new TargetDisplayLayoutRestoreCycle(new[] { "a", "b" }) },
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a", "b" }); // 有环但提供了 MoveExecutionOrder
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(0, 0)), Live("b", new(80, 0))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("MoveExecutionOrder 不为 null"));
+    }
+
+    [Fact] public void CycleFlag_WithoutCycles_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(80, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(0, 0), monitor: TD),
+            PlanItem("b", new(0, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                currentPos: new(80, 0), monitor: TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(), // 空环列表
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(0, 0)), Live("b", new(80, 0))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("Cycles 为空"));
+    }
+
+    // ═══════════════════════════════════════════
+    // 基础执行
+    // ═══════════════════════════════════════════
+
     [Fact] public void NoMoveItems_IsNoOp()
     {
-        // a 已在目标，且无 MissingFromCurrent → 真正的 NoOp
         var ep = Exec([Snap("a", new(160, 240))], [Live("a", new(160, 240))]);
         Assert.True(ep.IsExecutable); Assert.True(ep.IsNoOp); Assert.Empty(ep.Steps);
     }
@@ -130,8 +663,6 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
 
     [Fact] public void TwoItemChain_FollowsRestoreExecutionOrder()
     {
-        // a 当前(80,80)目标(160,80)，b 当前(160,80)目标(240,80) → b 占用 a 目标
-        // MoveExecutionOrder = [b, a]
         var ep = Exec(
             [Snap("a", new(160, 80)), Snap("b", new(240, 80))],
             [Live("a", new(80, 80)), Live("b", new(160, 80))]);
@@ -143,8 +674,6 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
 
     [Fact] public void ThreeItemChain_FollowsRestoreExecutionOrder()
     {
-        // a 当前(80,80) → (160,80), b 当前(160,80) → (240,80), c 当前(240,80) → (320,80)
-        // MoveExecutionOrder = [c, b, a] (c must move first to free b's target, then b, then a)
         var ep = Exec(
             [Snap("a", new(160, 80)), Snap("b", new(240, 80)), Snap("c", new(320, 80))],
             [Live("a", new(80, 80)), Live("b", new(160, 80)), Live("c", new(240, 80))]);
@@ -161,19 +690,15 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
             [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
             [Live("a", new(160, 240)), Live("b", new(320, 400))]);
         Assert.True(ep.IsExecutable); Assert.Equal(3, ep.Steps.Count);
-        // Step 0: staging icon moves from its initial position
         var stagedId = ep.Steps[0].StableId;
         var stagedInitial = stagedId == "a" ? new PixelPoint(160, 240) : new PixelPoint(320, 400);
         Assert.Equal(stagedInitial, ep.Steps[0].FromPosition);
-        // Step 1: other icon moves from its initial position to its target
         var otherId = ep.Steps[1].StableId;
         var otherInitial = otherId == "a" ? new PixelPoint(160, 240) : new PixelPoint(320, 400);
         Assert.Equal(otherInitial, ep.Steps[1].FromPosition);
-        // Step 2: staged icon moves from staging position to target
         var sa = ep.StagingAssignments[0];
         Assert.Equal(sa.StagingPosition, ep.Steps[2].FromPosition);
         Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[2].Kind);
-        // Each step's destination becomes next step's origin for same icon
         for (var i = 0; i < ep.Steps.Count; i++)
             Assert.Equal(i, ep.Steps[i].StepIndex);
     }
@@ -190,200 +715,6 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
     {
         var ep = Exec([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
         Assert.Equal(new PixelPoint(240, 320), ep.Steps[^1].ToPosition);
-    }
-
-    // ═══ 环与中转 ═══
-    [Fact] public void TwoItemSwap_ProducesThreeSteps()
-    {
-        // a 当前(0,0)→(80,0), b 当前(80,0)→(0,0), WA=(0,0)-(240,80), spacing(80,80)
-        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 240, 80), new PixelRect(0, 0, 240, 80), 96, 96, true);
-        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
-            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
-             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
-        var read = new DesktopIconReadResult([Live("a", new(0, 0)), Live("b", new(80, 0))],
-            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
-        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
-        Assert.Equal(3, ep.Steps.Count); Assert.Single(ep.StagingAssignments);
-        // Step 0: a → staging
-        Assert.Equal(0, ep.Steps[0].StepIndex); Assert.Equal("a", ep.Steps[0].StableId);
-        Assert.Equal(new PixelPoint(0, 0), ep.Steps[0].FromPosition);
-        Assert.Equal(new PixelPoint(160, 0), ep.Steps[0].ToPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, ep.Steps[0].Kind);
-        // Step 1: b → target
-        Assert.Equal(1, ep.Steps[1].StepIndex); Assert.Equal("b", ep.Steps[1].StableId);
-        Assert.Equal(new PixelPoint(80, 0), ep.Steps[1].FromPosition);
-        Assert.Equal(new PixelPoint(0, 0), ep.Steps[1].ToPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[1].Kind);
-        // Step 2: a → target
-        Assert.Equal(2, ep.Steps[2].StepIndex); Assert.Equal("a", ep.Steps[2].StableId);
-        Assert.Equal(new PixelPoint(160, 0), ep.Steps[2].FromPosition);
-        Assert.Equal(new PixelPoint(80, 0), ep.Steps[2].ToPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[2].Kind);
-        // Staging
-        var sa = ep.StagingAssignments[0];
-        Assert.Equal("a", sa.StableId); Assert.Equal(new PixelPoint(160, 0), sa.StagingPosition);
-        Assert.Equal(0, sa.EnterStepIndex); Assert.Equal(2, sa.ExitStepIndex);
-    }
-
-    [Fact] public void ThreeItemCycle_FourSteps()
-    {
-        // a 当前(0,0) → (80,0), b 当前(80,0) → (160,0), c 当前(160,0) → (0,0)
-        // 3-cycle with WA(0,0)-(320,80)
-        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 320, 80), new PixelRect(0, 0, 320, 80), 96, 96, true);
-        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
-            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
-             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(160, 0), TD, false, true),
-             new DesktopIconSnapshotItem(2, "c", "N_c", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
-        var read = new DesktopIconReadResult(
-            [Live("a", new(0, 0)), Live("b", new(80, 0)), Live("c", new(160, 0))],
-            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
-        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
-        Assert.Equal(4, ep.Steps.Count);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, ep.Steps[0].Kind);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[1].Kind);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[2].Kind);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[3].Kind);
-        Assert.Single(ep.StagingAssignments);
-    }
-
-    [Fact] public void FourItemCycle_ProducesFiveSteps()
-    {
-        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 400, 80), new PixelRect(0, 0, 400, 80), 96, 96, true);
-        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
-            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
-             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(160, 0), TD, false, true),
-             new DesktopIconSnapshotItem(2, "c", "N_c", null, ItemKind.File, new PixelPoint(240, 0), TD, false, true),
-             new DesktopIconSnapshotItem(3, "d", "N_d", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
-        var read = new DesktopIconReadResult(
-            [Live("a", new(0, 0)), Live("b", new(80, 0)), Live("c", new(160, 0)), Live("d", new(240, 0))],
-            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
-        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
-        Assert.Equal(5, ep.Steps.Count); Assert.Single(ep.StagingAssignments);
-        // Step 0: a → staging (320,0)
-        Assert.Equal(0, ep.Steps[0].StepIndex); Assert.Equal("a", ep.Steps[0].StableId);
-        Assert.Equal(new PixelPoint(0, 0), ep.Steps[0].FromPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, ep.Steps[0].Kind);
-        // Step 1: d → target
-        Assert.Equal(1, ep.Steps[1].StepIndex); Assert.Equal("d", ep.Steps[1].StableId);
-        Assert.Equal(new PixelPoint(240, 0), ep.Steps[1].FromPosition);
-        Assert.Equal(new PixelPoint(0, 0), ep.Steps[1].ToPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[1].Kind);
-        // Step 2: c → target
-        Assert.Equal(2, ep.Steps[2].StepIndex); Assert.Equal("c", ep.Steps[2].StableId);
-        Assert.Equal(new PixelPoint(160, 0), ep.Steps[2].FromPosition);
-        Assert.Equal(new PixelPoint(240, 0), ep.Steps[2].ToPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[2].Kind);
-        // Step 3: b → target
-        Assert.Equal(3, ep.Steps[3].StepIndex); Assert.Equal("b", ep.Steps[3].StableId);
-        Assert.Equal(new PixelPoint(80, 0), ep.Steps[3].FromPosition);
-        Assert.Equal(new PixelPoint(160, 0), ep.Steps[3].ToPosition);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[3].Kind);
-        // Step 4: a → target
-        Assert.Equal(4, ep.Steps[4].StepIndex); Assert.Equal("a", ep.Steps[4].StableId);
-        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[4].Kind);
-        Assert.Equal(new PixelPoint(80, 0), ep.Steps[4].ToPosition);
-        // Staging
-        var sa = ep.StagingAssignments[0];
-        Assert.Equal("a", sa.StableId); Assert.Equal(0, sa.EnterStepIndex); Assert.Equal(4, sa.ExitStepIndex);
-    }
-
-    [Fact] public void NoSafeStagingPosition_ReturnsIssue()
-    {
-        // WA=(0,0)-(160,80), Sp=(80,80) → only 2 cells, both occupied by a and b swapping
-        var tinyWA = new PixelRect(0, 0, 160, 80);
-        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 160, 80), tinyWA, 96, 96, true);
-        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
-            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
-             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
-        var read = new DesktopIconReadResult([Live("a", new(0, 0)), Live("b", new(80, 0))],
-            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
-        Assert.False(ep.IsExecutable); Assert.False(ep.IsNoOp);
-        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.NoSafeStagingPosition);
-        Assert.Empty(ep.Steps); Assert.Empty(ep.StagingAssignments);
-    }
-
-    // ═══ MissingFromCurrent 语义 ═══
-    [Fact] public void MissingItem_RemainsMissing_IsExecutableButNotNoOp()
-    {
-        var ep = Exec([Snap("a", new(160, 240))], []);
-        Assert.True(ep.IsExecutable); Assert.False(ep.IsNoOp);
-        Assert.DoesNotContain(ep.Steps, s => s.StableId == "a");
-        Assert.DoesNotContain(ep.StagingAssignments, sa => sa.StableId == "a");
-    }
-
-    [Fact] public void MissingItem_Reappeared_ReturnsSourcePlanStale()
-    {
-        var snapshot = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
-            [Snap("a", new(160, 240))]);
-        var rd1 = new DesktopIconReadResult([], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null); // a missing
-        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snapshot, rd1, new[] { MakeD() }, MakeCaps(), TD);
-        var rd2 = new DesktopIconReadResult([Live("a", new(80, 240))], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null); // a reappeared
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, rd2, new[] { MakeD() }, MakeCaps());
-        Assert.False(ep.IsExecutable);
-        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanStale);
-        Assert.Empty(ep.Steps);
-    }
-
-    // ═══ 失败后半截步骤 ═══
-    [Fact] public void FailureAfterInternalProgress_ReturnsNoPartialSteps()
-    {
-        // WA=(0,0)-(320,80), Sp=(80,80): 网格 0,80,160,240
-        // x 当前(160,0)→(240,0): 可以直接移动
-        // a 当前(0,0)→(80,0), b 当前(80,0)→(0,0): 交换环
-        // m 缺失, 目标(160,0): 已由 x 离开后空出，是最终目标不能用于 staging
-        // 内部先完成 x→(240,0), 然后 a↔b 环无可用 staging → 失败后 Steps=空
-        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 320, 80), new PixelRect(0, 0, 320, 80), 96, 96, true);
-        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
-            [new DesktopIconSnapshotItem(0, "x", "N_x", null, ItemKind.File, new PixelPoint(240, 0), TD, false, true),
-             new DesktopIconSnapshotItem(1, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
-             new DesktopIconSnapshotItem(2, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true),
-             new DesktopIconSnapshotItem(3, "m", "N_m", null, ItemKind.File, new PixelPoint(160, 0), TD, false, true)]);
-        var read = new DesktopIconReadResult(
-            [Live("x", new(160, 0)), Live("a", new(0, 0)), Live("b", new(80, 0))],
-            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
-        Assert.False(ep.IsExecutable); Assert.False(ep.IsNoOp);
-        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.NoSafeStagingPosition);
-        Assert.Empty(ep.Steps); Assert.Empty(ep.StagingAssignments);
-    }
-
-    [Fact] public void StagingPosition_Deterministic()
-    {
-        var p1 = Exec([Snap("a", new(320, 400)), Snap("b", new(160, 240))], [Live("a", new(160, 240)), Live("b", new(320, 400))]);
-        var p2 = Exec([Snap("a", new(320, 400)), Snap("b", new(160, 240))], [Live("a", new(160, 240)), Live("b", new(320, 400))]);
-        for (var i = 0; i < p1.Steps.Count; i++)
-        { Assert.Equal(p1.Steps[i].StableId, p2.Steps[i].StableId); Assert.Equal(p1.Steps[i].Kind, p2.Steps[i].Kind); }
-    }
-
-    // ═══ 安全边界 ═══
-    [Fact] public void OverlappingFinalTargets_Issue()
-    {
-        // a target (160,240) rect (160,240)-(240,320), b target (200,240) rect (200,240)-(280,320) → overlap
-        // Use Exec so restore plan matches current
-        var ep = Exec(
-            [Snap("a", new(160, 240)), Snap("b", new(200, 240))],
-            [Live("a", new(80, 240)), Live("b", new(400, 400))]);
-        Assert.False(ep.IsExecutable);
-        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.OverlappingFinalTargets);
-    }
-
-    [Fact] public void CurrentRectOverflow_Issue()
-    {
-        var restorePlan = MakeRestore([]);
-        var over = new DesktopIconDescriptor("x", "X", null, ItemKind.File, new PixelPoint(int.MaxValue - 1, 0), TD, false, true);
-        var rd = new DesktopIconReadResult([over], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(restorePlan, rd, new[] { MakeD() }, MakeCaps());
-        Assert.False(ep.IsExecutable);
-        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.CurrentRectangleOverflow);
     }
 
     [Fact] public void AlreadyAtTarget_NeverMoved()
@@ -405,6 +736,401 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
         Assert.False(ep.IsExecutable);
         Assert.Empty(ep.Steps);
     }
+
+    // ═══════════════════════════════════════════
+    // 环与中转
+    // ═══════════════════════════════════════════
+
+    [Fact] public void TwoItemSwap_ProducesThreeSteps()
+    {
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 240, 80), new PixelRect(0, 0, 240, 80), 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
+             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
+        var read = new DesktopIconReadResult([Live("a", new(0, 0)), Live("b", new(80, 0))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
+        Assert.Equal(3, ep.Steps.Count); Assert.Single(ep.StagingAssignments);
+        // Step 0: a → staging
+        Assert.Equal(0, ep.Steps[0].StepIndex); Assert.Equal("a", ep.Steps[0].StableId);
+        Assert.Equal(new PixelPoint(0, 0), ep.Steps[0].FromPosition);
+        Assert.Equal(new PixelPoint(160, 0), ep.Steps[0].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, ep.Steps[0].Kind);
+        Assert.Equal(TD, ep.Steps[0].ExpectedMonitorDeviceName);
+        // Step 1: b → target
+        Assert.Equal(1, ep.Steps[1].StepIndex); Assert.Equal("b", ep.Steps[1].StableId);
+        Assert.Equal(new PixelPoint(80, 0), ep.Steps[1].FromPosition);
+        Assert.Equal(new PixelPoint(0, 0), ep.Steps[1].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[1].Kind);
+        Assert.Equal(TD, ep.Steps[1].ExpectedMonitorDeviceName);
+        // Step 2: a → target
+        Assert.Equal(2, ep.Steps[2].StepIndex); Assert.Equal("a", ep.Steps[2].StableId);
+        Assert.Equal(new PixelPoint(160, 0), ep.Steps[2].FromPosition);
+        Assert.Equal(new PixelPoint(80, 0), ep.Steps[2].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[2].Kind);
+        Assert.Equal(TD, ep.Steps[2].ExpectedMonitorDeviceName);
+        // Staging
+        var sa = ep.StagingAssignments[0];
+        Assert.Equal("a", sa.StableId); Assert.Equal(new PixelPoint(160, 0), sa.StagingPosition);
+        Assert.Equal(0, sa.EnterStepIndex); Assert.Equal(2, sa.ExitStepIndex);
+    }
+
+    [Fact] public void ThreeItemCycle_FourSteps()
+    {
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 320, 80), new PixelRect(0, 0, 320, 80), 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
+             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(160, 0), TD, false, true),
+             new DesktopIconSnapshotItem(2, "c", "N_c", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
+        var read = new DesktopIconReadResult(
+            [Live("a", new(0, 0)), Live("b", new(80, 0)), Live("c", new(160, 0))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
+        Assert.Equal(4, ep.Steps.Count); Assert.Single(ep.StagingAssignments);
+        // Step 0: a → staging (240,0)
+        Assert.Equal(0, ep.Steps[0].StepIndex); Assert.Equal("a", ep.Steps[0].StableId);
+        Assert.Equal("N_a", ep.Steps[0].DisplayName);
+        Assert.Equal(new PixelPoint(0, 0), ep.Steps[0].FromPosition);
+        Assert.Equal(new PixelPoint(240, 0), ep.Steps[0].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, ep.Steps[0].Kind);
+        Assert.Equal(TD, ep.Steps[0].ExpectedMonitorDeviceName);
+        // Step 1: c → target (0,0)
+        Assert.Equal(1, ep.Steps[1].StepIndex); Assert.Equal("c", ep.Steps[1].StableId);
+        Assert.Equal("N_c", ep.Steps[1].DisplayName);
+        Assert.Equal(new PixelPoint(160, 0), ep.Steps[1].FromPosition);
+        Assert.Equal(new PixelPoint(0, 0), ep.Steps[1].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[1].Kind);
+        Assert.Equal(TD, ep.Steps[1].ExpectedMonitorDeviceName);
+        // Step 2: b → target (160,0)
+        Assert.Equal(2, ep.Steps[2].StepIndex); Assert.Equal("b", ep.Steps[2].StableId);
+        Assert.Equal("N_b", ep.Steps[2].DisplayName);
+        Assert.Equal(new PixelPoint(80, 0), ep.Steps[2].FromPosition);
+        Assert.Equal(new PixelPoint(160, 0), ep.Steps[2].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[2].Kind);
+        Assert.Equal(TD, ep.Steps[2].ExpectedMonitorDeviceName);
+        // Step 3: a → target (80,0)
+        Assert.Equal(3, ep.Steps[3].StepIndex); Assert.Equal("a", ep.Steps[3].StableId);
+        Assert.Equal("N_a", ep.Steps[3].DisplayName);
+        Assert.Equal(new PixelPoint(240, 0), ep.Steps[3].FromPosition);
+        Assert.Equal(new PixelPoint(80, 0), ep.Steps[3].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[3].Kind);
+        Assert.Equal(TD, ep.Steps[3].ExpectedMonitorDeviceName);
+        // StagingAssignment
+        var sa = ep.StagingAssignments[0];
+        Assert.Equal("a", sa.StableId);
+        Assert.Equal(new PixelPoint(240, 0), sa.StagingPosition);
+        Assert.Equal(0, sa.EnterStepIndex); Assert.Equal(3, sa.ExitStepIndex);
+    }
+
+    [Fact] public void FourItemCycle_ProducesFiveSteps()
+    {
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 400, 80), new PixelRect(0, 0, 400, 80), 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
+             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(160, 0), TD, false, true),
+             new DesktopIconSnapshotItem(2, "c", "N_c", null, ItemKind.File, new PixelPoint(240, 0), TD, false, true),
+             new DesktopIconSnapshotItem(3, "d", "N_d", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
+        var read = new DesktopIconReadResult(
+            [Live("a", new(0, 0)), Live("b", new(80, 0)), Live("c", new(160, 0)), Live("d", new(240, 0))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
+        Assert.Equal(5, ep.Steps.Count); Assert.Single(ep.StagingAssignments);
+        // Step 0: a → staging (320,0)
+        Assert.Equal(0, ep.Steps[0].StepIndex); Assert.Equal("a", ep.Steps[0].StableId);
+        Assert.Equal(new PixelPoint(0, 0), ep.Steps[0].FromPosition);
+        Assert.Equal(new PixelPoint(320, 0), ep.Steps[0].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, ep.Steps[0].Kind);
+        Assert.Equal(TD, ep.Steps[0].ExpectedMonitorDeviceName);
+        // Step 1: d → target (0,0)
+        Assert.Equal(1, ep.Steps[1].StepIndex); Assert.Equal("d", ep.Steps[1].StableId);
+        Assert.Equal(new PixelPoint(240, 0), ep.Steps[1].FromPosition);
+        Assert.Equal(new PixelPoint(0, 0), ep.Steps[1].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[1].Kind);
+        Assert.Equal(TD, ep.Steps[1].ExpectedMonitorDeviceName);
+        // Step 2: c → target (240,0)
+        Assert.Equal(2, ep.Steps[2].StepIndex); Assert.Equal("c", ep.Steps[2].StableId);
+        Assert.Equal(new PixelPoint(160, 0), ep.Steps[2].FromPosition);
+        Assert.Equal(new PixelPoint(240, 0), ep.Steps[2].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[2].Kind);
+        Assert.Equal(TD, ep.Steps[2].ExpectedMonitorDeviceName);
+        // Step 3: b → target (160,0)
+        Assert.Equal(3, ep.Steps[3].StepIndex); Assert.Equal("b", ep.Steps[3].StableId);
+        Assert.Equal(new PixelPoint(80, 0), ep.Steps[3].FromPosition);
+        Assert.Equal(new PixelPoint(160, 0), ep.Steps[3].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveToTarget, ep.Steps[3].Kind);
+        Assert.Equal(TD, ep.Steps[3].ExpectedMonitorDeviceName);
+        // Step 4: a → target (80,0) from staging
+        Assert.Equal(4, ep.Steps[4].StepIndex); Assert.Equal("a", ep.Steps[4].StableId);
+        Assert.Equal(new PixelPoint(320, 0), ep.Steps[4].FromPosition);
+        Assert.Equal(new PixelPoint(80, 0), ep.Steps[4].ToPosition);
+        Assert.Equal(TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, ep.Steps[4].Kind);
+        Assert.Equal(TD, ep.Steps[4].ExpectedMonitorDeviceName);
+        // StagingAssignment
+        var sa = ep.StagingAssignments[0];
+        Assert.Equal("a", sa.StableId);
+        Assert.Equal(new PixelPoint(320, 0), sa.StagingPosition);
+        Assert.Equal(0, sa.EnterStepIndex); Assert.Equal(4, sa.ExitStepIndex);
+    }
+
+    [Fact] public void NoSafeStagingPosition_ReturnsIssue()
+    {
+        var tinyWA = new PixelRect(0, 0, 160, 80);
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 160, 80), tinyWA, 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
+             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
+        var read = new DesktopIconReadResult([Live("a", new(0, 0)), Live("b", new(80, 0))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.False(ep.IsExecutable); Assert.False(ep.IsNoOp);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.NoSafeStagingPosition);
+        Assert.Empty(ep.Steps); Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void ReleasedStaging_Reused()
+    {
+        // Two disjoint swaps: a↔b and c↔d
+        // WA=(0,0)-(320,320), Spacing=(80,80)
+        var wa = new PixelRect(0, 0, 320, 320);
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 320, 320), wa, 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(160, 80), TD, false, true),
+             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(80, 80), TD, false, true),
+             new DesktopIconSnapshotItem(2, "c", "N_c", null, ItemKind.File, new PixelPoint(160, 160), TD, false, true),
+             new DesktopIconSnapshotItem(3, "d", "N_d", null, ItemKind.File, new PixelPoint(80, 160), TD, false, true)]);
+        var read = new DesktopIconReadResult(
+            [Live("a", new(80, 80)), Live("b", new(160, 80)),
+             Live("c", new(80, 160)), Live("d", new(160, 160))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
+        // 恰好两个 StagingAssignment
+        Assert.Equal(2, ep.StagingAssignments.Count);
+        var sa0 = ep.StagingAssignments[0];
+        var sa1 = ep.StagingAssignments[1];
+        // 第一个 ExitStepIndex 小于第二个 EnterStepIndex
+        Assert.True(sa0.ExitStepIndex < sa1.EnterStepIndex,
+            $"First SA exit={sa0.ExitStepIndex} should be < second SA enter={sa1.EnterStepIndex}");
+        // 两者 StagingPosition 完全相同
+        Assert.Equal(sa0.StagingPosition, sa1.StagingPosition);
+        // 6 steps total (3 + 3 for two swaps)
+        Assert.Equal(6, ep.Steps.Count);
+    }
+
+    // ═══════════════════════════════════════════
+    // Staging 安全
+    // ═══════════════════════════════════════════
+
+    [Fact] public void StagingPosition_NeverEqualsCurrentPosition()
+    {
+        // Two-item swap: staging must not be current position of the staged icon
+        var ep = Exec(
+            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        Assert.True(ep.IsExecutable);
+        foreach (var sa in ep.StagingAssignments)
+        {
+            // Find the step that moves this icon to staging
+            var stagingStep = ep.Steps.First(s =>
+                s.StableId == sa.StableId && s.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging);
+            Assert.NotEqual(stagingStep.FromPosition, stagingStep.ToPosition);
+        }
+    }
+
+    [Fact] public void EveryExecutionStep_ChangesPosition()
+    {
+        var ep = Exec(
+            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        Assert.True(ep.IsExecutable);
+        foreach (var step in ep.Steps)
+        {
+            Assert.NotEqual(step.FromPosition, step.ToPosition);
+        }
+    }
+
+    [Fact] public void StagingPosition_Deterministic()
+    {
+        var p1 = Exec([Snap("a", new(320, 400)), Snap("b", new(160, 240))], [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        var p2 = Exec([Snap("a", new(320, 400)), Snap("b", new(160, 240))], [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        for (var i = 0; i < p1.Steps.Count; i++)
+        { Assert.Equal(p1.Steps[i].StableId, p2.Steps[i].StableId); Assert.Equal(p1.Steps[i].Kind, p2.Steps[i].Kind); }
+    }
+
+    [Fact] public void StagingPosition_DoesNotOverlapCurrentIcons()
+    {
+        var ep = Exec(
+            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        var stagingPos = ep.StagingAssignments[0].StagingPosition;
+        var stagingRect = DesktopIconLayoutGeometry.CreateRectChecked(stagingPos, Sp);
+        var aRect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(160, 240), Sp);
+        var bRect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(320, 400), Sp);
+        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, aRect));
+        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, bRect));
+    }
+
+    [Fact] public void StagingPosition_DoesNotOverlapFinalTargets()
+    {
+        var ep = Exec(
+            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        var stagingPos = ep.StagingAssignments[0].StagingPosition;
+        var stagingRect = DesktopIconLayoutGeometry.CreateRectChecked(stagingPos, Sp);
+        var targetARect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(320, 400), Sp);
+        var targetBRect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(160, 240), Sp);
+        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, targetARect));
+        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, targetBRect));
+    }
+
+    // ═══════════════════════════════════════════
+    // MissingFromCurrent 语义
+    // ═══════════════════════════════════════════
+
+    [Fact] public void MissingItem_RemainsMissing_IsExecutableButNotNoOp()
+    {
+        var ep = Exec([Snap("a", new(160, 240))], []);
+        Assert.True(ep.IsExecutable); Assert.False(ep.IsNoOp);
+        Assert.DoesNotContain(ep.Steps, s => s.StableId == "a");
+        Assert.DoesNotContain(ep.StagingAssignments, sa => sa.StableId == "a");
+    }
+
+    [Fact] public void MissingItem_Reappeared_ReturnsSourcePlanStale()
+    {
+        var snapshot = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [Snap("a", new(160, 240))]);
+        var rd1 = new DesktopIconReadResult([], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snapshot, rd1, new[] { MakeD() }, MakeCaps(), TD);
+        var rd2 = new DesktopIconReadResult([Live("a", new(80, 240))], 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, rd2, new[] { MakeD() }, MakeCaps());
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanStale);
+        Assert.Empty(ep.Steps);
+    }
+
+    // ═══════════════════════════════════════════
+    // 失败后半截步骤
+    // ═══════════════════════════════════════════
+
+    [Fact] public void FailureAfterInternalProgress_ReturnsNoPartialSteps()
+    {
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 320, 80), new PixelRect(0, 0, 320, 80), 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "x", "N_x", null, ItemKind.File, new PixelPoint(240, 0), TD, false, true),
+             new DesktopIconSnapshotItem(1, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
+             new DesktopIconSnapshotItem(2, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true),
+             new DesktopIconSnapshotItem(3, "m", "N_m", null, ItemKind.File, new PixelPoint(160, 0), TD, false, true)]);
+        var read = new DesktopIconReadResult(
+            [Live("x", new(160, 0)), Live("a", new(0, 0)), Live("b", new(80, 0))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.False(ep.IsExecutable); Assert.False(ep.IsNoOp);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.NoSafeStagingPosition);
+        Assert.Empty(ep.Steps); Assert.Empty(ep.StagingAssignments);
+    }
+
+    // ═══════════════════════════════════════════
+    // 防御性复制
+    // ═══════════════════════════════════════════
+
+    [Fact] public void ExecutionPlan_DefensivelyCopiesSteps()
+    {
+        var originalSteps = new List<TargetDisplayLayoutExecutionStep>
+        {
+            new(0, "a", "N_a", new(0, 0), new(80, 0), TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD),
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(
+            TD, true, false, originalSteps,
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var steps = plan.Steps;
+        Assert.NotEmpty(steps);
+        // 修改原始 List 不影响 Plan 中的集合
+        originalSteps.Clear();
+        Assert.NotEmpty(plan.Steps);
+        // 通过 IList 修改公开集合应抛异常
+        var list = (IList<TargetDisplayLayoutExecutionStep>)steps;
+        Assert.Throws<NotSupportedException>(() => list[0] = list[0]);
+        Assert.Throws<NotSupportedException>(() => list.Add(list[0]));
+        Assert.Throws<NotSupportedException>(() => list.Remove(list[0]));
+        Assert.Throws<NotSupportedException>(() => list.Clear());
+    }
+
+    [Fact] public void ExecutionPlan_DefensivelyCopiesStagingAssignments()
+    {
+        var originalSA = new List<TargetDisplayLayoutStagingAssignment>
+        {
+            new("a", new(160, 0), 0, 2),
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(
+            TD, true, false,
+            new TargetDisplayLayoutExecutionStep[] { new(0, "a", "N_a", new(0, 0), new(80, 0), TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD) },
+            originalSA,
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        Assert.NotEmpty(plan.StagingAssignments);
+        // 修改原始 List 不影响 Plan 中的集合
+        originalSA.Clear();
+        Assert.NotEmpty(plan.StagingAssignments);
+        // 通过 IList 修改公开集合应抛异常
+        var list = (IList<TargetDisplayLayoutStagingAssignment>)plan.StagingAssignments;
+        Assert.Throws<NotSupportedException>(() => list[0] = list[0]);
+        Assert.Throws<NotSupportedException>(() => list.Add(list[0]));
+        Assert.Throws<NotSupportedException>(() => list.Remove(list[0]));
+        Assert.Throws<NotSupportedException>(() => list.Clear());
+    }
+
+    [Fact] public void ExecutionPlan_DefensivelyCopiesIssues()
+    {
+        var originalIssues = new List<TargetDisplayLayoutExecutionPlanIssue>
+        {
+            new(TargetDisplayLayoutExecutionPlanIssueCode.CurrentReadIncomplete, "test"),
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(
+            TD, false, false,
+            Array.Empty<TargetDisplayLayoutExecutionStep>(),
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            originalIssues);
+        Assert.NotEmpty(plan.Issues);
+        // 修改原始 List 不影响 Plan 中的集合
+        originalIssues.Clear();
+        Assert.NotEmpty(plan.Issues);
+        // 通过 IList 修改公开集合应抛异常
+        var list = (IList<TargetDisplayLayoutExecutionPlanIssue>)plan.Issues;
+        Assert.Throws<NotSupportedException>(() => list[0] = list[0]);
+        Assert.Throws<NotSupportedException>(() => list.Add(list[0]));
+        Assert.Throws<NotSupportedException>(() => list.Remove(list[0]));
+        Assert.Throws<NotSupportedException>(() => list.Clear());
+    }
+
+    [Fact] public void ExecutionPlan_CollectionsAreReadOnly()
+    {
+        // NoOp plan with empty collections — verify they are read-only
+        var plan = new TargetDisplayLayoutExecutionPlan(
+            TD, true, true,
+            Array.Empty<TargetDisplayLayoutExecutionStep>(),
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        // 通过 IList 修改应抛异常
+        Assert.Throws<NotSupportedException>(() => ((IList<TargetDisplayLayoutExecutionStep>)plan.Steps).Add(
+            new(0, "x", "X", new(0, 0), new(80, 0), TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD)));
+        Assert.Throws<NotSupportedException>(() => ((IList<TargetDisplayLayoutStagingAssignment>)plan.StagingAssignments).Add(
+            new("x", new(0, 0), 0, 1)));
+        Assert.Throws<NotSupportedException>(() => ((IList<TargetDisplayLayoutExecutionPlanIssue>)plan.Issues).Add(
+            new(TargetDisplayLayoutExecutionPlanIssueCode.CurrentReadIncomplete, "x")));
+    }
+
+    // ═══════════════════════════════════════════
+    // 确定性
+    // ═══════════════════════════════════════════
 
     [Fact] public void SameInput_ProducesIdenticalExecutionPlan()
     {
@@ -434,6 +1160,7 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
             Assert.Equal(s1.ToPosition, s2.ToPosition);
             Assert.Equal(s1.Kind, s2.Kind);
             Assert.Equal(s1.ExpectedMonitorDeviceName, s2.ExpectedMonitorDeviceName);
+            Assert.Equal(s1.StagingSequence, s2.StagingSequence);
         }
         // StagingAssignments
         Assert.Equal(p1.StagingAssignments.Count, p2.StagingAssignments.Count);
@@ -454,44 +1181,10 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
         }
     }
 
-    [Fact] public void StagingPosition_DoesNotOverlapCurrentIcons()
-    {
-        var ep = Exec(
-            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
-            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
-        var stagingPos = ep.StagingAssignments[0].StagingPosition;
-        var stagingRect = DesktopIconLayoutGeometry.CreateRectChecked(stagingPos, Sp);
-        var aRect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(160, 240), Sp);
-        var bRect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(320, 400), Sp);
-        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, aRect));
-        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, bRect));
-    }
+    // ═══════════════════════════════════════════
+    // Helpers
+    // ═══════════════════════════════════════════
 
-    [Fact] public void StagingPosition_DoesNotOverlapFinalTargets()
-    {
-        var ep = Exec(
-            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
-            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
-        var stagingPos = ep.StagingAssignments[0].StagingPosition;
-        var stagingRect = DesktopIconLayoutGeometry.CreateRectChecked(stagingPos, Sp);
-        var targetARect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(320, 400), Sp);
-        var targetBRect = DesktopIconLayoutGeometry.CreateRectChecked(new PixelPoint(160, 240), Sp);
-        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, targetARect));
-        Assert.False(DesktopIconLayoutGeometry.Overlaps(stagingRect, targetBRect));
-    }
-
-    [Fact] public void ReleasedStaging_Reused()
-    {
-        // Two disjoint cycles → both use staging, first one releases it
-        var ep = Exec(
-            [Snap("a", new(160, 80)), Snap("b", new(80, 80)), Snap("c", new(160, 320)), Snap("d", new(80, 320))],
-            [Live("a", new(80, 80)), Live("b", new(160, 80)), Live("c", new(80, 320)), Live("d", new(160, 320))]);
-        Assert.True(ep.IsExecutable); Assert.True(ep.UsesTemporaryStaging);
-        // Both swaps resolved
-        Assert.Equal(6, ep.Steps.Count);
-    }
-
-    // ═══ Helpers ═══
     private static TargetDisplayLayoutRestorePlan MakeRestore(DesktopIconSnapshotItem[] snaps) =>
         TargetDisplayLayoutRestorePlanner.CreatePlan(
             new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1, snaps),

@@ -1,4 +1,8 @@
+using System.Collections.ObjectModel;
+
 namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+
+using static TargetDisplayLayoutExecutionStepKind;
 
 public sealed record TargetDisplayLayoutExecutionPlan
 {
@@ -17,23 +21,26 @@ public sealed record TargetDisplayLayoutExecutionPlan
         string targetDeviceName,
         bool isExecutable,
         bool isNoOp,
-        bool usesTemporaryStaging,
-        int directMoveStepCount,
-        int stagingMoveStepCount,
-        int targetMoveStepCount,
         IReadOnlyList<TargetDisplayLayoutExecutionStep> steps,
         IReadOnlyList<TargetDisplayLayoutStagingAssignment> stagingAssignments,
         IReadOnlyList<TargetDisplayLayoutExecutionPlanIssue> issues)
     {
+        ArgumentNullException.ThrowIfNull(targetDeviceName);
+        ArgumentNullException.ThrowIfNull(steps);
+        ArgumentNullException.ThrowIfNull(stagingAssignments);
+        ArgumentNullException.ThrowIfNull(issues);
+
         TargetDeviceName = targetDeviceName;
         IsExecutable = isExecutable;
         IsNoOp = isNoOp;
-        UsesTemporaryStaging = usesTemporaryStaging;
-        DirectMoveStepCount = directMoveStepCount;
-        StagingMoveStepCount = stagingMoveStepCount;
-        TargetMoveStepCount = targetMoveStepCount;
-        Steps = steps;
-        StagingAssignments = stagingAssignments;
-        Issues = issues;
+
+        Steps = Array.AsReadOnly(steps.ToArray());
+        StagingAssignments = Array.AsReadOnly(stagingAssignments.ToArray());
+        Issues = Array.AsReadOnly(issues.ToArray());
+
+        DirectMoveStepCount = Steps.Count(s => s.Kind == MoveToTarget);
+        StagingMoveStepCount = Steps.Count(s => s.Kind == MoveToTemporaryStaging);
+        TargetMoveStepCount = Steps.Count(s => s.Kind == MoveFromTemporaryStagingToTarget);
+        UsesTemporaryStaging = StagingMoveStepCount > 0;
     }
 }
