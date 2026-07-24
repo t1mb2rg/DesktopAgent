@@ -427,8 +427,107 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
     }
 
     // ═══════════════════════════════════════════
-    // 无环路径
+    // MoveRequired 资格
     // ═══════════════════════════════════════════
+
+    [Fact] public void MoveRequired_NonFileSystemPlanItem_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            new TargetDisplayLayoutRestorePlanItem("a", "N_a", new(240, 320), new(160, 240), TD,
+                TargetDisplayLayoutRestoreItemState.MoveRequired, isFileSystemItem: false, isSystemItem: false),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("IsFileSystemItem"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void MoveRequired_SystemPlanItem_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            new TargetDisplayLayoutRestorePlanItem("a", "N_a", new(240, 320), new(160, 240), TD,
+                TargetDisplayLayoutRestoreItemState.MoveRequired, isFileSystemItem: true, isSystemItem: true),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("IsSystemItem"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void CurrentItemBecameNonFileSystem_ReturnsStale()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        // 当前图标不是文件系统项目
+        var nonFs = new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new(160, 240), TD,
+            IsSystemItem: false, IsFileSystemItem: false);
+        var ep = ExecRaw(plan, MakeRead([nonFs]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanStale
+            && i.Message.Contains("文件系统"));
+        Assert.Empty(ep.Steps);
+    }
+
+    [Fact] public void CurrentItemBecameSystemItem_ReturnsStale()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        // 当前图标是系统项目
+        var sys = new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new(160, 240), TD,
+            IsSystemItem: true, IsFileSystemItem: true);
+        var ep = ExecRaw(plan, MakeRead([sys]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanStale
+            && i.Message.Contains("系统项目"));
+        Assert.Empty(ep.Steps);
+    }
+
+    // ═══════════════════════════════════════════
+    // 无环路径
 
     [Fact] public void AcyclicPlan_StrictlyFollowsMoveExecutionOrder()
     {
@@ -592,6 +691,7 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
 
     [Fact] public void CycleFlag_WithExecutionOrder_ReturnsInconsistent()
     {
+        // a(0,0)→(80,0), b(80,0)→(0,0): 互为依赖形成环
         var items = new[]
         {
             PlanItem("a", new(80, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
@@ -603,7 +703,10 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
             TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
             missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
             isNoOp: false, items: items,
-            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("b", "a"), new("a", "b"),
+            },
             cycles: new[] { new TargetDisplayLayoutRestoreCycle(new[] { "a", "b" }) },
             issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
             moveExecutionOrder: new[] { "a", "b" }); // 有环但提供了 MoveExecutionOrder
@@ -615,6 +718,7 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
 
     [Fact] public void CycleFlag_WithoutCycles_ReturnsInconsistent()
     {
+        // a(0,0)→(80,0), b(80,0)→(0,0): 互为依赖形成环
         var items = new[]
         {
             PlanItem("a", new(80, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
@@ -626,14 +730,184 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
             TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
             missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
             isNoOp: false, items: items,
-            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
-            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(), // 空环列表
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("b", "a"), new("a", "b"),
+            },
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(), // 空环列表（不一致）
             issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
             moveExecutionOrder: null);
         var ep = ExecRaw(plan, MakeRead([Live("a", new(0, 0)), Live("b", new(80, 0))]));
         Assert.False(ep.IsExecutable);
         Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
-            && i.Message.Contains("Cycles 为空"));
+            && i.Message.Contains("Cycles") && i.Message.Contains("SCC"));
+    }
+
+    // ═══════════════════════════════════════════
+    // SCC 重新验证
+    // ═══════════════════════════════════════════
+
+    [Fact] public void AcyclicFlag_WithCycles_ReturnsInconsistent()
+    {
+        // 有效环数据但 RequiresTemporaryStaging=false
+        var items = new[]
+        {
+            PlanItem("a", new(80, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(0, 0), TD),
+            PlanItem("b", new(0, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(80, 0), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("b", "a"), new("a", "b"),
+            },
+            cycles: new[] { new TargetDisplayLayoutRestoreCycle(new[] { "a", "b" }) },
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(0, 0)), Live("b", new(80, 0))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("RequiresTemporaryStaging"));
+    }
+
+    [Fact] public void NoMovePlan_WithCycleFlag_ReturnsInconsistent()
+    {
+        // 无 MoveRequired 项但 RequiresTemporaryStaging=true
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
+            isNoOp: true, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: new[] { new TargetDisplayLayoutRestoreCycle(new[] { "a" }) },
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("RequiresTemporaryStaging"));
+    }
+
+    [Fact] public void CycleFlag_WithNonCyclicDependencies_ReturnsInconsistent()
+    {
+        // 链依赖（非环）但 RequiresTemporaryStaging=true
+        var items = new[]
+        {
+            PlanItem("a", new(160, 80), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(80, 80), TD),
+            PlanItem("b", new(240, 80), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 80), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
+            isNoOp: false, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("b", "a"), // b→a: b must move first → a can move — no cycle
+            },
+            cycles: new[] { new TargetDisplayLayoutRestoreCycle(new[] { "a", "b" }) },
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(80, 80)), Live("b", new(160, 80))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("RequiresTemporaryStaging"));
+    }
+
+    [Fact] public void CycleMetadata_DiffersFromRecomputedScc_ReturnsInconsistent()
+    {
+        // 有效环，但 Cycles 元数据与重新计算不一致（缺少一个节点）
+        var items = new[]
+        {
+            PlanItem("a", new(80, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(0, 0), TD),
+            PlanItem("b", new(0, 0), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(80, 0), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: true,
+            isNoOp: false, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("b", "a"), new("a", "b"),
+            },
+            cycles: new[] { new TargetDisplayLayoutRestoreCycle(new[] { "a" }) }, // 只有 "a"，缺少 "b"
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(0, 0)), Live("b", new(80, 0))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("restorePlan.Cycles"));
+    }
+
+    [Fact] public void ValidCycles_MatchSharedAnalyzer()
+    {
+        // 验证有效环通过 SCC 重新验证
+        var display = new DisplayDescriptor(TD, new PixelRect(0, 0, 240, 80), new PixelRect(0, 0, 240, 80), 96, 96, true);
+        var snap = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1,
+            [new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, new PixelPoint(80, 0), TD, false, true),
+             new DesktopIconSnapshotItem(1, "b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
+        var read = new DesktopIconReadResult([Live("a", new(0, 0)), Live("b", new(80, 0))],
+            0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(snap, read, new[] { display }, MakeCaps(), TD);
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(rp, read, new[] { display }, MakeCaps());
+        Assert.True(ep.IsExecutable);
+        Assert.True(ep.UsesTemporaryStaging);
+        Assert.Equal(3, ep.Steps.Count);
+    }
+
+    // ═══════════════════════════════════════════
+    // 同坐标不同显示器
+    // ═══════════════════════════════════════════
+
+    [Fact] public void AcyclicSamePositionDifferentMonitor_ReturnsFailure()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), @"\\.\DISPLAY2"), // 同坐标不同显示器
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        // 当前在 DISPLAY2
+        var live = new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new(160, 240), @"\\.\DISPLAY2",
+            false, true);
+        var ep = ExecRaw(plan, MakeRead([live]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SimulationDeadlock
+            && i.Message.Contains("同坐标跨显示器"));
+        Assert.Equal("a", ep.Issues.First(i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SimulationDeadlock).RelatedStableId);
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void FinalSimulation_VerifiesTargetMonitor()
+    {
+        // 正常两图标交换，最终验证包含显示器
+        var ep = Exec(
+            [Snap("a", new(320, 400)), Snap("b", new(160, 240))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+        Assert.True(ep.IsExecutable);
+        // 所有步骤的目标显示器都是 TargetDeviceName
+        Assert.All(ep.Steps, s => Assert.Equal(TD, s.ExpectedMonitorDeviceName));
+        // 每个 MoveToTarget / MoveFromTemporaryStaging 的 ToPosition 不等于 FromPosition
+        Assert.All(ep.Steps, s => Assert.NotEqual(s.FromPosition, s.ToPosition));
     }
 
     // ═══════════════════════════════════════════

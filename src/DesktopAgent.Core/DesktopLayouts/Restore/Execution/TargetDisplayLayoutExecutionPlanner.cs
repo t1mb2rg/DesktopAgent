@@ -122,7 +122,7 @@ public static class TargetDisplayLayoutExecutionPlanner
             return FailedPlan(restorePlan.TargetDeviceName, issues);
         }
 
-        // ═══ 逐项内部一致性 ═══
+        // ═══ 逐项内部一致性 & MoveRequired 资格 ═══
         var sidSet = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in restorePlan.Items)
         {
@@ -174,7 +174,6 @@ public static class TargetDisplayLayoutExecutionPlanner
                             $"MoveRequired \"{item.StableId}\" 缺少 CurrentMonitorDeviceName。"));
                         return FailedPlan(restorePlan.TargetDeviceName, issues);
                     }
-                    // 不能同时已经位于目标坐标和目标显示器
                     if (item.CurrentPosition.Value == item.SnapshotTargetPosition
                         && string.Equals(item.CurrentMonitorDeviceName, restorePlan.TargetDeviceName, StringComparison.Ordinal))
                     {
@@ -182,15 +181,27 @@ public static class TargetDisplayLayoutExecutionPlanner
                             $"MoveRequired \"{item.StableId}\" 已经在目标位置和显示器上。"));
                         return FailedPlan(restorePlan.TargetDeviceName, issues);
                     }
+                    // MoveRequired 计划项资格
+                    if (!item.IsFileSystemItem)
+                    {
+                        issues.Add(new(SourcePlanInconsistent,
+                            $"MoveRequired \"{item.StableId}\" IsFileSystemItem 为 false。"));
+                        return FailedPlan(restorePlan.TargetDeviceName, issues);
+                    }
+                    if (item.IsSystemItem)
+                    {
+                        issues.Add(new(SourcePlanInconsistent,
+                            $"MoveRequired \"{item.StableId}\" IsSystemItem 为 true。"));
+                        return FailedPlan(restorePlan.TargetDeviceName, issues);
+                    }
                     break;
 
                 case MissingFromCurrent:
-                    // Must not exist in current — checked later in staleness
                     break;
             }
         }
 
-        // IsNoOp 一致性（在逐项检查之后，确保先捕获单项不一致）
+        // IsNoOp 一致性
         var expectedIsNoOp = recalcMove == 0 && recalcMissing == 0 && recalcBlocked == 0;
         if (restorePlan.IsNoOp != expectedIsNoOp)
         {
@@ -229,7 +240,7 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
 
-        // 陈旧性检查
+        // 陈旧性检查（含 MoveRequired 当前资格）
         foreach (var item in restorePlan.Items)
         {
             var exists = currentById.TryGetValue(item.StableId, out var idxs);
@@ -266,6 +277,23 @@ public static class TargetDisplayLayoutExecutionPlanner
                 issues.Add(new(SourcePlanStale,
                     $"StableId \"{item.StableId}\" 显示器归属已变化。"));
                 return FailedPlan(restorePlan.TargetDeviceName, issues);
+            }
+
+            // MoveRequired 的当前资格检查
+            if (item.State == MoveRequired)
+            {
+                if (!ci.IsFileSystemItem)
+                {
+                    issues.Add(new(SourcePlanStale,
+                        $"StableId \"{item.StableId}\" 当前不是文件系统项目。"));
+                    return FailedPlan(restorePlan.TargetDeviceName, issues);
+                }
+                if (ci.IsSystemItem)
+                {
+                    issues.Add(new(SourcePlanStale,
+                        $"StableId \"{item.StableId}\" 当前是系统项目。"));
+                    return FailedPlan(restorePlan.TargetDeviceName, issues);
+                }
             }
         }
 
@@ -306,11 +334,65 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
 
+        // ═══ SCC 重新验证（在无操作提前返回之前） ═══
+        var moveSidsForScc = restorePlan.Items
+            .Where(it => it.State == MoveRequired)
+            .Select(it => it.StableId)
+            .ToList();
+
+        var recomputedHasCycle = false;
+        IReadOnlyList<TargetDisplayLayoutRestoreCycle>? recomputedCycles = null;
+
+        if (moveSidsForScc.Count > 0)
+        {
+            var analysis = TargetDisplayLayoutDependencyGraphAnalyzer.Analyze(
+                moveSidsForScc, restorePlan.Dependencies);
+            recomputedHasCycle = analysis.HasCycle;
+            recomputedCycles = analysis.Cycles;
+        }
+
+        // RequiresTemporaryStaging 必须等于 recomputedHasCycle
+        if (restorePlan.RequiresTemporaryStaging != recomputedHasCycle)
+        {
+            issues.Add(new(SourcePlanInconsistent,
+                $"RequiresTemporaryStaging ({restorePlan.RequiresTemporaryStaging}) 与重新计算的 HasCycle ({recomputedHasCycle}) 不一致。"));
+            return FailedPlan(restorePlan.TargetDeviceName, issues);
+        }
+
+        // 无环时 Cycles 必须为空
+        if (!restorePlan.RequiresTemporaryStaging)
+        {
+            if (restorePlan.Cycles is not null && restorePlan.Cycles.Count > 0)
+            {
+                issues.Add(new(SourcePlanInconsistent,
+                    "RequiresTemporaryStaging 为 false 但 Cycles 非空。"));
+                return FailedPlan(restorePlan.TargetDeviceName, issues);
+            }
+        }
+        else
+        {
+            // 有环时 MoveRequiredCount 必须 > 0
+            if (recalcMove == 0)
+            {
+                issues.Add(new(SourcePlanInconsistent,
+                    "RequiresTemporaryStaging 为 true 但 MoveRequiredCount 为 0。"));
+                return FailedPlan(restorePlan.TargetDeviceName, issues);
+            }
+
+            // Cycles 必须与重新计算的规范化 Cycles 完全一致
+            var sourceCycles = restorePlan.Cycles ?? Array.Empty<TargetDisplayLayoutRestoreCycle>();
+            if (recomputedCycles is null || !CyclesEqual(sourceCycles, recomputedCycles))
+            {
+                issues.Add(new(SourcePlanInconsistent,
+                    "restorePlan.Cycles 与重新计算的 SCC 环不一致。"));
+                return FailedPlan(restorePlan.TargetDeviceName, issues);
+            }
+        }
+
         // ═══ 无操作计划 ═══
-        var missingCount = recalcMissing;
         if (recalcMove == 0)
         {
-            var isNoOp = missingCount == 0;
+            var isNoOp = recalcMissing == 0;
             return new TargetDisplayLayoutExecutionPlan(
                 restorePlan.TargetDeviceName, true, isNoOp,
                 Array.Empty<TargetDisplayLayoutExecutionStep>(),
@@ -326,7 +408,7 @@ public static class TargetDisplayLayoutExecutionPlanner
     }
 
     // ═══════════════════════════════════════════════
-    // 无环路径：严格遵循 MoveExecutionOrder
+    //  无环路径：严格遵循 MoveExecutionOrder
     // ═══════════════════════════════════════════════
 
     private static TargetDisplayLayoutExecutionPlan ExecuteAcyclicPath(
@@ -349,7 +431,7 @@ public static class TargetDisplayLayoutExecutionPlanner
 
         var order = restorePlan.MoveExecutionOrder;
 
-        // 先检查重复（在检查数量之前）
+        // 先检查重复
         var orderSet = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sid in order)
         {
@@ -369,7 +451,7 @@ public static class TargetDisplayLayoutExecutionPlanner
             return FailedPlan(restorePlan.TargetDeviceName, issues);
         }
 
-        // 检查额外 StableId（含在 orderSet 但不在 moveSidSet 中）
+        // 检查额外 StableId
         var moveSidSet = new HashSet<string>(moveItems.Select(it => it.StableId), StringComparer.Ordinal);
         foreach (var sid in orderSet)
         {
@@ -381,40 +463,55 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
 
-        // 建立模拟状态
+        // 建立模拟状态（位置 + 显示器）
         var simPositions = new Dictionary<string, PixelPoint>(StringComparer.Ordinal);
+        var simMonitors = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var icon in currentReadResult.Icons)
         {
             simPositions[icon.StableId] = icon.PixelPosition;
+            simMonitors[icon.StableId] = icon.MonitorDeviceName ?? string.Empty;
         }
 
-        var pendingBySid = new Dictionary<string, TargetDisplayLayoutRestorePlanItem>(StringComparer.Ordinal);
+        var itemBySid = new Dictionary<string, TargetDisplayLayoutRestorePlanItem>(StringComparer.Ordinal);
         foreach (var item in moveItems)
-            pendingBySid[item.StableId] = item;
+            itemBySid[item.StableId] = item;
 
         var steps = new List<TargetDisplayLayoutExecutionStep>();
         var stepIndex = 0;
 
-        // 严格按照 MoveExecutionOrder 逐项执行
         foreach (var sid in order)
         {
-            if (!pendingBySid.ContainsKey(sid))
-                continue; // already handled (should not happen)
+            if (!itemBySid.TryGetValue(sid, out var item))
+            {
+                // 精确排列验证后不应发生，若发生则内部错误
+                issues.Add(new(SourcePlanInconsistent,
+                    $"MoveExecutionOrder 中 \"{sid}\" 不在 MoveRequired 集合中。"));
+                return FailedPlan(restorePlan.TargetDeviceName, issues);
+            }
 
-            var item = pendingBySid[sid];
             var currentPos = simPositions[item.StableId];
             var targetPos = item.SnapshotTargetPosition;
+            var currentMonitor = simMonitors.GetValueOrDefault(item.StableId, string.Empty);
 
+            // 同坐标但不同显示器：无环路径禁止 staging，必须失败
             if (currentPos == targetPos)
             {
-                // Already at target via prior moves (should not normally happen in acyclic)
-                pendingBySid.Remove(item.StableId);
-                continue;
+                if (!string.Equals(currentMonitor, restorePlan.TargetDeviceName, StringComparison.Ordinal))
+                {
+                    issues.Add(new(SimulationDeadlock,
+                        $"同坐标跨显示器：\"{item.StableId}\" 位于 ({currentPos.X},{currentPos.Y})，当前显示器 {currentMonitor}，" +
+                        $"目标显示器 {restorePlan.TargetDeviceName}，但无环源计划禁止临时中转。",
+                        item.StableId));
+                    return FailedPlan(restorePlan.TargetDeviceName, issues);
+                }
+                // 同坐标同显示器：不应发生（MoveRequired 验证已排除）
+                issues.Add(new(SourcePlanInconsistent,
+                    $"无环路径：\"{item.StableId}\" 已在目标位置且同显示器，但标记为 MoveRequired。"));
+                return FailedPlan(restorePlan.TargetDeviceName, issues);
             }
 
             var targetRect = DesktopIconLayoutGeometry.CreateRectChecked(targetPos, capabilities.Spacing);
 
-            // 检查目标是否被其他图标占用
             var blocked = false;
             foreach (var (otherSid, otherPos) in simPositions)
             {
@@ -426,7 +523,6 @@ public static class TargetDisplayLayoutExecutionPlanner
 
             if (blocked)
             {
-                // 无环路径不能跳过被阻塞的项 — 要么是 SourcePlanStale 要么死锁
                 issues.Add(new(SimulationDeadlock,
                     $"无环路径：\"{item.StableId}\" 的目标被占用，无法按 MoveExecutionOrder 移动。"));
                 return FailedPlan(restorePlan.TargetDeviceName, issues);
@@ -437,18 +533,24 @@ public static class TargetDisplayLayoutExecutionPlanner
                 currentPos, targetPos, MoveToTarget, restorePlan.TargetDeviceName));
 
             simPositions[item.StableId] = targetPos;
-            pendingBySid.Remove(item.StableId);
+            simMonitors[item.StableId] = restorePlan.TargetDeviceName;
             stepIndex++;
         }
 
-        // 最终状态验证
+        // 最终状态验证（位置 + 显示器）
         foreach (var item in moveItems)
         {
             if (!simPositions.TryGetValue(item.StableId, out var finalPos)
-                || finalPos != item.SnapshotTargetPosition)
+                || finalPos != item.SnapshotTargetPosition
+                || !simMonitors.TryGetValue(item.StableId, out var finalMonitor)
+                || !string.Equals(finalMonitor, restorePlan.TargetDeviceName, StringComparison.Ordinal))
             {
+                var posStr = simPositions.TryGetValue(item.StableId, out var p)
+                    ? $"({p.X},{p.Y})" : "缺失";
+                var monStr = simMonitors.TryGetValue(item.StableId, out var m) ? m : "缺失";
                 issues.Add(new(FinalStateMismatch,
-                    $"\"{item.StableId}\" 最终位置 ({finalPos.X},{finalPos.Y}) ≠ 快照目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。"));
+                    $"\"{item.StableId}\" 最终 ({posStr}, {monStr}) ≠ 快照目标 " +
+                    $"({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y}, {restorePlan.TargetDeviceName})。"));
                 return FailedPlan(restorePlan.TargetDeviceName, issues);
             }
         }
@@ -461,7 +563,7 @@ public static class TargetDisplayLayoutExecutionPlanner
     }
 
     // ═══════════════════════════════════════════════
-    // 有环路径：通用 staging 模拟
+    //  有环路径：通用 staging 模拟
     // ═══════════════════════════════════════════════
 
     private static TargetDisplayLayoutExecutionPlan ExecuteCyclicPath(
@@ -479,37 +581,31 @@ public static class TargetDisplayLayoutExecutionPlanner
             return FailedPlan(restorePlan.TargetDeviceName, issues);
         }
 
-        // Cycles 至少包含一个真实环
-        if (restorePlan.Cycles is null || restorePlan.Cycles.Count == 0)
-        {
-            issues.Add(new(SourcePlanInconsistent,
-                "RequiresTemporaryStaging 为 true 但 Cycles 为空。"));
-            return FailedPlan(restorePlan.TargetDeviceName, issues);
-        }
-
         var moveItems = restorePlan.Items
             .Where(it => it.State == MoveRequired).ToList();
 
-        // 建立内存模拟状态
+        // 建立内存模拟状态（位置 + 显示器）
         var simPositions = new Dictionary<string, PixelPoint>(StringComparer.Ordinal);
+        var simMonitors = new Dictionary<string, string>(StringComparer.Ordinal);
         var pendingItems = new Dictionary<string, TargetDisplayLayoutRestorePlanItem>(StringComparer.Ordinal);
         var stagingOccupants = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var icon in currentReadResult.Icons)
+        {
             simPositions[icon.StableId] = icon.PixelPosition;
+            simMonitors[icon.StableId] = icon.MonitorDeviceName ?? string.Empty;
+        }
 
         foreach (var item in moveItems)
             pendingItems[item.StableId] = item;
 
         var steps = new List<TargetDisplayLayoutExecutionStep>();
         var stagingAssignments = new List<TargetDisplayLayoutStagingAssignment>();
-        // StagingAssignment 索引表: StableId -> assignments 列表索引
         var stagingIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         var stepIndex = 0;
         var stagingSeq = 0;
         var maxSteps = moveItems.Count * 3;
 
-        // 优先级：Items 顺序稳定
         var itemOrder = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < restorePlan.Items.Count; i++)
         {
@@ -537,12 +633,10 @@ public static class TargetDisplayLayoutExecutionPlanner
                 var currentPos = simPositions[p.StableId];
                 var targetPos = p.SnapshotTargetPosition;
 
-                // 不能从临时位置直接移动到相同目标
                 if (currentPos == targetPos) continue;
 
                 var targetRect = DesktopIconLayoutGeometry.CreateRectChecked(targetPos, capabilities.Spacing);
 
-                // 目标矩形不与任何其他图标重叠
                 var blocked = false;
                 foreach (var (sid, pos) in simPositions)
                 {
@@ -568,7 +662,6 @@ public static class TargetDisplayLayoutExecutionPlanner
                 if (isFromStaging)
                 {
                     stagingOccupants.Remove(directItem.StableId);
-                    // 通过字典更新 StagingAssignment 的 ExitStepIndex
                     if (stagingIndex.TryGetValue(directItem.StableId, out var saIdx))
                     {
                         var sa = stagingAssignments[saIdx];
@@ -582,13 +675,14 @@ public static class TargetDisplayLayoutExecutionPlanner
                     currentPos, targetPos, kind, restorePlan.TargetDeviceName));
 
                 simPositions[directItem.StableId] = targetPos;
+                simMonitors[directItem.StableId] = restorePlan.TargetDeviceName;
                 pendingItems.Remove(directItem.StableId);
 
                 stepIndex++;
                 continue;
             }
 
-            // B. 需要中转 — 选择第一个尚未在中转位置的 pending 项
+            // B. 需要中转
             TargetDisplayLayoutRestorePlanItem? stageItem = null;
             foreach (var p in orderedPending)
             {
@@ -624,19 +718,26 @@ public static class TargetDisplayLayoutExecutionPlanner
             stagingIndex[stageItem.StableId] = stagingAssignments.Count - 1;
 
             simPositions[stageItem.StableId] = stagingPos.Value;
+            simMonitors[stageItem.StableId] = restorePlan.TargetDeviceName;
             stagingOccupants.Add(stageItem.StableId);
             stagingSeq++;
             stepIndex++;
         }
 
-        // ═══ 最终状态验证 ═══
+        // ═══ 最终状态验证（位置 + 显示器） ═══
         foreach (var item in moveItems)
         {
             if (!simPositions.TryGetValue(item.StableId, out var finalPos)
-                || finalPos != item.SnapshotTargetPosition)
+                || finalPos != item.SnapshotTargetPosition
+                || !simMonitors.TryGetValue(item.StableId, out var finalMonitor)
+                || !string.Equals(finalMonitor, restorePlan.TargetDeviceName, StringComparison.Ordinal))
             {
+                var posStr = simPositions.TryGetValue(item.StableId, out var p)
+                    ? $"({p.X},{p.Y})" : "缺失";
+                var monStr = simMonitors.TryGetValue(item.StableId, out var m) ? m : "缺失";
                 issues.Add(new(FinalStateMismatch,
-                    $"\"{item.StableId}\" 最终位置 ({finalPos.X},{finalPos.Y}) ≠ 快照目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。"));
+                    $"\"{item.StableId}\" 最终 ({posStr}, {monStr}) ≠ 快照目标 " +
+                    $"({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y}, {restorePlan.TargetDeviceName})。"));
                 return FailedPlan(restorePlan.TargetDeviceName, issues);
             }
         }
@@ -672,23 +773,20 @@ public static class TargetDisplayLayoutExecutionPlanner
             {
                 var candidate = new PixelPoint((int)x, (int)y);
 
-                // 不得等于当前图标位置
                 if (candidate == currentPosition) continue;
 
                 var candidateRect = DesktopIconLayoutGeometry.CreateRectChecked(candidate, spacing);
 
-                // 不与任何模拟占用重叠
                 var overlaps = false;
                 foreach (var (sid, pos) in simPositions)
                 {
                     if (string.Equals(sid, excludeStableId, StringComparison.Ordinal)) continue;
-                    var otherRect = DesktopIconLayoutGeometry.CreateRectChecked(pos, spacing);
+                    var otherRect = DesktopIconLayoutGeometry.CreateRectChecked(pos, capabilities.Spacing);
                     if (DesktopIconLayoutGeometry.Overlaps(candidateRect, otherRect))
                     { overlaps = true; break; }
                 }
                 if (overlaps) continue;
 
-                // 不与任何最终目标矩形重叠
                 var hitsTarget = false;
                 foreach (var tr in finalTargetRects)
                 {
@@ -697,7 +795,6 @@ public static class TargetDisplayLayoutExecutionPlanner
                 }
                 if (hitsTarget) continue;
 
-                // 候选矩形必须完整在 WorkArea 内
                 if (!DesktopIconLayoutGeometry.IsFullyContained(candidateRect, targetDisplay.WorkArea))
                     continue;
 
@@ -705,6 +802,25 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
         return null;
+    }
+
+    // ═══ Cycles 比较辅助 ═══
+
+    private static bool CyclesEqual(
+        IReadOnlyList<TargetDisplayLayoutRestoreCycle> a,
+        IReadOnlyList<TargetDisplayLayoutRestoreCycle> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i].StableIds.Count != b[i].StableIds.Count) return false;
+            for (var j = 0; j < a[i].StableIds.Count; j++)
+            {
+                if (!string.Equals(a[i].StableIds[j], b[i].StableIds[j], StringComparison.Ordinal))
+                    return false;
+            }
+        }
+        return true;
     }
 
     // ═══ 失败辅助 ═══

@@ -21,9 +21,12 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 
 `TargetDisplayLayoutExecutionStep` 公开字段：`StepIndex`, `StableId`, `DisplayName`, `FromPosition`, `ToPosition`, `Kind`, `ExpectedMonitorDeviceName`, `StagingSequence`。已删除未使用的 `RelatedCycleStableIds`。
 
-## 内存占用模拟
+## 内存占用模拟（含显示器状态）
 
-维护所有当前图标的坐标映射和占用矩形。每生成一步后更新模拟状态。后续所有直接移动判定和中转位置搜索都基于当前模拟状态。
+维护 `simPositions`（`Dictionary<string, PixelPoint>`）和 `simMonitors`（`Dictionary<string, string>`）：
+
+- 每个 `MoveToTarget` 或 `MoveFromTemporaryStagingToTarget` 后更新位置为目标坐标、显示器为 `TargetDeviceName`
+- 每个 `MoveToTemporaryStaging` 后更新位置为中转坐标、显示器为 `TargetDeviceName`（中转位置在目标 WorkArea 内）
 
 ## 临时中转位置搜索
 
@@ -37,6 +40,14 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 
 前一个中转位置在图标离开后立即释放，后续环可以复用。不需要预先分配或预先保留专属中转位置。StagingAssignment 使用 `Dictionary<string, int>` 索引表更新，确保唯一更新和确定性。
 
+## 最终状态验证
+
+所有步骤生成后，验证每个 MoveRequired 项：
+- `finalPosition == SnapshotTargetPosition`
+- `finalMonitor == TargetDeviceName`（Ordinal）
+
+不一致返回 `FinalStateMismatch` 且 Steps 为空。
+
 ## 路径分派：无环与有环独立路径
 
 根据 `RequiresTemporaryStaging` 分派：
@@ -46,10 +57,11 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 - 严格遵循 `MoveExecutionOrder`
 - 只执行顺序中的下一项，不允许跳过，不允许重排
 - 目标被占用时返回失败，永不生成 `MoveToTemporaryStaging`
+- 同坐标不同显示器时返回 `SimulationDeadlock`（无环路径禁止中转）
 
 ### 有环路径（`RequiresTemporaryStaging == true` → `ExecuteCyclicPath`）
 
-- `MoveExecutionOrder` 必须为 null，`Cycles` 至少包含一个真实环
+- `MoveExecutionOrder` 必须为 null，Cycles 必须与 SCC 分析一致
 - 进入通用 staging 模拟循环
 
 ## MoveExecutionOrder 精确排列验证
@@ -67,10 +79,7 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 
 从 `restorePlan.Items` 重新计算并逐一比较：
 - `SnapshotTargetIconCount`（通过 `Items.Count`）
-- `AlreadyAtTargetCount`
-- `MoveRequiredCount`
-- `MissingCount`
-- `BlockedCount`
+- `AlreadyAtTargetCount`、`MoveRequiredCount`、`MissingCount`、`BlockedCount`
 - `HasBlockingErrors`（标志位一致性）
 - `IsNoOp`（从 `recalcMove == 0 && recalcMissing == 0 && recalcBlocked == 0` 推导）
 
@@ -80,16 +89,18 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 
 ### AlreadyAtTarget 约束
 
-- `CurrentPosition` 非 null
-- `CurrentMonitorDeviceName` 非 null
+- `CurrentPosition` 非 null，`CurrentMonitorDeviceName` 非 null
 - `CurrentPosition == SnapshotTargetPosition`
 - `CurrentMonitorDeviceName` 与 `TargetDeviceName` Ordinal 相同
 
 ### MoveRequired 约束
 
-- `CurrentPosition` 非 null
-- `CurrentMonitorDeviceName` 非 null
+- `CurrentPosition` 非 null，`CurrentMonitorDeviceName` 非 null
 - 不能同时已经位于目标坐标和目标显示器
+- **计划资格**：`IsFileSystemItem == true && IsSystemItem == false`
+- **当前资格**：当前 `DesktopIconDescriptor` 也必须 `IsFileSystemItem && !IsSystemItem`
+
+若计划项资格不满足 → `SourcePlanInconsistent`；若当前资格变化 → `SourcePlanStale`。
 
 ### MissingFromCurrent
 
@@ -97,10 +108,21 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 
 若 `HasBlockingErrors == false`，只允许上述三种状态。存在阻断状态但标志为 false → `SourcePlanInconsistent`。
 
+## Cycles 必须由共享 SCC 分析器重新验证
+
+M1-05B 使用 `TargetDisplayLayoutDependencyGraphAnalyzer`（与 M1-05A 共享）重新计算 SCC：
+
+- 输入：MoveRequired StableId 列表 + Dependencies
+- `RequiresTemporaryStaging` 必须等于 `recomputedHasCycle`
+- 无环时 `Cycles` 必须为空
+- 有环时 `Cycles` 必须与重新计算的规范化 Cycles 完全一致（每个 SCC 内 Ordinal 排序，SCC 列表按第一个 StableId 排序）
+
+不一致返回 `SourcePlanInconsistent`。非空 Cycles 不等于真实环；无 MoveRequired 但 CycleFlag=true 也会被捕获。
+
 ## staging 安全
 
 - staging 不得等于当前位置（`FindStagingPosition` 中 `candidate == currentPosition` 跳过）
-- 每个执行步骤 `FromPosition != ToPosition`（`EveryExecutionStep_ChangesPosition` 测试覆盖）
+- 每个执行步骤 `FromPosition != ToPosition`
 - staging 避开当前模拟占用和全部最终目标矩形
 
 ## 公共集合不可变
@@ -113,13 +135,11 @@ StagingAssignments = Array.AsReadOnly(stagingAssignments.ToArray());
 Issues = Array.AsReadOnly(issues.ToArray());
 ```
 
-使用 `Array.AsReadOnly<T>()` 返回 `ReadOnlyCollection<T>`，调用方无法通过 `IList<T>` 强制转换或数组强制转换修改。尝试 `IList<T>.Add`、`Remove`、`Clear`、索引设置均抛出 `NotSupportedException`。
-
-计数字段从复制后的 `Steps` 计算，不与构造函数参数耦合。
+使用 `Array.AsReadOnly<T>()` 返回 `ReadOnlyCollection<T>`，调用方无法通过 `IList<T>` 强制转换或数组强制转换修改。计数字段从复制后的 `Steps` 计算。
 
 ## 失败原子性
 
-任何检查失败、模拟死锁或验证不通过时，`IsExecutable = false` 且 `Steps`、`StagingAssignments` 均为空。内部即使已经生成临时步骤，最终公开结果完全干净——不返回部分步骤。
+任何检查失败、模拟死锁或验证不通过时，`IsExecutable = false` 且 `Steps`、`StagingAssignments` 均为空。
 
 ## 清理
 
@@ -127,6 +147,7 @@ Issues = Array.AsReadOnly(issues.ToArray());
 - 避免 `catch (Exception)` 捕获 `UniqueDisplaySelector`，只捕获 `InvalidOperationException` 和 `ArgumentException`
 - StagingAssignment 更新使用 `Dictionary<string, int>` 索引表替代 `First()` 查找
 - 删除未使用的 `RelatedCycleStableIds` 字段
+- 共享 Tarjan SCC 分析器 `TargetDisplayLayoutDependencyGraphAnalyzer`
 
 ## M1-05C 将负责
 
