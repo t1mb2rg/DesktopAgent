@@ -334,22 +334,27 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
 
-        // ═══ SCC 重新验证（在无操作提前返回之前） ═══
+        // ═══ SCC 重新验证（在无操作提前返回之前，始终执行） ═══
         var moveSidsForScc = restorePlan.Items
             .Where(it => it.State == MoveRequired)
             .Select(it => it.StableId)
             .ToList();
 
-        var recomputedHasCycle = false;
-        IReadOnlyList<TargetDisplayLayoutRestoreCycle>? recomputedCycles = null;
-
-        if (moveSidsForScc.Count > 0)
+        TargetDisplayLayoutDependencyGraphAnalyzer.Result analysis;
+        try
         {
-            var analysis = TargetDisplayLayoutDependencyGraphAnalyzer.Analyze(
+            analysis = TargetDisplayLayoutDependencyGraphAnalyzer.Analyze(
                 moveSidsForScc, restorePlan.Dependencies);
-            recomputedHasCycle = analysis.HasCycle;
-            recomputedCycles = analysis.Cycles;
         }
+        catch (ArgumentException ex)
+        {
+            issues.Add(new(SourcePlanInconsistent,
+                $"源计划依赖图不一致：{ex.Message}"));
+            return FailedPlan(restorePlan.TargetDeviceName, issues);
+        }
+
+        var recomputedHasCycle = analysis.HasCycle;
+        var recomputedCycles = analysis.Cycles;
 
         // RequiresTemporaryStaging 必须等于 recomputedHasCycle
         if (restorePlan.RequiresTemporaryStaging != recomputedHasCycle)

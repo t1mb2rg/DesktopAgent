@@ -110,14 +110,56 @@ M1-05A 生成的计划可能在生成后被外部因素（用户操作、Explore
 
 ## Cycles 必须由共享 SCC 分析器重新验证
 
-M1-05B 使用 `TargetDisplayLayoutDependencyGraphAnalyzer`（与 M1-05A 共享）重新计算 SCC：
+### 始终执行，不设条件
 
-- 输入：MoveRequired StableId 列表 + Dependencies
+M1-05B **无论 `MoveRequiredCount` 是否为 0** 都调用 `TargetDisplayLayoutDependencyGraphAnalyzer.Analyze()`。不存在 `if (moveSidsForScc.Count > 0)` 条件绕过。
+
+### Dependency 合法性
+
+每条 `TargetDisplayLayoutRestoreDependency` 必须满足：
+
+- `DependsOn` 必须属于 MoveRequired StableId 集合；
+- `ActionItem` 必须属于 MoveRequired StableId 集合；
+- 不允许重复的有向边（使用 `HashSet<(string, string)>` 结构化键检测）；
+- 当 `MoveRequiredCount == 0` 时，`Dependencies` 必须为空（否则分析器抛出 `ArgumentException`）；
+- `null` Dependencies 属于源计划不一致（分析器抛出 `ArgumentNullException`）。
+
+所有 StableId 比较使用 `StringComparison.Ordinal`。
+
+### 分析器输入错误的处理
+
+分析器对以下输入抛出 `ArgumentException`（含子类 `ArgumentNullException`）：
+
+| 输入错误 | 异常类型 |
+|---|---|
+| `moveStableIds` 包含重复 StableId | `ArgumentException` |
+| `DependsOn` 不属于 MoveRequired | `ArgumentException` |
+| `ActionItem` 不属于 MoveRequired | `ArgumentException` |
+| 重复 Dependency | `ArgumentException` |
+| `dependencies` 为 null | `ArgumentNullException` |
+
+ExecutionPlanner 统一捕获 `ArgumentException` 并转换为 `SourcePlanInconsistent`，Message 包含分析器原始错误原因。**不向外抛出异常**。
+
+### 失败结果
+
+分析器输入错误导致的失败计划：
+
+- `IsExecutable == false`
+- `Steps` 为空
+- `StagingAssignments` 为空
+- Issues 包含 `SourcePlanInconsistent`
+
+### SCC 重新验证规则
+
+分析器通过后：
+
 - `RequiresTemporaryStaging` 必须等于 `recomputedHasCycle`
 - 无环时 `Cycles` 必须为空
 - 有环时 `Cycles` 必须与重新计算的规范化 Cycles 完全一致（每个 SCC 内 Ordinal 排序，SCC 列表按第一个 StableId 排序）
 
-不一致返回 `SourcePlanInconsistent`。非空 Cycles 不等于真实环；无 MoveRequired 但 CycleFlag=true 也会被捕获。
+### 无操作计划不能绕过
+
+即使 `MoveRequiredCount == 0`（无操作计划），仍需通过 Dependencies 一致性验证。含未知端点的非空 Dependencies 不会被无操作提前返回绕过。
 
 ## staging 安全
 

@@ -867,6 +867,140 @@ public sealed class TargetDisplayLayoutExecutionPlannerTests
     }
 
     // ═══════════════════════════════════════════
+    // 分析器异常 → 失败计划
+    // ═══════════════════════════════════════════
+
+    [Fact] public void DependencyUnknownDependsOn_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("ghost", "a"),
+            },
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("DependsOn") && i.Message.Contains("ghost"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void DependencyUnknownActionItem_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("a", "ghost"),
+            },
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("ActionItem") && i.Message.Contains("ghost"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void DuplicateDependency_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(80, 240), TD),
+            PlanItem("b", new(320, 400), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 2, alreadyAtTargetCount: 0, moveRequiredCount: 2,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("a", "b"), new("a", "b"),
+            },
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a", "b" });
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(80, 240)), Live("b", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("重复 Dependency"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void NoMovePlan_WithDependencies_ReturnsInconsistent()
+    {
+        // Zero MoveRequired but non-empty Dependencies with unknown endpoint
+        var items = new[]
+        {
+            PlanItem("a", new(160, 240), TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 1, moveRequiredCount: 0,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: true, items: items,
+            dependencies: new TargetDisplayLayoutRestoreDependency[]
+            {
+                new("ghost", "a"),
+            },
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: null);
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent);
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    [Fact] public void NullDependencies_ReturnsInconsistent()
+    {
+        var items = new[]
+        {
+            PlanItem("a", new(240, 320), TargetDisplayLayoutRestoreItemState.MoveRequired,
+                new(160, 240), TD),
+        };
+        var plan = new TargetDisplayLayoutRestorePlan(
+            TD, snapshotTargetIconCount: 1, alreadyAtTargetCount: 0, moveRequiredCount: 1,
+            missingCount: 0, blockedCount: 0, hasBlockingErrors: false, requiresTemporaryStaging: false,
+            isNoOp: false, items: items,
+            dependencies: null!,
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: new[] { "a" });
+        // Must not throw — returns failed plan instead
+        var ep = ExecRaw(plan, MakeRead([Live("a", new(160, 240))]));
+        Assert.False(ep.IsExecutable);
+        Assert.Contains(ep.Issues, i => i.Code == TargetDisplayLayoutExecutionPlanIssueCode.SourcePlanInconsistent
+            && i.Message.Contains("dependencies"));
+        Assert.Empty(ep.Steps);
+        Assert.Empty(ep.StagingAssignments);
+    }
+
+    // ═══════════════════════════════════════════
     // 同坐标不同显示器
     // ═══════════════════════════════════════════
 
