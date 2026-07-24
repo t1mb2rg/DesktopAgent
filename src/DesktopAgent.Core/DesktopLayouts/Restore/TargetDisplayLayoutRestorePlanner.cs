@@ -401,10 +401,15 @@ public static class TargetDisplayLayoutRestorePlanner
 
         var cycles = new List<TargetDisplayLayoutRestoreCycle>();
         bool hasCycle;
+        IReadOnlyList<string>? topoFromAnalyzer = null;
 
-        if (moveItems.Count > 0 && dependencies.Count > 0)
+        if (moveItems.Count > 0)
         {
-            (cycles, hasCycle) = DetectCycles(moveItems, dependencies);
+            var moveSids = moveItems.Select(m => m.Item.StableId).ToList();
+            var analysis = TargetDisplayLayoutDependencyGraphAnalyzer.Analyze(moveSids, dependencies);
+            hasCycle = analysis.HasCycle;
+            cycles = analysis.Cycles.ToList();
+            topoFromAnalyzer = analysis.TopologicalOrder;
         }
         else
         {
@@ -423,7 +428,7 @@ public static class TargetDisplayLayoutRestorePlanner
 
             if (!anyBlocking && !hasGlobalBlockingIssue && moveItems.Count > 0)
             {
-                executionOrder = DeterministicTopologicalSort(moveItems, dependencies);
+                executionOrder = topoFromAnalyzer;
             }
             else if (moveItems.Count == 0)
             {
@@ -499,158 +504,5 @@ public static class TargetDisplayLayoutRestorePlanner
                 if (kvp.Value == ci) return kvp.Key;
             return -1;
         }
-    }
-
-    // ═══ Tarjan SCC ═══
-
-    private static (List<TargetDisplayLayoutRestoreCycle> Cycles, bool HasCycle)
-        DetectCycles(
-            List<(TargetDisplayLayoutRestorePlanItem Item, int SnapIdx)> moveItems,
-            List<TargetDisplayLayoutRestoreDependency> dependencies)
-    {
-        var sidToIdx = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var i = 0; i < moveItems.Count; i++)
-            sidToIdx[moveItems[i].Item.StableId] = i;
-
-        var adj = new List<int>[moveItems.Count];
-        for (var i = 0; i < moveItems.Count; i++)
-            adj[i] = new List<int>();
-
-        foreach (var dep in dependencies)
-        {
-            if (sidToIdx.TryGetValue(dep.DependsOn, out var from)
-                && sidToIdx.TryGetValue(dep.ActionItem, out var to))
-            {
-                adj[from].Add(to);
-            }
-        }
-
-        var index = 0;
-        var stack = new Stack<int>();
-        var indices = new int[moveItems.Count];
-        var lowLink = new int[moveItems.Count];
-        var onStack = new bool[moveItems.Count];
-        var allCycles = new List<List<int>>();
-
-        for (var i = 0; i < moveItems.Count; i++)
-            indices[i] = -1;
-
-        for (var v = 0; v < moveItems.Count; v++)
-            if (indices[v] == -1)
-                StrongConnect(v, ref index, stack, indices, lowLink, onStack, adj, allCycles);
-
-        var cycles = new List<TargetDisplayLayoutRestoreCycle>();
-        foreach (var comp in allCycles)
-        {
-            if (comp.Count > 1 || (comp.Count == 1 && adj[comp[0]].Contains(comp[0])))
-            {
-                var sids = comp.Select(i => moveItems[i].Item.StableId)
-                    .OrderBy(s => s, StringComparer.Ordinal).ToList();
-                cycles.Add(new TargetDisplayLayoutRestoreCycle(sids));
-            }
-        }
-
-        // 确定性顺序：按第一个 StableId
-        cycles = cycles.OrderBy(c => c.StableIds[0], StringComparer.Ordinal).ToList();
-
-        return (cycles, cycles.Count > 0);
-    }
-
-    private static void StrongConnect(
-        int v, ref int index, Stack<int> stack,
-        int[] indices, int[] lowLink, bool[] onStack,
-        List<int>[] adj, List<List<int>> allCycles)
-    {
-        indices[v] = index;
-        lowLink[v] = index;
-        index++;
-        stack.Push(v);
-        onStack[v] = true;
-
-        // 相邻节点按 StableId 确定性顺序
-        foreach (var w in adj[v].OrderBy(w => w))
-        {
-            if (indices[w] == -1)
-            {
-                StrongConnect(w, ref index, stack, indices, lowLink, onStack, adj, allCycles);
-                lowLink[v] = Math.Min(lowLink[v], lowLink[w]);
-            }
-            else if (onStack[w])
-            {
-                lowLink[v] = Math.Min(lowLink[v], indices[w]);
-            }
-        }
-
-        if (lowLink[v] == indices[v])
-        {
-            var comp = new List<int>();
-            int w;
-            do
-            {
-                w = stack.Pop();
-                onStack[w] = false;
-                comp.Add(w);
-            } while (w != v);
-            allCycles.Add(comp);
-        }
-    }
-
-    // ═══ 确定性拓扑排序 ═══
-
-    private static IReadOnlyList<string> DeterministicTopologicalSort(
-        List<(TargetDisplayLayoutRestorePlanItem Item, int SnapIdx)> moveItems,
-        List<TargetDisplayLayoutRestoreDependency> dependencies)
-    {
-        var sidToIdx = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (var i = 0; i < moveItems.Count; i++)
-            sidToIdx[moveItems[i].Item.StableId] = i;
-
-        var adj = new List<int>[moveItems.Count];
-        for (var i = 0; i < moveItems.Count; i++)
-            adj[i] = new List<int>();
-
-        var inDegree = new int[moveItems.Count];
-
-        foreach (var dep in dependencies)
-        {
-            if (sidToIdx.TryGetValue(dep.DependsOn, out var from)
-                && sidToIdx.TryGetValue(dep.ActionItem, out var to))
-            {
-                adj[from].Add(to);
-                inDegree[to]++;
-            }
-        }
-
-        // 零入度候选使用快照索引顺序（确定性）
-        var cmp = Comparer<int>.Create((a, b) =>
-        {
-            var oa = moveItems[a].SnapIdx;
-            var ob = moveItems[b].SnapIdx;
-            var c = oa.CompareTo(ob);
-            if (c != 0) return c;
-            return string.CompareOrdinal(moveItems[a].Item.StableId, moveItems[b].Item.StableId);
-        });
-
-        var available = new SortedSet<int>(cmp);
-        for (var i = 0; i < moveItems.Count; i++)
-            if (inDegree[i] == 0)
-                available.Add(i);
-
-        var sorted = new List<string>();
-        while (available.Count > 0)
-        {
-            var v = available.Min;
-            available.Remove(v);
-            sorted.Add(moveItems[v].Item.StableId);
-
-            foreach (var w in adj[v].OrderBy(w => w, cmp))
-            {
-                inDegree[w]--;
-                if (inDegree[w] == 0)
-                    available.Add(w);
-            }
-        }
-
-        return sorted;
     }
 }
