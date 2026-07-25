@@ -358,7 +358,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         string? recoveryFailureMessage,
         CancellationToken _)
     {
-        // Step 1: 回滚当前失败步骤（InexactKnown 或 ExactSuccess）
+        // Step 1: 回滚当前失败步骤
         var currentAttempt = allAttempts.Last(a =>
             a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
             && a.SourceStepIndex == failedStepIndex);
@@ -375,44 +375,57 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
             catch (Exception ex)
             {
-                var rbExcAttempt = TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
                     attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
-                    currentExpectedPrevious, ex);
-                attemptIndex++;
-                allAttempts.Add(rbExcAttempt);
+                    currentExpectedPrevious, ex));
                 return PositionUncertainS(session, failedStepIndex, allAttempts, executionPlan, safetySnapshotId,
                     forwardFailureType, forwardFailureMessage,
                     ex.GetType().Name, $"回滚步骤 #{failedStepIndex} Writer 异常：{ex.Message}");
             }
 
-            var rbAttempt = rbResult.IsExact
-                ? TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
-                    attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
-                    currentExpectedPrevious, rbResult)
-                : TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
-                    attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
-                    currentExpectedPrevious, rbResult);
-
-            attemptIndex++;
-            allAttempts.Add(rbAttempt);
-
-            if (!string.Equals(rbResult.StableId, currentStep.StableId, StringComparison.Ordinal)
-                || rbResult.PreviousPosition != currentExpectedPrevious)
+            // 1. 先验证 StableId
+            if (!string.Equals(rbResult.StableId, currentStep.StableId, StringComparison.Ordinal))
             {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
+                    attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
+                    currentExpectedPrevious, rbResult));
                 return PositionUncertainS(session, failedStepIndex, allAttempts, executionPlan, safetySnapshotId,
                     forwardFailureType, forwardFailureMessage,
-                    "RollbackMismatch",
-                    $"回滚步骤 #{failedStepIndex} StableId/PreviousPosition 不匹配。");
+                    "RollbackStableIdMismatch",
+                    $"回滚步骤 #{failedStepIndex} StableId \"{rbResult.StableId}\" ≠ 期望 \"{currentStep.StableId}\"。");
             }
 
+            // 2. 再验证 PreviousPosition
+            if (rbResult.PreviousPosition != currentExpectedPrevious)
+            {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackPreviousPositionMismatch(
+                    attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
+                    currentExpectedPrevious, rbResult));
+                return PositionUncertainS(session, failedStepIndex, allAttempts, executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackPreviousPositionMismatch",
+                    $"回滚步骤 #{failedStepIndex} PreviousPosition ({rbResult.PreviousPosition.X},{rbResult.PreviousPosition.Y}) " +
+                    $"≠ 期望 ({currentExpectedPrevious.X},{currentExpectedPrevious.Y})。");
+            }
+
+            // 3. 身份可信后判断位置精确性
             if (!rbResult.IsExact)
             {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
+                    attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
+                    currentExpectedPrevious, rbResult));
                 return FailedRollbackIncompleteS(session, failedStepIndex, allAttempts,
                     executionPlan, safetySnapshotId,
                     forwardFailureType, forwardFailureMessage,
+                    "RollbackInexact",
                     $"回滚步骤 #{failedStepIndex} 非精确：Actual=({rbResult.ActualPosition.X},{rbResult.ActualPosition.Y}), " +
                     $"Target=({currentRollbackTarget.X},{currentRollbackTarget.Y})。");
             }
+
+            allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
+                attemptIndex, failedStepIndex, currentStep, currentRollbackTarget,
+                currentExpectedPrevious, rbResult));
+            attemptIndex++;
         }
 
         // Step 2: 逆序回滚之前的精确成功步骤
@@ -438,41 +451,49 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
             catch (Exception ex)
             {
-                var rbExcAttempt = TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
-                    attemptIndex, si, step, rollbackTarget, expectedPrevious, ex);
-                attemptIndex++;
-                allAttempts.Add(rbExcAttempt);
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, ex));
                 return PositionUncertainS(session, failedStepIndex, allAttempts, executionPlan, safetySnapshotId,
                     forwardFailureType, forwardFailureMessage,
                     ex.GetType().Name, $"回滚步骤 #{si} Writer 异常：{ex.Message}");
             }
 
-            var rbAttempt = rbResult.IsExact
-                ? TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
-                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult)
-                : TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
-                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult);
-
-            attemptIndex++;
-            allAttempts.Add(rbAttempt);
-
-            if (!string.Equals(rbResult.StableId, step.StableId, StringComparison.Ordinal)
-                || rbResult.PreviousPosition != expectedPrevious)
+            if (!string.Equals(rbResult.StableId, step.StableId, StringComparison.Ordinal))
             {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
                 return PositionUncertainS(session, failedStepIndex, allAttempts, executionPlan, safetySnapshotId,
                     forwardFailureType, forwardFailureMessage,
-                    "RollbackMismatch",
-                    $"回滚步骤 #{si} StableId/PreviousPosition 不匹配。");
+                    "RollbackStableIdMismatch",
+                    $"回滚步骤 #{si} StableId \"{rbResult.StableId}\" ≠ 期望 \"{step.StableId}\"。");
+            }
+
+            if (rbResult.PreviousPosition != expectedPrevious)
+            {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackPreviousPositionMismatch(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
+                return PositionUncertainS(session, failedStepIndex, allAttempts, executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackPreviousPositionMismatch",
+                    $"回滚步骤 #{si} PreviousPosition ({rbResult.PreviousPosition.X},{rbResult.PreviousPosition.Y}) " +
+                    $"≠ 期望 ({expectedPrevious.X},{expectedPrevious.Y})。");
             }
 
             if (!rbResult.IsExact)
             {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
                 return FailedRollbackIncompleteS(session, failedStepIndex, allAttempts,
                     executionPlan, safetySnapshotId,
                     forwardFailureType, forwardFailureMessage,
+                    "RollbackInexact",
                     $"回滚步骤 #{si} 非精确：Actual=({rbResult.ActualPosition.X},{rbResult.ActualPosition.Y}), " +
                     $"Target=({rollbackTarget.X},{rollbackTarget.Y})。");
             }
+
+            allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
+                attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
+            attemptIndex++;
         }
 
         // 全部精确回滚
@@ -601,7 +622,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         List<TargetDisplayLayoutExecutionAttemptResult> allAttempts,
         TargetDisplayLayoutExecutionPlan executionPlan, Guid safetySnapshotId,
         string forwardFailureType, string forwardFailureMessage,
-        string recoveryFailureMessage)
+        string recoveryFailureType, string recoveryFailureMessage)
     {
         var forward = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var rollback = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
@@ -612,7 +633,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             false, false, s, safetySnapshotId, forward, rollback,
             failedStepIndex, true, false,
             forwardFailureType, forwardFailureMessage,
-            null, recoveryFailureMessage);
+            recoveryFailureType, recoveryFailureMessage);
     }
 
     private static TargetDisplayLayoutRecoverySession BuildSession(

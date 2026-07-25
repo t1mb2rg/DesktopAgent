@@ -148,7 +148,7 @@ public sealed record TargetDisplayLayoutExecutionAttemptResult
             ex.GetType().Name, ex.Message,
             null, null);
 
-    /// <summary>从 StableId 不匹配创建结果。</summary>
+    /// <summary>从 StableId 不匹配创建正向结果。</summary>
     public static TargetDisplayLayoutExecutionAttemptResult FromStableIdMismatch(
         int attemptIndex, int sourceStepIndex,
         TargetDisplayLayoutExecutionStep step, DesktopIconMoveResult mr) =>
@@ -157,14 +157,14 @@ public sealed record TargetDisplayLayoutExecutionAttemptResult
             TargetDisplayLayoutExecutionAttemptPhase.Forward,
             step.StableId, step.FromPosition, step.ToPosition,
             mr.StableId, mr.PreviousPosition, mr.ActualPosition,
-            true, false, // ActualPosition 可信但 StableId 不匹配
+            false, false, // StableId 不可信 → ActualPosition 也不可信
             TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch,
             mr.ConnectionMethod,
             null, null,
             mr.PrimaryPathException?.GetType().Name,
             mr.PrimaryPathException?.Message);
 
-    /// <summary>从 PreviousPosition 不匹配创建结果。</summary>
+    /// <summary>从 PreviousPosition 不匹配创建正向结果。</summary>
     public static TargetDisplayLayoutExecutionAttemptResult FromPreviousPositionMismatch(
         int attemptIndex, int sourceStepIndex,
         TargetDisplayLayoutExecutionStep step, DesktopIconMoveResult mr) =>
@@ -172,6 +172,40 @@ public sealed record TargetDisplayLayoutExecutionAttemptResult
             attemptIndex, sourceStepIndex,
             TargetDisplayLayoutExecutionAttemptPhase.Forward,
             step.StableId, step.FromPosition, step.ToPosition,
+            mr.StableId, mr.PreviousPosition, mr.ActualPosition,
+            true, false,
+            TargetDisplayLayoutExecutionAttemptOutcome.PreviousPositionMismatch,
+            mr.ConnectionMethod,
+            null, null,
+            mr.PrimaryPathException?.GetType().Name,
+            mr.PrimaryPathException?.Message);
+
+    /// <summary>从回滚 StableId 不匹配创建结果。</summary>
+    public static TargetDisplayLayoutExecutionAttemptResult FromRollbackStableIdMismatch(
+        int attemptIndex, int sourceStepIndex,
+        TargetDisplayLayoutExecutionStep step, PixelPoint rollbackTarget,
+        PixelPoint expectedPrevious, DesktopIconMoveResult mr) =>
+        new(
+            attemptIndex, sourceStepIndex,
+            TargetDisplayLayoutExecutionAttemptPhase.Rollback,
+            step.StableId, expectedPrevious, rollbackTarget,
+            mr.StableId, mr.PreviousPosition, mr.ActualPosition,
+            false, false,
+            TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch,
+            mr.ConnectionMethod,
+            null, null,
+            mr.PrimaryPathException?.GetType().Name,
+            mr.PrimaryPathException?.Message);
+
+    /// <summary>从回滚 PreviousPosition 不匹配创建结果。</summary>
+    public static TargetDisplayLayoutExecutionAttemptResult FromRollbackPreviousPositionMismatch(
+        int attemptIndex, int sourceStepIndex,
+        TargetDisplayLayoutExecutionStep step, PixelPoint rollbackTarget,
+        PixelPoint expectedPrevious, DesktopIconMoveResult mr) =>
+        new(
+            attemptIndex, sourceStepIndex,
+            TargetDisplayLayoutExecutionAttemptPhase.Rollback,
+            step.StableId, expectedPrevious, rollbackTarget,
             mr.StableId, mr.PreviousPosition, mr.ActualPosition,
             true, false,
             TargetDisplayLayoutExecutionAttemptOutcome.PreviousPositionMismatch,

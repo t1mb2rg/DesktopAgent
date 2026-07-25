@@ -236,6 +236,14 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
         Assert.Empty(result.RollbackAttempts);
+        // Verify attempt outcome and trust
+        var attempt = Assert.Single(result.ForwardAttempts);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch, attempt.Outcome);
+        Assert.False(attempt.HasTrustedActualPosition);
+        Assert.False(attempt.IsExact);
+        // Not in completed
+        Assert.NotNull(result.Session);
+        Assert.Empty(result.Session!.CompletedForwardStepIndexes);
     }
 
     // ═══════════ 10. Wrong PreviousPosition → PositionUncertain ═══════════
@@ -323,6 +331,96 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
         Assert.NotNull(result.RecoveryFailureType);
         Assert.Contains("rollback fail", result.RecoveryFailureMessage);
+    }
+
+    // ═══════════ Rollback mismatch tests ═══════════
+    [Fact] public async Task RollbackWrongStableId_IsNotMarkedCompleted()
+    {
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult("a", new(160, 240), new(240, 320), new(250, 330));
+        writer.ScriptWrongStableId("a", new(250, 330), new(160, 240), "WRONG");
+        var coordinator = MakeCoordinator(new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new InMemoryDesktopLayoutSnapshotStore());
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        var rb = Assert.Single(result.RollbackAttempts);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch, rb.Outcome);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptPhase.Rollback, rb.Phase);
+        Assert.False(rb.HasTrustedActualPosition);
+        Assert.NotNull(result.Session);
+        Assert.Empty(result.Session!.CompletedRollbackSourceStepIndexes);
+        Assert.Equal("RollbackStableIdMismatch", result.RecoveryFailureType);
+    }
+
+    [Fact] public async Task RollbackWrongPreviousPosition_IsNotMarkedCompleted()
+    {
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult("a", new(160, 240), new(240, 320), new(250, 330));
+        writer.ScriptWrongPreviousPosition("a", new(250, 330), new(160, 240), new(999, 999));
+        var coordinator = MakeCoordinator(new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new InMemoryDesktopLayoutSnapshotStore());
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        var rb = Assert.Single(result.RollbackAttempts);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.PreviousPositionMismatch, rb.Outcome);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptPhase.Rollback, rb.Phase);
+        Assert.Empty(result.Session!.CompletedRollbackSourceStepIndexes);
+        Assert.Equal("RollbackPreviousPositionMismatch", result.RecoveryFailureType);
+    }
+
+    [Fact] public async Task RollbackInexact_ReturnsFailedRollbackIncomplete_WithType()
+    {
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult("a", new(160, 240), new(240, 320), new(250, 330));
+        writer.ScriptInexactResult("a", new(250, 330), new(160, 240), new(170, 250));
+        var coordinator = MakeCoordinator(new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new InMemoryDesktopLayoutSnapshotStore());
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete, result.Status);
+        Assert.Equal("RollbackInexact", result.RecoveryFailureType);
+        Assert.NotNull(result.RecoveryFailureMessage);
+        Assert.Contains("170", result.RecoveryFailureMessage); // actualPosition
+    }
+
+    [Fact] public async Task PriorRollbackMismatch_DoesNotMarkFailedRollbackCompleted()
+    {
+        // 2 steps: a exact, b inexact → rollback step 1(a→b) then step 0(a→a′)
+        // Step 0 exact, step 1 inexact → triggers rollback
+        // Rollback step 1: exact success
+        // Rollback step 0: wrong StableId
+        var plan = MakeRestorePlan(
+            [Snap("a", new(240, 80)), Snap("b", new(400, 80))],
+            [Live("a", new(160, 80)), Live("b", new(320, 80))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 80), new(240, 80));           // fwd step 0
+        writer.ScriptInexactResult("b", new(320, 80), new(400, 80), new(410, 85)); // fwd step 1 inexact
+        writer.ScriptExactResult("b", new(410, 85), new(320, 80));           // rb step 1 exact
+        writer.ScriptWrongStableId("a", new(240, 80), new(160, 80), "WRONG"); // rb step 0 wrong id
+        var coordinator = MakeCoordinator(new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 80)), Live("b", new(320, 80))]),
+            writer, new InMemoryDesktopLayoutSnapshotStore());
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("RollbackStableIdMismatch", result.RecoveryFailureType);
+        Assert.Equal(2, result.RollbackAttempts.Count);
+        // First rollback: source step 1 (b), exact
+        Assert.Equal(1, result.RollbackAttempts[0].SourceStepIndex);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess, result.RollbackAttempts[0].Outcome);
+        // Second rollback: source step 0 (a), mismatch
+        Assert.Equal(0, result.RollbackAttempts[1].SourceStepIndex);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch, result.RollbackAttempts[1].Outcome);
+        Assert.False(result.RollbackAttempts[1].HasTrustedActualPosition);
+        // Completed only contains step 1, NOT step 0
+        Assert.NotNull(result.Session);
+        Assert.Single(result.Session!.CompletedRollbackSourceStepIndexes);
+        Assert.Contains(1, result.Session.CompletedRollbackSourceStepIndexes);
+        Assert.DoesNotContain(0, result.Session.CompletedRollbackSourceStepIndexes);
     }
 
     // ═══════════ 19. Collections ═══════════
