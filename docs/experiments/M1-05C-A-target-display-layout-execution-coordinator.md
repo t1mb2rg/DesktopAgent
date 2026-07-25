@@ -17,7 +17,7 @@
 
 - **Core**：`TargetDisplayLayoutExecutionRunStatus`、`TargetDisplayLayoutExecutionRunResult`、`TargetDisplayLayoutRecoverySession`、`TargetDisplayLayoutExecutionAttemptResult`、`TargetDisplayLayoutExecutionAttemptPhase`、`TargetDisplayLayoutExecutionAttemptOutcome`
 - **WindowsInterop**：`TargetDisplayLayoutExecutionCoordinator`、`IDesktopLayoutSafetySnapshotFactory`、`DefaultSafetySnapshotFactory`
-- **Tests**：Fake/InMemory/Scripted 测试替身 + 40 个 [Fact] 测试
+- **Tests**：Fake/InMemory/Scripted 测试替身 + 41 个 [Fact] 测试
 
 WindowsInterop 只依赖 Core 接口。Coordinator 通过 `internal` 构造函数接受可选的 Planner 委托和快照工厂抽象。
 
@@ -144,7 +144,7 @@ Writer 异常、StableId mismatch、PreviousPosition mismatch 一律返回 Posit
 - `FakeDisplayTopologyReader`、`FakeDesktopIconReader`、`InMemoryDesktopLayoutSnapshotStore`（含 SaveCount）
 - `ThrowingSnapshotFactory`：可注入快照工厂异常
 - Planner 委托注入：可测试 CreatePlan 异常转换
-- 协调器测试数量：**40 个** [Fact]
+- 协调器测试数量：**41 个** [Fact]
 
 ## M1-05C-B 将负责
 
