@@ -108,6 +108,91 @@ RestorePlanner 阶段 7 在检查 `AlreadyAtTarget` 之前先执行了 `IsFullyC
 - MoveRequired 项目仍严格验证目标占用矩形完全位于工作区
 - 其他显示器同坐标项目仍必须通过工作区验证（不能绕过）
 
+## 最终受控实机验收（2026-07-26）
+
+### 环境
+
+- 目标显示器：`\\.\DISPLAY2`
+- 测试对象：`DesktopAgent-M1-05C-B-Test`
+- 基准快照：`7e7a4f6d-4444-48af-b451-5e98f903f0fb`
+- 基准位置：`(1886,507)`
+- 手工移动后位置：`(1962,507)`
+
+### 修复后预览
+
+| 字段 | 值 |
+|---|---|
+| SnapshotTargetIconCount | 43 |
+| AlreadyAtTargetCount | 42 |
+| MoveRequiredCount | 1 |
+| MissingCount | 0 |
+| BlockedCount | 0 |
+| HasBlockingErrors | false |
+| RequiresTemporaryStaging | false |
+| ExecutionPlan.IsExecutable | true |
+| ExecutionPlan.Steps.Count | 1 |
+| UsesTemporaryStaging | false |
+| Gate.IsAllowed | true |
+
+### 唯一执行步骤
+
+| 字段 | 值 |
+|---|---|
+| Kind | MoveToTarget |
+| StableId | `c:\users\29719\desktop\desktopagent-m1-05c-b-test` |
+| FromPosition | `(1962,507)` |
+| ToPosition | `(1886,507)` |
+| TargetDeviceName | `\\.\DISPLAY2` |
+
+### 真实执行结果
+
+| 字段 | 值 |
+|---|---|
+| Status | Completed |
+| IsSuccess | true |
+| IsNoOp | false |
+| SafetySnapshotId | `8b6ab498-4b98-494d-b788-ab7b85ee0840` |
+| SessionId | `b6362dcc-9d6a-4529-b42e-cbb04413ec8d` |
+| RequiresManualRecovery | false |
+| IsPositionUncertain | false |
+| ForwardAttempts.Count | 1 |
+| RollbackAttempts.Count | 0 |
+
+### Forward Attempt
+
+| 字段 | 值 |
+|---|---|
+| Phase | Forward |
+| Outcome | ExactSuccess |
+| ConnectionMethod | FindWindowSW |
+| ExpectedPreviousPosition | `(1962,507)` |
+| ReportedPreviousPosition | `(1962,507)` |
+| RequestedPosition | `(1886,507)` |
+| ActualPosition | `(1886,507)` |
+| IsExact | true |
+| HasTrustedActualPosition | true |
+| Writer Exception | none |
+| PrimaryPath Exception | none |
+
+### 独立重新读取
+
+| 字段 | 值 |
+|---|---|
+| 图标总数 | 118 |
+| 失败数 | 0 |
+| ConnectionMethod | FindWindowSW |
+| 测试文件夹最终坐标 | `(1886,507)` |
+| 所属显示器 | `\\.\DISPLAY2` |
+| IsFileSystemItem | true |
+| IsSystemItem | false |
+
+### 验收结论
+
+M1-05C-B 的单图标、单步骤、无中转受控恢复闭环通过。
+Coordinator 完成最新读取、重新规划、最终 ScopeGate、
+安全快照、RecoverySession、真实写入和精确回读；
+独立重新读取再次确认最终位置。
+
 ## 未运行 PoC 的代码提交边界
 
 本轮代码实现完成：
@@ -119,18 +204,21 @@ RestorePlanner 阶段 7 在检查 `AlreadyAtTarget` 之前先执行了 `IsFullyC
 
 M1-05C-B 代码可在**不运行 PoC** 的条件下提交。
 
-## 后续实机步骤
+## 实机验收步骤与结果
 
-1. 在目标显示器桌面创建临时文件夹：`DesktopAgent-M1-05C-B-Test`
-2. 关闭「自动排列图标」
-3. 读取桌面并保存快照
-4. 记录 SnapshotId
-5. 手工拖动该临时文件夹一个网格位置
-6. 不移动其他图标
-7. 选择刚保存的快照
-8. 预览必须满足：MoveRequiredCount=1, Steps.Count=1, MoveToTarget, UsesTemporaryStaging=false
-9. 二次确认并执行
-10. 预期：Status=Completed, ForwardAttempts.Count=1, Outcome=ExactSuccess, RollbackAttempts.Count=0, RequiresManualRecovery=false, IsPositionUncertain=false
-11. 重新读取桌面
-12. 确认临时文件夹回到原位置
-13. 记录 SafetySnapshotId、SessionId、实际坐标
+以下步骤已于 2026-07-26 完成，详见上方「最终受控实机验收」。
+
+1. 在目标显示器桌面创建临时文件夹：`DesktopAgent-M1-05C-B-Test` ✅
+2. 关闭「自动排列图标」 ✅
+3. 读取桌面并保存快照 ✅
+4. 记录 SnapshotId ✅（`7e7a4f6d-4444-48af-b451-5e98f903f0fb`）
+5. 手工拖动该临时文件夹一个网格位置 ✅（`(1886,507)` → `(1962,507)`）
+6. 不移动其他图标 ✅
+7. 选择刚保存的快照 ✅
+8. 预览满足：MoveRequiredCount=1, Steps.Count=1, MoveToTarget, UsesTemporaryStaging=false ✅
+9. 二次确认并执行 ✅
+10. Status=Completed, ForwardAttempts.Count=1, Outcome=ExactSuccess, RollbackAttempts.Count=0,
+    RequiresManualRecovery=false, IsPositionUncertain=false ✅
+11. 重新读取桌面 ✅
+12. 确认临时文件夹回到原位置 ✅（`(1886,507)`，`\\.\DISPLAY2`）
+13. 记录 SafetySnapshotId、SessionId、实际坐标 ✅
