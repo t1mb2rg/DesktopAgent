@@ -242,7 +242,24 @@ public static class TargetDisplayLayoutRestorePlanner
                 continue;
             }
 
-            // 目标坐标验证
+            // 无需移动？（必须先于目标坐标验证：
+            // 已位于快照目标且显示器一致的项目不需要 Writer，
+            // 因此目标工作区越界不应阻断。）
+            if (currentIcon.PixelPosition == snapIcon.PixelPosition
+                && string.Equals(currentIcon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
+            {
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                    IsFileSystemItem = currentIcon.IsFileSystemItem,
+                    IsSystemItem = currentIcon.IsSystemItem,
+                };
+                continue;
+            }
+
+            // 目标坐标验证（仅真正需要移动的项目）
             if (!DesktopIconLayoutGeometry.TryCreateRect(snapIcon.PixelPosition, capabilities.Spacing, out var targetRect))
             {
                 items[si] = items[si] with
@@ -268,30 +285,15 @@ public static class TargetDisplayLayoutRestorePlanner
                 continue;
             }
 
-            // 已在目标位置？（需同时验证坐标和显示器身份）
-            if (currentIcon.PixelPosition == snapIcon.PixelPosition
-                && string.Equals(currentIcon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
+            // 需要移动且目标位于工作区
+            items[si] = items[si] with
             {
-                items[si] = items[si] with
-                {
-                    CurrentPosition = currentIcon.PixelPosition,
-                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
-                    State = TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
-                    IsFileSystemItem = currentIcon.IsFileSystemItem,
-                    IsSystemItem = currentIcon.IsSystemItem,
-                };
-            }
-            else
-            {
-                items[si] = items[si] with
-                {
-                    CurrentPosition = currentIcon.PixelPosition,
-                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
-                    State = TargetDisplayLayoutRestoreItemState.MoveRequired,
-                    IsFileSystemItem = currentIcon.IsFileSystemItem,
-                    IsSystemItem = currentIcon.IsSystemItem,
-                };
-            }
+                CurrentPosition = currentIcon.PixelPosition,
+                CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                State = TargetDisplayLayoutRestoreItemState.MoveRequired,
+                IsFileSystemItem = currentIcon.IsFileSystemItem,
+                IsSystemItem = currentIcon.IsSystemItem,
+            };
         }
 
         // ═══ 阶段 8: 占用关系收集（全量扫描）═══

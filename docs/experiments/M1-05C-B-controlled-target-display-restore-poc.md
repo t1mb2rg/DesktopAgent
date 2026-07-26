@@ -80,6 +80,34 @@
 - 保留结果、Session 和 SafetySnapshotId
 - 关闭时二次确认
 
+## 首次实机预览发现（2026-07-26）
+
+### 环境
+
+- 目标显示器：`\\.\DISPLAY2`，工作区 `(124,0)-(2560,1440)`
+- 基准快照：`7e7a4f6d-4444-48af-b451-5e98f903f0fb`
+- 测试文件夹：`DesktopAgent-M1-05C-B-Test`，基准 `(1886,507)`，移动后 `(1962,507)` → 正确识别为 MoveRequired
+
+### 问题
+
+边缘图标「完美世界竞技平台」：
+- `CurrentPosition=(2494,1315)`，`SnapshotTargetPosition=(2494,1315)`，`Monitor=\\.\DISPLAY2`
+- 占用矩形 `(2494,1315)-(2574,1395)` 右边界 `2574 > 2560`（工作区右边界）
+
+RestorePlanner 阶段 7 在检查 `AlreadyAtTarget` 之前先执行了 `IsFullyContained(targetRect, WorkArea)`，导致该 AlreadyAtTarget 图标被错误分类为 `TargetOutsideCurrentWorkArea`，阻断了 `ExecutionPlan.IsExecutable` = false。
+
+- Writer 未启动
+- PR 转回 Draft
+
+### 修复
+
+将 AlreadyAtTarget 判断（坐标相等 + 显示器 Ordinal 匹配）**提前**到目标工作区验证之前。
+
+原则：
+- 仅 AlreadyAtTarget 项目绕过目标工作区写入验证（不需要 Writer）
+- MoveRequired 项目仍严格验证目标占用矩形完全位于工作区
+- 其他显示器同坐标项目仍必须通过工作区验证（不能绕过）
+
 ## 未运行 PoC 的代码提交边界
 
 本轮代码实现完成：
@@ -87,6 +115,7 @@
 - DI 注册 Coordinator + SafetySnapshotFactory
 - MainWindow TabControl + 预览/执行逻辑
 - Window 关闭保护
+- AlreadyAtTarget 边缘图标修复 + 4 个测试
 
 M1-05C-B 代码可在**不运行 PoC** 的条件下提交。
 

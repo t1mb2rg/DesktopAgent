@@ -26,7 +26,7 @@
         <!-- ── 0 标题栏 ── -->
         <DockPanel Grid.Row="0">
             <StackPanel DockPanel.Dock="Left">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="DesktopAgent PoC — M1-04B" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="DesktopAgent PoC — M1-05C-B" />
                 <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
                            Text="M1-01 显示器拓扑  |  M1-02 只读图标枚举  |  M1-03B SQLite 快照  |  M1-04B 单图标移动与恢复" />
             </StackPanel>
