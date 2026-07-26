@@ -83,7 +83,7 @@
 ## 未运行 PoC 的代码提交边界
 
 本轮代码实现完成：
-- ScopeGate + 9 个测试
+- ScopeGate + 11 个测试
 - DI 注册 Coordinator + SafetySnapshotFactory
 - MainWindow TabControl + 预览/执行逻辑
 - Window 关闭保护
