@@ -9,7 +9,10 @@ using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
+using DesktopAgent.Core.DesktopLayouts.Restore;
+using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.DesktopIcons;
+using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 
 namespace DesktopAgent.Poc;
 
@@ -21,6 +24,7 @@ public partial class MainWindow : Window
     private readonly StaThreadExecutor _staExecutor;
     private readonly DesktopLayoutSnapshotFactory _snapshotFactory;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
+    private readonly TargetDisplayLayoutExecutionCoordinator _layoutExecutionCoordinator;
 
     private readonly ObservableCollection<DisplayRow> _displayRows = [];
     private IReadOnlyList<DisplayDescriptor> _cachedDisplays = Array.Empty<DisplayDescriptor>();
@@ -39,8 +43,15 @@ public partial class MainWindow : Window
 
     private MoveRecoverySession? _activeMoveSession;
 
+    // M1-05C-B
+    private LayoutRestorePreviewSession? _layoutRestorePreview;
+    private bool _layoutRestoreOperationInProgress;
+    private bool _layoutRestoreRequiresAttention;
+    private TargetDisplayLayoutExecutionRunResult? _lastLayoutExecutionResult;
+
     private bool IsAnyOperationInProgress =>
-        _iconReadInProgress || _snapshotOperationInProgress || _moveOperationInProgress;
+        _iconReadInProgress || _snapshotOperationInProgress || _moveOperationInProgress
+        || _layoutRestoreOperationInProgress;
 
     public MainWindow(
         IDisplayTopologyReader displayTopologyReader,
@@ -48,7 +59,8 @@ public partial class MainWindow : Window
         IDesktopIconPositionWriter desktopIconPositionWriter,
         StaThreadExecutor staExecutor,
         DesktopLayoutSnapshotFactory snapshotFactory,
-        IDesktopLayoutSnapshotStore snapshotStore)
+        IDesktopLayoutSnapshotStore snapshotStore,
+        TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator)
     {
         InitializeComponent();
 
@@ -58,6 +70,7 @@ public partial class MainWindow : Window
         _staExecutor = staExecutor;
         _snapshotFactory = snapshotFactory;
         _snapshotStore = snapshotStore;
+        _layoutExecutionCoordinator = layoutExecutionCoordinator;
 
         DisplaysGrid.ItemsSource = _displayRows;
         IconsGrid.ItemsSource = _iconRows;
@@ -115,6 +128,21 @@ public partial class MainWindow : Window
         MoveSelectedIconButton.IsEnabled = canMove;
 
         RestoreOriginalPositionButton.IsEnabled = hasSession && !busy;
+
+        // M1-05C-B
+        var canPreviewLayout = !busy && !hasSession && !_layoutRestoreRequiresAttention
+            && _snapshotStoreReady && _currentTarget is not null
+            && SnapshotsGrid.SelectedItem is SnapshotRow;
+        PreviewLayoutRestoreButton.IsEnabled = canPreviewLayout;
+
+        var canExecuteLayout = !busy && !hasSession && !_layoutRestoreRequiresAttention
+            && _layoutRestorePreview?.GateResult.IsAllowed == true
+            && LayoutRestoreConsentCheckBox.IsChecked == true
+            && SnapshotsGrid.SelectedItem is SnapshotRow selectedSnapRow
+            && Guid.TryParse(selectedSnapRow.SnapshotId, out var selectedSid)
+            && selectedSid == _layoutRestorePreview.SnapshotId
+            && _currentTarget?.DeviceName == _layoutRestorePreview.TargetDeviceName;
+        ExecuteLayoutRestoreButton.IsEnabled = canExecuteLayout;
 
         if (hasSession && !busy)
         {
@@ -702,6 +730,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_layoutRestoreRequiresAttention && _lastLayoutExecutionResult is not null)
+        {
+            var r = _lastLayoutExecutionResult;
+            var msg = $"布局恢复需要人工处理！\n\n" +
+                $"Status: {r.Status}\nSafetySnapshotId: {r.SafetySnapshotId}\n" +
+                $"SessionId: {r.Session?.SessionId}\nFailedStepIndex: {r.FailedStepIndex}\n" +
+                $"ForwardFailure: {r.ForwardFailureType}: {r.ForwardFailureMessage}\n" +
+                $"RecoveryFailure: {r.RecoveryFailureType}: {r.RecoveryFailureMessage}\n\n" +
+                $"不会自动恢复。仍然关闭窗口？";
+            var dr = MessageBox.Show(msg, "需要人工处理 — 布局恢复",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (dr != MessageBoxResult.Yes) { e.Cancel = true; return; }
+        }
+
         if (_activeMoveSession is null) return;
 
         var s = _activeMoveSession;
@@ -756,5 +798,276 @@ public partial class MainWindow : Window
             s.CreatedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture),
             s.SnapshotId.ToString("D"), s.IconCount, s.TargetMonitorDeviceName ?? "—",
             s.ConnectionMethod.ToString(), s.FormatVersion);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  M1-05C-B 布局恢复
+    // ═══════════════════════════════════════════════════
+
+    private sealed record LayoutRestorePreviewSession(
+        Guid SnapshotId,
+        string TargetDeviceName,
+        DateTimeOffset CreatedAtUtc,
+        TargetDisplayLayoutRestorePlan SourceRestorePlan,
+        TargetDisplayLayoutExecutionPlan PreviewExecutionPlan,
+        TargetDisplayLayoutExecutionScopeGate.GateResult GateResult);
+
+    private void InvalidateLayoutRestorePreview()
+    {
+        _layoutRestorePreview = null;
+        LayoutRestorePreviewText.Text = "预览已过期。请重新预览。";
+        LayoutRestoreConsentCheckBox.IsChecked = false;
+        ExecuteLayoutRestoreButton.IsEnabled = false;
+        UpdateInteractiveState();
+    }
+
+    private void SnapshotsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        InvalidateLayoutRestorePreview();
+
+    private void LayoutRestoreConsentChanged(object sender, RoutedEventArgs e) =>
+        UpdateInteractiveState();
+
+    private async void PreviewLayoutRestore_Click(object sender, RoutedEventArgs e)
+    {
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            if (SnapshotsGrid.SelectedItem is not SnapshotRow row
+                || !Guid.TryParse(row.SnapshotId, out var snapshotId))
+            {
+                sb.AppendLine("未选择有效快照。");
+                StatusText.Text = sb.ToString();
+                return;
+            }
+
+            if (_currentTarget is null)
+            {
+                sb.AppendLine("未选择目标显示器。");
+                StatusText.Text = sb.ToString();
+                return;
+            }
+
+            sb.AppendLine($"SnapshotId: {snapshotId:D}");
+            sb.AppendLine($"TargetDeviceName: {_currentTarget.DeviceName}");
+
+            var snapshot = await _snapshotStore.GetAsync(snapshotId);
+            if (snapshot is null)
+            {
+                sb.AppendLine("快照不存在。");
+                StatusText.Text = sb.ToString();
+                return;
+            }
+
+            var displays = _displayTopologyReader.GetDisplays();
+            var targetDisplay = UniqueDisplaySelector.FindByDeviceName(displays, _currentTarget.DeviceName);
+
+            var capabilities = await _staExecutor.RunAsync(() =>
+                _desktopIconPositionWriter.GetCapabilities());
+            var rawRead = await _staExecutor.RunAsync(() => _desktopIconReader.ReadDesktopIcons());
+            var assignedIcons = rawRead.Icons.Select(icon =>
+            {
+                var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, displays);
+                return icon with { MonitorDeviceName = monitor?.DeviceName };
+            }).ToList();
+            var currentRead = new DesktopIconReadResult(assignedIcons, rawRead.FailedItemCount,
+                rawRead.ConnectionMethod, rawRead.ReadTime, rawRead.PrimaryPathException);
+
+            var rp = TargetDisplayLayoutRestorePlanner.CreatePlan(
+                snapshot, currentRead, displays, capabilities, _currentTarget.DeviceName);
+            var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(
+                rp, currentRead, displays, capabilities);
+
+            var gate = TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove(rp, ep);
+
+            _layoutRestorePreview = new LayoutRestorePreviewSession(
+                snapshotId, _currentTarget.DeviceName, snapshot.CreatedAtUtc, rp, ep, gate);
+
+            sb.AppendLine($"\n--- RestorePlan ---");
+            sb.AppendLine($"SnapshotTargetIconCount: {rp.SnapshotTargetIconCount}");
+            sb.AppendLine($"AlreadyAtTargetCount: {rp.AlreadyAtTargetCount}");
+            sb.AppendLine($"MoveRequiredCount: {rp.MoveRequiredCount}");
+            sb.AppendLine($"MissingCount: {rp.MissingCount}");
+            sb.AppendLine($"BlockedCount: {rp.BlockedCount}");
+            sb.AppendLine($"HasBlockingErrors: {rp.HasBlockingErrors}");
+            sb.AppendLine($"RequiresTemporaryStaging: {rp.RequiresTemporaryStaging}");
+            sb.AppendLine($"IsNoOp: {rp.IsNoOp}");
+
+            sb.AppendLine($"\n--- ExecutionPlan ---");
+            sb.AppendLine($"IsExecutable: {ep.IsExecutable}");
+            sb.AppendLine($"IsNoOp: {ep.IsNoOp}");
+            sb.AppendLine($"UsesTemporaryStaging: {ep.UsesTemporaryStaging}");
+            sb.AppendLine($"Steps.Count: {ep.Steps.Count}");
+
+            sb.AppendLine($"\n--- Gate ---");
+            sb.AppendLine($"IsAllowed: {gate.IsAllowed}");
+            foreach (var reason in gate.RejectionReasons)
+                sb.AppendLine($"  拒绝: {reason}");
+
+            sb.AppendLine($"\n--- Items ---");
+            foreach (var item in rp.Items)
+                sb.AppendLine($"  {item.StableId} [{item.State}] " +
+                    $"CurPos=({item.CurrentPosition?.X},{item.CurrentPosition?.Y}) " +
+                    $"Target=({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y}) " +
+                    $"Mon={item.CurrentMonitorDeviceName ?? "—"} Block={item.BlockReason ?? "—"}");
+
+            sb.AppendLine($"\n--- Steps ---");
+            foreach (var step in ep.Steps)
+                sb.AppendLine($"  [{step.StepIndex}] {step.Kind} {step.StableId} " +
+                    $"({step.FromPosition.X},{step.FromPosition.Y})→({step.ToPosition.X},{step.ToPosition.Y}) " +
+                    $"Mon={step.ExpectedMonitorDeviceName}");
+
+            LayoutRestorePreviewText.Text = gate.IsAllowed ? "预览通过。单图标、单步骤、无中转。" : "预览未通过闸门。";
+            StatusText.Text = sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"预览异常: {ex.GetType().Name}: {ex.Message}");
+            StatusText.Text = sb.ToString();
+            LayoutRestorePreviewText.Text = "预览失败。";
+            _layoutRestorePreview = null;
+        }
+        finally
+        {
+            UpdateInteractiveState();
+        }
+    }
+
+    private async void ExecuteLayoutRestore_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layoutRestorePreview is null) return;
+        var preview = _layoutRestorePreview;
+
+        // 重新调用闸门，不信任按钮状态
+        var reGate = TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove(
+            preview.SourceRestorePlan, preview.PreviewExecutionPlan);
+        if (!reGate.IsAllowed)
+        {
+            StatusText.Text = $"执行前闸门被拒绝:\n{string.Join("\n", reGate.RejectionReasons)}";
+            return;
+        }
+
+        // 二次确认
+        var moveItem = preview.SourceRestorePlan.Items.First(
+            it => it.State == TargetDisplayLayoutRestoreItemState.MoveRequired);
+        var step = preview.PreviewExecutionPlan.Steps[0];
+        var confirmMsg =
+            $"确认执行受控布局恢复？\n\n" +
+            $"SnapshotId: {preview.SnapshotId}\n" +
+            $"图标: {moveItem.DisplayName} ({moveItem.StableId})\n" +
+            $"From: ({step.FromPosition.X}, {step.FromPosition.Y})\n" +
+            $"To: ({step.ToPosition.X}, {step.ToPosition.Y})\n" +
+            $"目标显示器: {preview.TargetDeviceName}\n\n" +
+            $"Coordinator 会再次读取桌面、重新规划并保存新的完整安全快照。\n" +
+            $"该操作不可撤销。";
+
+        var dlgResult = MessageBox.Show(confirmMsg, "二次确认 — 受控布局恢复",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (dlgResult != MessageBoxResult.Yes)
+        {
+            StatusText.Text += "\n用户取消执行。";
+            return;
+        }
+
+        _layoutRestoreOperationInProgress = true;
+        UpdateInteractiveState();
+
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            var result = await _layoutExecutionCoordinator.ExecuteWithScopeGateAsync(
+                preview.SourceRestorePlan,
+                TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove,
+                CancellationToken.None);
+            _lastLayoutExecutionResult = result;
+
+            sb.AppendLine($"=== 执行结果 ===");
+            sb.AppendLine($"Status: {result.Status}");
+            sb.AppendLine($"IsSuccess: {result.IsSuccess}");
+            sb.AppendLine($"IsNoOp: {result.IsNoOp}");
+            sb.AppendLine($"SafetySnapshotId: {result.SafetySnapshotId}");
+            sb.AppendLine($"SessionId: {result.Session?.SessionId}");
+            sb.AppendLine($"FailedStepIndex: {result.FailedStepIndex}");
+            sb.AppendLine($"RequiresManualRecovery: {result.RequiresManualRecovery}");
+            sb.AppendLine($"IsPositionUncertain: {result.IsPositionUncertain}");
+            sb.AppendLine($"ForwardFailureType: {result.ForwardFailureType}");
+            sb.AppendLine($"ForwardFailureMessage: {result.ForwardFailureMessage}");
+            sb.AppendLine($"RecoveryFailureType: {result.RecoveryFailureType}");
+            sb.AppendLine($"RecoveryFailureMessage: {result.RecoveryFailureMessage}");
+
+            sb.AppendLine($"\n--- ForwardAttempts ({result.ForwardAttempts.Count}) ---");
+            foreach (var a in result.ForwardAttempts)
+                AppendAttempt(sb, a);
+
+            sb.AppendLine($"\n--- RollbackAttempts ({result.RollbackAttempts.Count}) ---");
+            foreach (var a in result.RollbackAttempts)
+                AppendAttempt(sb, a);
+
+            // 状态处理
+            switch (result.Status)
+            {
+                case TargetDisplayLayoutExecutionRunStatus.Completed:
+                case TargetDisplayLayoutExecutionRunStatus.CompletedNoOp:
+                    _layoutRestorePreview = null;
+                    LayoutRestoreConsentCheckBox.IsChecked = false;
+                    LayoutRestorePreviewText.Text = result.IsNoOp ? "NoOp 完成。" : "执行成功。";
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite:
+                    if (result.ForwardFailureType == "ExecutionScopeRejected")
+                    {
+                        sb.AppendLine("\n桌面状态在预览后发生变化，最新执行计划已超出");
+                        sb.AppendLine("单图标、单步骤、无中转范围；Writer 未开始，请重新预览。");
+                    }
+                    else
+                    {
+                        sb.AppendLine("\nWriter 未开始，没有副作用。");
+                    }
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack:
+                    sb.AppendLine("\n正向失败但已确认回滚，没有残留副作用。");
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete:
+                case TargetDisplayLayoutExecutionRunStatus.PositionUncertain:
+                    _layoutRestoreRequiresAttention = true;
+                    sb.AppendLine("\n⚠ 需要人工处理。请关闭并重新启动 PoC。");
+                    break;
+            }
+
+            if (result.ForwardAttempts.Count > 0 || result.RollbackAttempts.Count > 0)
+            {
+                _lastReadResult = null;
+                _iconRows.Clear();
+                IconStatsText.Text = "桌面图标已变更。请重新读取。";
+            }
+
+            // 刷新快照列表（新安全快照）
+            try { await RefreshSnapshotsAsync(); }
+            catch (Exception ex) { sb.AppendLine($"刷新快照列表失败: {ex.Message}"); }
+
+            StatusText.Text = sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"执行异常: {ex.GetType().Name}: {ex.Message}";
+        }
+        finally
+        {
+            _layoutRestoreOperationInProgress = false;
+            UpdateInteractiveState();
+        }
+    }
+
+    private static void AppendAttempt(
+        System.Text.StringBuilder sb, TargetDisplayLayoutExecutionAttemptResult a)
+    {
+        sb.Append($"  [{a.AttemptIndex}] srcStep={a.SourceStepIndex} {a.Phase} {a.Outcome} " +
+            $"ExpSid={a.ExpectedStableId} RptSid={a.ReportedStableId ?? "—"} " +
+            $"ExpPrev=({a.ExpectedPreviousPosition?.X},{a.ExpectedPreviousPosition?.Y}) " +
+            $"RptPrev=({a.ReportedPreviousPosition?.X},{a.ReportedPreviousPosition?.Y}) " +
+            $"Req=({a.RequestedPosition.X},{a.RequestedPosition.Y}) " +
+            $"Actual=({a.ActualPosition?.X},{a.ActualPosition?.Y}) " +
+            $"Trusted={a.HasTrustedActualPosition} Exact={a.IsExact}");
+        if (a.ExceptionType is not null)
+            sb.Append($" Exc={a.ExceptionType}:{a.ErrorMessage}");
+        sb.AppendLine();
     }
 }

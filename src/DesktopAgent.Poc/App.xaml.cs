@@ -4,6 +4,7 @@ using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.WindowsInterop.DesktopIcons;
+using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.Displays;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -35,6 +36,10 @@ public partial class App : Application
                 services.AddSingleton<IDesktopLayoutSnapshotStore>(
                     new SqliteDesktopLayoutSnapshotStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
+                services.AddSingleton<IDesktopLayoutSafetySnapshotFactory>(sp =>
+                    new DefaultSafetySnapshotFactory(
+                        sp.GetRequiredService<DesktopLayoutSnapshotFactory>()));
+                services.AddSingleton<TargetDisplayLayoutExecutionCoordinator>();
                 services.AddSingleton<MainWindow>();
             })
             .Build();

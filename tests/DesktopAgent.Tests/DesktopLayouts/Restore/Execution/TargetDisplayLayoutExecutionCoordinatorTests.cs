@@ -900,4 +900,124 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
         var err = TargetDisplayLayoutExecutionCoordinator.ValidateExecutionPlanStructure(plan);
         Assert.Null(err);
     }
+
+    // ═══════════ Scope gate integration tests ═══════════
+
+    [Fact]
+    public async Task FreshExecutionPlanRejectedByScopeGate_NoSnapshotAndNoWriter()
+    {
+        // Preview SourcePlan looks like single move (1 item),
+        // but Coordinator's fresh execution plan has 2 steps → gate rejects.
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+
+        // Inject planner that returns a multi-step plan (2 steps)
+        var multiStepPlan = new TargetDisplayLayoutExecutionPlan(
+            TD, true, false,
+            new[]
+            {
+                new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(160, 240), new(200, 280),
+                    TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD),
+                new TargetDisplayLayoutExecutionStep(1, "a", "N_a", new(200, 280), new(240, 320),
+                    TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD),
+            },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            store,
+            (_, _, _, _) => multiStepPlan);
+
+        var result = await coordinator.ExecuteWithScopeGateAsync(
+            plan, TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Equal("ExecutionScopeRejected", result.ForwardFailureType);
+        Assert.Contains("Steps.Count", result.ForwardFailureMessage);
+        Assert.Equal(0, writer.AttemptCount);
+        Assert.Equal(0, store.SaveCount);
+        Assert.Null(result.SafetySnapshotId);
+        Assert.Null(result.Session);
+        Assert.Empty(result.ForwardAttempts);
+        Assert.Empty(result.RollbackAttempts);
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
+    }
+
+    [Fact]
+    public async Task FreshSingleDirectMoveAllowedByScopeGate_Executes()
+    {
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+
+        // Planner returns a valid single-step plan
+        var singleStepPlan = new TargetDisplayLayoutExecutionPlan(
+            TD, true, false,
+            new[]
+            {
+                new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(160, 240), new(240, 320),
+                    TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD),
+            },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            store,
+            (_, _, _, _) => singleStepPlan);
+
+        var result = await coordinator.ExecuteWithScopeGateAsync(
+            plan, TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+        Assert.Equal(1, writer.AttemptCount);
+        Assert.NotNull(result.Session);
+        Assert.NotEqual(Guid.Empty, result.SafetySnapshotId);
+    }
+
+    [Fact]
+    public async Task ScopeGateException_ReturnsFailedBeforeWrite()
+    {
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+
+        var singleStepPlan = new TargetDisplayLayoutExecutionPlan(
+            TD, true, false,
+            new[]
+            {
+                new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(160, 240), new(240, 320),
+                    TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD),
+            },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            store,
+            (_, _, _, _) => singleStepPlan);
+
+        var result = await coordinator.ExecuteWithScopeGateAsync(
+            plan,
+            (_, _) => throw new InvalidOperationException("gate BOMB"));
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Equal("ExecutionScopeGateException", result.ForwardFailureType);
+        Assert.Contains("gate BOMB", result.ForwardFailureMessage);
+        Assert.Null(result.SafetySnapshotId);
+        Assert.Null(result.Session);
+        Assert.Equal(0, writer.AttemptCount);
+        Assert.Equal(0, store.SaveCount);
+    }
 }
