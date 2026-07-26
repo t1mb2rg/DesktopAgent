@@ -194,4 +194,51 @@ public sealed class TargetDisplayLayoutExecutionScopeGateTests
         Assert.False(result.IsAllowed);
         Assert.Contains(result.RejectionReasons, r => r.Contains("MoveRequiredCount") && r.Contains("不一致"));
     }
+
+    [Fact] public void DeclaredOneButActualZeroMoveItems_IsRejectedWithoutThrow()
+    {
+        // MoveRequiredCount=1 but 0 items with MoveRequired state
+        var items = new[]
+        {
+            new TargetDisplayLayoutRestorePlanItem("a", "N_a", new(240, 320), new(240, 320), TD,
+                TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, true, false),
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            new[] { new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(240, 320), new(240, 320),
+                TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD) },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var rp = new TargetDisplayLayoutRestorePlan(TD, 1, 1, 1, 0, 0, false, false, false,
+            items, Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            Array.Empty<TargetDisplayLayoutRestorePlanIssue>(), new[] { "a" });
+        // Must not throw — uses .ToList() not First()
+        var result = TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove(rp, plan);
+        Assert.False(result.IsAllowed);
+        Assert.Contains(result.RejectionReasons, r => r.Contains("实际") && r.Contains("预期 1"));
+    }
+
+    [Fact] public void DeclaredOneButActualTwoMoveItems_IsRejectedWithoutThrow()
+    {
+        // MoveRequiredCount=1 but 2 items with MoveRequired state
+        var items = new[]
+        {
+            new TargetDisplayLayoutRestorePlanItem("a", "N_a", new(240, 320), new(160, 240), TD,
+                TargetDisplayLayoutRestoreItemState.MoveRequired, true, false),
+            new TargetDisplayLayoutRestorePlanItem("b", "N_b", new(400, 480), new(320, 400), TD,
+                TargetDisplayLayoutRestoreItemState.MoveRequired, true, false),
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            new[] { new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(160, 240), new(240, 320),
+                TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD) },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var rp = new TargetDisplayLayoutRestorePlan(TD, 2, 0, 1, 0, 0, false, false, false,
+            items, Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            Array.Empty<TargetDisplayLayoutRestorePlanIssue>(), new[] { "a", "b" });
+        // Must not throw — uses .ToList() not First()
+        var result = TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove(rp, plan);
+        Assert.False(result.IsAllowed);
+    }
 }
