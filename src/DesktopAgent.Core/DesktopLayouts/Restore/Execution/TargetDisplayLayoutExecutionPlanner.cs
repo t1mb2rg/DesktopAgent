@@ -297,9 +297,11 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
 
-        // ═══ 最终目标合法性 ═══
+        // ═══ 最终目标合法性（仅 MoveRequired：AlreadyAtTarget 不写入，不需工作区检查） ═══
         foreach (var item in restorePlan.Items)
         {
+            if (item.State != MoveRequired)
+                continue;
             if (!DesktopIconLayoutGeometry.TryCreateRect(item.SnapshotTargetPosition, capabilities.Spacing, out var rect))
             {
                 issues.Add(new(SourcePlanInconsistent,
@@ -314,12 +316,14 @@ public static class TargetDisplayLayoutExecutionPlanner
             }
         }
 
-        // 重叠最终目标检测
+        // 重叠最终目标检测（仅当至少一方为 MoveRequired 时报错）
         for (var i = 0; i < restorePlan.Items.Count; i++)
         {
             for (var j = i + 1; j < restorePlan.Items.Count; j++)
             {
                 if (string.Equals(restorePlan.Items[i].StableId, restorePlan.Items[j].StableId, StringComparison.Ordinal))
+                    continue;
+                if (restorePlan.Items[i].State != MoveRequired && restorePlan.Items[j].State != MoveRequired)
                     continue;
                 var ri = DesktopIconLayoutGeometry.CreateRectChecked(
                     restorePlan.Items[i].SnapshotTargetPosition, capabilities.Spacing);

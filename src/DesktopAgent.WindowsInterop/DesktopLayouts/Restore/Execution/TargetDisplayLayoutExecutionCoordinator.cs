@@ -52,12 +52,38 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         _createPlan = createPlan ?? throw new ArgumentNullException(nameof(createPlan));
     }
 
+    /// <summary>
+    /// 公共入口 — 不执行闸门，保留向后兼容。
+    /// </summary>
     public async Task<TargetDisplayLayoutExecutionRunResult> ExecuteAsync(
         TargetDisplayLayoutRestorePlan restorePlan,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(restorePlan);
+        return await ExecuteCoreAsync(restorePlan, scopeGate: null, cancellationToken);
+    }
 
+    /// <summary>
+    /// 受控执行入口 — 在最新 ExecutionPlan 创建后、安全快照保存前执行闸门。
+    /// scopeGate 为 null 时保持原 public ExecuteAsync 行为。
+    /// </summary>
+    internal async Task<TargetDisplayLayoutExecutionRunResult> ExecuteWithScopeGateAsync(
+        TargetDisplayLayoutRestorePlan restorePlan,
+        Func<TargetDisplayLayoutRestorePlan, TargetDisplayLayoutExecutionPlan,
+            TargetDisplayLayoutExecutionScopeGate.GateResult> scopeGate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(restorePlan);
+        ArgumentNullException.ThrowIfNull(scopeGate);
+        return await ExecuteCoreAsync(restorePlan, scopeGate, cancellationToken);
+    }
+
+    private async Task<TargetDisplayLayoutExecutionRunResult> ExecuteCoreAsync(
+        TargetDisplayLayoutRestorePlan restorePlan,
+        Func<TargetDisplayLayoutRestorePlan, TargetDisplayLayoutExecutionPlan,
+            TargetDisplayLayoutExecutionScopeGate.GateResult>? scopeGate,
+        CancellationToken cancellationToken)
+    {
         // ═══ 1. 重新读取 + 分配显示器 ═══
         DesktopIconPositioningCapabilities capabilities;
         DesktopIconReadResult currentRead;
@@ -116,6 +142,42 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             return FailedBeforeWriteS(structureError.Value.ErrorType, structureError.Value.ErrorMessage);
 
         cancellationToken.ThrowIfCancellationRequested();
+
+        // ═══ 2.5. 受控范围闸门（最新计划审核） ═══
+        if (scopeGate is not null)
+        {
+            TargetDisplayLayoutExecutionScopeGate.GateResult gateResult;
+            try
+            {
+                gateResult = scopeGate(restorePlan, executionPlan);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite,
+                    false, false, null, null,
+                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    null, false, false,
+                    "ExecutionScopeGateException",
+                    $"scopeGate 异常：{ex.GetType().Name}: {ex.Message}",
+                    null, null);
+            }
+
+            if (!gateResult.IsAllowed)
+            {
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite,
+                    false, false, null, null,
+                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    null, false, false,
+                    "ExecutionScopeRejected",
+                    $"执行时闸门拒绝：{string.Join("; ", gateResult.RejectionReasons)}",
+                    null, null);
+            }
+        }
 
         // ═══ 3-6. 安全快照 ═══
         DesktopLayoutSnapshot safetySnapshot;

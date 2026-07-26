@@ -1,8 +1,10 @@
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
+using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
+using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 
 namespace DesktopAgent.Tests.DesktopLayouts.Restore;
 
@@ -616,4 +618,93 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
     [Fact] public void WhitespaceDevice_Throws() => Assert.Throws<ArgumentException>(() =>
         TargetDisplayLayoutRestorePlanner.CreatePlan(MakeSnapshot([]), MakeReadResult([]),
             new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), "   "));
+
+    // ═══ M1-05C-B 实机修复：AlreadyAtTarget 边缘图标不阻断 ═══
+
+    [Fact]
+    public void AlreadyAtTargetNearWorkAreaEdge_IsNotBlocked()
+    {
+        // WorkArea=(0,0)-(800,600), Spacing=(80,80)
+        // SnapTarget=(760,520), CurrentPos=(760,520)
+        // 占用矩形=(760,520)-(840,600) 不完全位于工作区 — 但无需移动，不应阻断
+        var p = PlanWithIcons(
+            [SnapItem("a", new(760, 520))],
+            [LiveIcon("a", new(760, 520))]);
+        var item = Assert.Single(p.Items);
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, item.State);
+        Assert.Null(item.BlockReason);
+        Assert.Equal(1, p.AlreadyAtTargetCount);
+        Assert.Equal(0, p.BlockedCount);
+        Assert.Equal(0, p.MoveRequiredCount);
+        Assert.False(p.HasBlockingErrors);
+        Assert.True(p.IsNoOp);
+    }
+
+    [Fact]
+    public void MoveRequiredTargetNearWorkAreaEdge_RemainsBlocked()
+    {
+        // SnapTarget=(760,520), CurrentPos=(640,520) — 需要移动
+        // 目标占用矩形(760,520)-(840,600)越出工作区(0,0)-(800,600)
+        var p = PlanWithIcons(
+            [SnapItem("a", new(760, 520))],
+            [LiveIcon("a", new(640, 520))]);
+        var item = Assert.Single(p.Items);
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea, item.State);
+        Assert.NotNull(item.BlockReason);
+        Assert.Contains("越出工作区", item.BlockReason);
+        Assert.Equal(0, p.MoveRequiredCount);
+        Assert.Equal(1, p.BlockedCount);
+        Assert.True(p.HasBlockingErrors);
+        Assert.Null(p.MoveExecutionOrder);
+    }
+
+    [Fact]
+    public void SameCoordinatesOnOtherDisplay_DoesNotBypassValidation()
+    {
+        // SnapTarget=(760,520), CurrentPos=(760,520) 但 CurrentMonitor=DISPLAY2
+        // 坐标相同但显示器不同 → AlreadyAtTarget 要求 Ordinal 显示器匹配 → 不适用
+        // 目标占用矩形(760,520)-(840,600)越出 TargetDevice 工作区(0,0)-(800,600)
+        // → TargetOutsideCurrentWorkArea
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(760, 520))]),
+            MakeReadResult([LiveIcon("a", new(760, 520), monitor: @"\\.\DISPLAY2")]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
+        var item = Assert.Single(p.Items);
+        Assert.NotEqual(TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, item.State);
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.TargetOutsideCurrentWorkArea, item.State);
+        Assert.True(p.HasBlockingErrors);
+    }
+
+    [Fact]
+    public void SingleMoveWithEdgeAlreadyAtTarget_ProducesExecutablePlan()
+    {
+        // 复现实机场景的最小纯逻辑版本：
+        // a: Curr=(160,240) Target=(240,240) MoveRequired
+        // b: Curr=(760,520) Target=(760,520) AlreadyAtTarget 但占用矩形越出工作区右边界
+        var p = PlanWithIcons(
+            [SnapItem("a", new(240, 240)), SnapItem("b", new(760, 520))],
+            [LiveIcon("a", new(160, 240)), LiveIcon("b", new(760, 520))]);
+        Assert.Equal(1, p.MoveRequiredCount);
+        Assert.Equal(1, p.AlreadyAtTargetCount);
+        Assert.Equal(0, p.BlockedCount);
+        Assert.False(p.HasBlockingErrors);
+        Assert.NotNull(p.MoveExecutionOrder);
+        Assert.Single(p.MoveExecutionOrder);
+        Assert.Equal("a", p.MoveExecutionOrder![0]);
+
+        // 验证 ExecutionPlan
+        var ep = TargetDisplayLayoutExecutionPlanner.CreatePlan(
+            p, MakeReadResult([LiveIcon("a", new(160, 240)), LiveIcon("b", new(760, 520))]),
+            new[] { MakeDisplay(TargetDevice) }, MakeCapabilities());
+        Assert.True(ep.IsExecutable);
+        Assert.False(ep.IsNoOp);
+        Assert.False(ep.UsesTemporaryStaging);
+        Assert.Single(ep.Steps);
+        Assert.Equal("a", ep.Steps[0].StableId);
+
+        // 验证 ScopeGate
+        var gate = TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove(p, ep);
+        Assert.True(gate.IsAllowed);
+    }
 }
