@@ -2,6 +2,7 @@ using System.Globalization;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.Geometry;
+using DesktopAgent.Persistence.Database;
 using Microsoft.Data.Sqlite;
 
 namespace DesktopAgent.Persistence.DesktopLayouts;
@@ -17,19 +18,8 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
         _databasePath = Path.GetFullPath(databasePath);
     }
 
-    private SqliteConnection CreateConnection()
-    {
-        var builder = new SqliteConnectionStringBuilder
-        {
-            DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            ForeignKeys = true,
-            Pooling = false,
-        };
-        var connection = new SqliteConnection(builder.ConnectionString);
-        connection.Open();
-        return connection;
-    }
+    private SqliteConnection CreateConnection() =>
+        SqliteDesktopAgentConnectionFactory.Open(_databasePath);
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -39,42 +29,7 @@ public sealed class SqliteDesktopLayoutSnapshotStore : IDesktopLayoutSnapshotSto
             Directory.CreateDirectory(dir);
 
         using var connection = CreateConnection();
-        using var cmd = connection.CreateCommand();
-        cmd.CommandText = @"
-            PRAGMA foreign_keys = ON;
-            PRAGMA user_version = 1;
-
-            CREATE TABLE IF NOT EXISTS desktop_layout_snapshots (
-                snapshot_id              TEXT PRIMARY KEY NOT NULL,
-                created_at_utc           TEXT NOT NULL,
-                target_monitor_device_name TEXT NULL,
-                connection_method        INTEGER NOT NULL,
-                format_version           INTEGER NOT NULL CHECK(format_version > 0),
-                icon_count               INTEGER NOT NULL CHECK(icon_count >= 0)
-            );
-
-            CREATE TABLE IF NOT EXISTS desktop_layout_snapshot_items (
-                snapshot_id        TEXT NOT NULL,
-                ordinal            INTEGER NOT NULL,
-                stable_id          TEXT NOT NULL,
-                display_name       TEXT NOT NULL,
-                parsing_name       TEXT NULL,
-                item_kind          INTEGER NOT NULL,
-                x                  INTEGER NOT NULL,
-                y                  INTEGER NOT NULL,
-                monitor_device_name TEXT NULL,
-                is_system_item     INTEGER NOT NULL CHECK(is_system_item IN (0, 1)),
-                is_file_system_item INTEGER NOT NULL CHECK(is_file_system_item IN (0, 1)),
-                PRIMARY KEY (snapshot_id, ordinal),
-                FOREIGN KEY (snapshot_id)
-                    REFERENCES desktop_layout_snapshots(snapshot_id)
-                    ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_snapshots_created_at_utc_desc
-                ON desktop_layout_snapshots (created_at_utc DESC);
-        ";
-        cmd.ExecuteNonQuery();
+        SqliteDesktopAgentSchema.Initialize(connection, cancellationToken);
         return Task.CompletedTask;
     }
 
