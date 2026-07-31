@@ -20,5 +20,6 @@
     <ProjectReference Include="..\..\src\DesktopAgent.Core\DesktopAgent.Core.csproj" />
     <ProjectReference Include="..\..\src\DesktopAgent.WindowsInterop\DesktopAgent.WindowsInterop.csproj" />
     <ProjectReference Include="..\..\src\DesktopAgent.Persistence\DesktopAgent.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\DesktopAgent.Poc\DesktopAgent.Poc.csproj" />
   </ItemGroup>
 </Project>

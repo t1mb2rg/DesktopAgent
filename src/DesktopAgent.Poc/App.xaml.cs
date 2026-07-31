@@ -1,8 +1,10 @@
 using System.Windows;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
+using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Persistence.DesktopLayouts;
+using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.Displays;
@@ -40,6 +42,9 @@ public partial class App : Application
                     new DefaultSafetySnapshotFactory(
                         sp.GetRequiredService<DesktopLayoutSnapshotFactory>()));
                 services.AddSingleton<TargetDisplayLayoutExecutionCoordinator>();
+                services.AddSingleton<IDesktopLayoutTemplateStore>(
+                    new SqliteDesktopLayoutTemplateStore(
+                        DesktopAgentDataPaths.DefaultDatabasePath));
                 services.AddSingleton<MainWindow>();
             })
             .Build();
