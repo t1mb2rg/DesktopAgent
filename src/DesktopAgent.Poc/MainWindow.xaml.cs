@@ -2,15 +2,18 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
+using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+using DesktopAgent.Poc.LayoutTemplates.Editor;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 
@@ -25,6 +28,7 @@ public partial class MainWindow : Window
     private readonly DesktopLayoutSnapshotFactory _snapshotFactory;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
     private readonly TargetDisplayLayoutExecutionCoordinator _layoutExecutionCoordinator;
+    private readonly IDesktopLayoutTemplateStore _templateStore;
 
     private readonly ObservableCollection<DisplayRow> _displayRows = [];
     private IReadOnlyList<DisplayDescriptor> _cachedDisplays = Array.Empty<DisplayDescriptor>();
@@ -62,7 +66,8 @@ public partial class MainWindow : Window
         StaThreadExecutor staExecutor,
         DesktopLayoutSnapshotFactory snapshotFactory,
         IDesktopLayoutSnapshotStore snapshotStore,
-        TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator)
+        TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator,
+        IDesktopLayoutTemplateStore templateStore)
     {
         InitializeComponent();
 
@@ -73,6 +78,7 @@ public partial class MainWindow : Window
         _snapshotFactory = snapshotFactory;
         _snapshotStore = snapshotStore;
         _layoutExecutionCoordinator = layoutExecutionCoordinator;
+        _templateStore = templateStore;
 
         DisplaysGrid.ItemsSource = _displayRows;
         IconsGrid.ItemsSource = _iconRows;
@@ -144,6 +150,8 @@ public partial class MainWindow : Window
             && selectedSnapRow.SnapshotId == _layoutRestorePreview.SnapshotId
             && _currentTarget?.DeviceName == _layoutRestorePreview.TargetDeviceName;
         ExecuteLayoutRestoreButton.IsEnabled = canExecuteLayout;
+
+        OpenTemplateEditorButton.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention;
 
         if (hasSession && !busy)
         {
@@ -727,6 +735,40 @@ public partial class MainWindow : Window
             StatusText.ScrollToHome();
         }
         finally { _moveOperationInProgress = false; UpdateInteractiveState(); }
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  布局模板编辑器入口
+    // ═══════════════════════════════════════════════════
+
+    private void OpenTemplateEditor_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsAnyOperationInProgress)
+        {
+            StatusText.Text = "[MainWindow] 有操作正在进行中，无法打开模板编辑器。";
+            return;
+        }
+        if (_activeMoveSession is not null)
+        {
+            StatusText.Text = "[MainWindow] 有活跃移动会话，请先恢复原位置。";
+            return;
+        }
+        if (_layoutRestoreRequiresAttention)
+        {
+            StatusText.Text = "[MainWindow] 布局恢复需要人工处理，无法打开模板编辑器。";
+            return;
+        }
+
+        var knownDeviceNames = _cachedDisplays
+            .Select(d => d.DeviceName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var editor = new LayoutTemplateEditorWindow(_templateStore, knownDeviceNames)
+        {
+            Owner = this
+        };
+        editor.ShowDialog();
     }
 
     // ═══════════════════════════════════════════════════

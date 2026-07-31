@@ -1,0 +1,196 @@
+<Window x:Class="DesktopAgent.Poc.LayoutTemplates.Editor.LayoutTemplateEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:templates="clr-namespace:DesktopAgent.Core.DesktopLayouts.Templates;assembly=DesktopAgent.Core"
+        Title="布局模板编辑器 — M2-03A"
+        Width="1300" Height="850" MinWidth="1050" MinHeight="700"
+        WindowStartupLocation="CenterOwner"
+        Closing="OnClosing">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ═══ 工具栏 ═══ -->
+        <ToolBar Grid.Row="0" Margin="0,0,0,6">
+            <Button x:Name="NewButton" Content="新建" Width="60" Click="New_Click" />
+            <Button x:Name="SaveButton" Content="保存" Width="60" Click="Save_Click" Margin="4,0,0,0" />
+            <Button x:Name="ReloadButton" Content="重新加载" Width="80" Click="Reload_Click" Margin="4,0,0,0" />
+            <Button x:Name="DeleteButton" Content="删除" Width="60" Click="Delete_Click" Margin="4,0,0,0" />
+            <Separator Margin="8,0" />
+            <Button x:Name="RefreshListButton" Content="刷新模板列表" Width="100" Click="RefreshList_Click" />
+        </ToolBar>
+
+        <!-- ═══ 主编辑区域 ═══ -->
+        <Grid x:Name="EditorWorkspace" Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="280" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ── 左侧：模板列表 ── -->
+            <ListBox x:Name="TemplateListBox" Grid.Column="0"
+                     SelectionChanged="TemplateListBox_SelectionChanged"
+                     DisplayMemberPath="DisplayText" />
+
+            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" />
+
+            <!-- ── 中央：归一化 Zone 画布 ── -->
+            <Border Grid.Column="2" BorderBrush="#CCC" BorderThickness="1" Background="#FAFAFA">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Margin="6,4" Foreground="#888" FontSize="12"
+                               Text="归一化编辑画布 (0..10000)，不是图标像素预览" />
+                    <Canvas x:Name="ZoneCanvas" Grid.Row="1"
+                            Background="Transparent"
+                            SizeChanged="Canvas_SizeChanged" />
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" />
+
+            <!-- ── 右侧：属性面板 ── -->
+            <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <!-- 模板属性 -->
+                    <GroupBox Header="模板属性" Padding="4" Margin="0,0,0,8">
+                        <StackPanel>
+                            <TextBlock Text="TemplateId" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="TemplateIdText" IsReadOnly="True" Margin="0,0,0,6" />
+
+                            <TextBlock Text="Name" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="TemplateNameText" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" Margin="0,0,0,6" />
+
+                            <TextBlock Text="Version" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="TemplateVersionText" Text="{Binding Version, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" Margin="0,0,0,6" />
+
+                            <TextBlock Text="TargetDisplayBinding" FontSize="11" Foreground="Gray" />
+                            <ComboBox x:Name="BindingKindCombo" SelectedValue="{Binding BindingKind, UpdateSourceTrigger=PropertyChanged}"
+                                      SelectedValuePath="Tag" Margin="0,0,0,6">
+                                <ComboBoxItem Content="SelectedTarget">
+                                    <ComboBoxItem.Tag>
+                                        <x:Static Member="templates:TargetDisplayBindingKind.SelectedTarget" />
+                                    </ComboBoxItem.Tag>
+                                </ComboBoxItem>
+                                <ComboBoxItem Content="PrimaryDisplay">
+                                    <ComboBoxItem.Tag>
+                                        <x:Static Member="templates:TargetDisplayBindingKind.PrimaryDisplay" />
+                                    </ComboBoxItem.Tag>
+                                </ComboBoxItem>
+                                <ComboBoxItem Content="ExactDeviceName">
+                                    <ComboBoxItem.Tag>
+                                        <x:Static Member="templates:TargetDisplayBindingKind.ExactDeviceName" />
+                                    </ComboBoxItem.Tag>
+                                </ComboBoxItem>
+                            </ComboBox>
+
+                            <TextBlock Text="ExactDeviceName" FontSize="11" Foreground="Gray" />
+                            <ComboBox x:Name="ExactDeviceNameCombo" Text="{Binding ExactDeviceName, UpdateSourceTrigger=PropertyChanged}"
+                                      IsEditable="True" Margin="0,0,0,6"
+                                      IsEnabled="{Binding IsExactDeviceName}" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- Zone 操作 -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <Button x:Name="AddZoneButton" Content="＋ 添加分区" Width="100" Click="AddZone_Click" />
+                        <Button x:Name="RemoveZoneButton" Content="－ 删除分区" Width="100" Margin="6,0,0,0" Click="RemoveZone_Click" />
+                    </StackPanel>
+
+                    <!-- Zone 列表 -->
+                    <GroupBox Header="Zone 列表" Padding="4" Margin="0,0,0,8">
+                        <ListBox x:Name="ZoneListBox" SelectionChanged="ZoneListBox_SelectionChanged"
+                                 MaxHeight="140">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" FontSize="12">
+                                            <Run Text="{Binding Name, Mode=OneWay}" />
+                                            <Run Text="  SO:" FontSize="10" Foreground="Gray" />
+                                            <Run Text="{Binding SortOrder, Mode=OneWay}" FontSize="10" Foreground="Gray" />
+                                            <Run Text="  " FontSize="10" />
+                                            <Run Text="{Binding PlacementFlow, Mode=OneWay}" FontSize="10" Foreground="Gray" />
+                                        </TextBlock>
+                                        <TextBlock FontSize="10" Foreground="Gray">
+                                            <Run Text="[" /><Run Text="{Binding Left, Mode=OneWay}" /><Run Text="," />
+                                            <Run Text="{Binding Top, Mode=OneWay}" /><Run Text="," />
+                                            <Run Text="{Binding Right, Mode=OneWay}" /><Run Text="," />
+                                            <Run Text="{Binding Bottom, Mode=OneWay}" /><Run Text=")" />
+                                            <Run Text="  max:" /><Run Text="{Binding MaxItemCount, Mode=OneWay, TargetNullValue=∞}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </GroupBox>
+
+                    <!-- 选中 Zone 属性 -->
+                    <GroupBox Header="选中 Zone 属性" Padding="4">
+                        <StackPanel x:Name="SelectedZonePanel" IsEnabled="False">
+                            <TextBlock Text="ZoneId" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneIdText" IsReadOnly="True" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.ZoneId, Mode=OneWay}" />
+
+                            <TextBlock Text="Name" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneNameText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.Name, UpdateSourceTrigger=PropertyChanged}" />
+
+                            <TextBlock Text="SortOrder" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneSortOrderText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.SortOrder, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" />
+
+                            <TextBlock Text="PlacementFlow" FontSize="11" Foreground="Gray" />
+                            <ComboBox x:Name="ZoneFlowCombo" Margin="0,0,0,4"
+                                      SelectedValue="{Binding ElementName=ZoneListBox, Path=SelectedItem.PlacementFlow, UpdateSourceTrigger=PropertyChanged}"
+                                      SelectedValuePath="Tag">
+                                <ComboBoxItem Content="列优先 (ColumnMajor)">
+                                    <ComboBoxItem.Tag>
+                                        <x:Static Member="templates:ZonePlacementFlow.ColumnMajor" />
+                                    </ComboBoxItem.Tag>
+                                </ComboBoxItem>
+                                <ComboBoxItem Content="行优先 (RowMajor)">
+                                    <ComboBoxItem.Tag>
+                                        <x:Static Member="templates:ZonePlacementFlow.RowMajor" />
+                                    </ComboBoxItem.Tag>
+                                </ComboBoxItem>
+                            </ComboBox>
+
+                            <TextBlock Text="MaxItemCount (null = 不限)" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneMaxItemCountText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.MaxItemCount, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True, TargetNullValue=''}" />
+
+                            <TextBlock Text="Left" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneLeftText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.Left, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" />
+
+                            <TextBlock Text="Top" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneTopText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.Top, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" />
+
+                            <TextBlock Text="Right" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneRightText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.Right, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" />
+
+                            <TextBlock Text="Bottom" FontSize="11" Foreground="Gray" />
+                            <TextBox x:Name="ZoneBottomText" Margin="0,0,0,4"
+                                     Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.Bottom, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" />
+                        </StackPanel>
+                    </GroupBox>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ═══ 底部状态栏 ═══ -->
+        <Border Grid.Row="2" Margin="0,6,0,0" Padding="6,4" Background="#F3F3F3" CornerRadius="3">
+            <TextBlock x:Name="StatusBarText" FontSize="12" Foreground="#555" TextWrapping="Wrap" Text="就绪。" />
+        </Border>
+    </Grid>
+</Window>
