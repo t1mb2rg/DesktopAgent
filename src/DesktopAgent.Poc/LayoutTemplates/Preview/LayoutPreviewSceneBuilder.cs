@@ -5,9 +5,6 @@ using DesktopAgent.Core.Geometry;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Preview;
 
-/// <summary>
-/// 从 PreviewPlan 和 CanvasTransform 构建只读 Scene 模型。
-/// </summary>
 public static class LayoutPreviewSceneBuilder
 {
     public static LayoutPreviewScene Build(
@@ -16,9 +13,14 @@ public static class LayoutPreviewSceneBuilder
     {
         if (plan is null) throw new ArgumentNullException(nameof(plan));
         if (transform is null) throw new ArgumentNullException(nameof(transform));
+        if (transform.WorkArea != plan.TargetDisplay.WorkArea)
+            throw new ArgumentException(
+                "Transform.WorkArea 必须与 Plan.TargetDisplay.WorkArea 完全一致。" +
+                $" Transform=({transform.WorkArea.Left},{transform.WorkArea.Top})-({transform.WorkArea.Right},{transform.WorkArea.Bottom})" +
+                $" Plan=({plan.TargetDisplay.WorkArea.Left},{plan.TargetDisplay.WorkArea.Top})-({plan.TargetDisplay.WorkArea.Right},{plan.TargetDisplay.WorkArea.Bottom})。",
+                nameof(transform));
 
         var zoneVisuals = new List<LayoutPreviewZoneVisual>();
-        // 按 SortOrder ASC
         var zones = plan.ResolvedTemplate.Zones
             .OrderBy(z => z.Zone.SortOrder)
             .ToList();
@@ -39,55 +41,41 @@ public static class LayoutPreviewSceneBuilder
             var pb = rz.PixelBounds;
             var (cl, ct, cw, ch) = transform.Map(pb);
             zoneAssignedCounts.TryGetValue(rz.Zone.ZoneId, out var assigned);
-            zoneVisuals.Add(new LayoutPreviewZoneVisual
-            {
-                ZoneId = rz.Zone.ZoneId,
-                Name = rz.Zone.Name,
-                SortOrder = rz.Zone.SortOrder,
-                PixelLeft = pb.Left, PixelTop = pb.Top,
-                PixelRight = pb.Right, PixelBottom = pb.Bottom,
-                CanvasLeft = cl, CanvasTop = ct,
-                CanvasWidth = cw, CanvasHeight = ch,
-                EffectiveCapacity = rz.EffectiveCapacity,
-                AssignedCount = assigned,
-                PlacementFlow = rz.Zone.PlacementFlow.ToString()
-            });
+            zoneVisuals.Add(new LayoutPreviewZoneVisual(
+                rz.Zone.ZoneId, rz.Zone.Name, rz.Zone.SortOrder,
+                pb.Left, pb.Top, pb.Right, pb.Bottom,
+                cl, ct, cw, ch,
+                rz.EffectiveCapacity, assigned,
+                rz.Zone.PlacementFlow.ToString()));
         }
 
         var iconVisuals = new List<LayoutPreviewIconVisual>();
         foreach (var item in plan.Items)
         {
             var (cx, cy) = transform.Map(item.CurrentPosition);
-            var visual = new LayoutPreviewIconVisual
-            {
-                Icon = item.Icon,
-                State = item.State,
-                CurrentCanvasX = cx,
-                CurrentCanvasY = cy,
-                ToolTip = BuildToolTip(item)
-            };
+            double? tx = null, ty = null;
+            Guid? zoneId = null;
+            string zoneName = "";
 
             if (item.IsAssigned && item.Placement is not null)
             {
-                var (tx, ty) = transform.Map(item.TargetPosition!.Value);
-                visual = visual with
-                {
-                    TargetCanvasX = tx,
-                    TargetCanvasY = ty,
-                    ZoneId = item.Placement.Zone.Zone.ZoneId,
-                    ZoneName = item.Placement.Zone.Zone.Name
-                };
-            }
-            else
-            {
-                visual = visual with
-                {
-                    TargetCanvasX = double.NaN,
-                    TargetCanvasY = double.NaN
-                };
-            }
+                var (ttx, tty) = transform.Map(item.TargetPosition!.Value);
+                tx = ttx; ty = tty;
+                zoneId = item.Placement.Zone.Zone.ZoneId;
+                zoneName = item.Placement.Zone.Zone.Name;
 
-            iconVisuals.Add(visual);
+                // 验证映射结果有限
+                if (!double.IsFinite(tx.Value) || !double.IsFinite(ty.Value))
+                    throw new InvalidOperationException(
+                        $"图标 (Ordinal={item.Icon.Ordinal}) TargetPosition 映射结果不是有限数值。");
+            }
+            if (!double.IsFinite(cx) || !double.IsFinite(cy))
+                throw new InvalidOperationException(
+                    $"图标 (Ordinal={item.Icon.Ordinal}) CurrentPosition 映射结果不是有限数值。");
+
+            iconVisuals.Add(new LayoutPreviewIconVisual(
+                item.Icon, item.State, cx, cy, tx, ty, zoneId, zoneName,
+                BuildToolTip(item)));
         }
 
         var itemRows = plan.Items
@@ -100,15 +88,11 @@ public static class LayoutPreviewSceneBuilder
             .ToList()
             .AsReadOnly();
 
-        return new LayoutPreviewScene
-        {
-            Plan = plan,
-            Transform = transform,
-            Zones = zoneVisuals.AsReadOnly(),
-            Icons = iconVisuals.AsReadOnly(),
-            ItemRows = itemRows,
-            OutOfScopeRows = oosRows
-        };
+        return new LayoutPreviewScene(
+            plan, transform,
+            zoneVisuals.AsReadOnly(),
+            iconVisuals.AsReadOnly(),
+            itemRows, oosRows);
     }
 
     private static string BuildToolTip(DesktopLayoutPreviewItem item)
@@ -120,7 +104,6 @@ public static class LayoutPreviewSceneBuilder
             $"State: {StateToString(item.State)}",
             $"Current: ({item.CurrentPosition.X},{item.CurrentPosition.Y})"
         };
-
         if (item.IsAssigned && item.Placement is not null)
         {
             parts.Add($"Target: ({item.TargetPosition!.Value.X},{item.TargetPosition!.Value.Y})");
@@ -128,7 +111,6 @@ public static class LayoutPreviewSceneBuilder
             parts.Add($"Zone: {item.Placement.Zone.Zone.Name}");
             parts.Add($"Slot: {item.Placement.SlotIndex} Col:{item.Placement.ColumnIndex} Row:{item.Placement.RowIndex}");
         }
-
         return string.Join("\n", parts);
     }
 

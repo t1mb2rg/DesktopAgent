@@ -16,28 +16,34 @@
         <Grid Grid.Row="0" Margin="0,0,0,6">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="4" />
                 <ColumnDefinition Width="150" />
-                <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="180" />
-                <ColumnDefinition Width="6" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="4" />
+                <ColumnDefinition Width="170" />
+                <ColumnDefinition Width="8" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="模板:" FontWeight="SemiBold" />
-            <ComboBox x:Name="TemplateCombo" Grid.Column="2" SelectionChanged="TemplateCombo_SelectionChanged" />
+            <ComboBox x:Name="TemplateCombo" Grid.Column="2"
+                      DisplayMemberPath="DisplayText"
+                      SelectionChanged="TemplateCombo_SelectionChanged" />
 
-            <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="目标显示器:" FontWeight="SemiBold"
-                       />
+            <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="目标显示器:" FontWeight="SemiBold" />
+            <ComboBox x:Name="DisplayCombo" Grid.Column="6"
+                      DisplayMemberPath="DisplayText"
+                      SelectionChanged="DisplayCombo_SelectionChanged" />
 
-            <StackPanel Grid.Column="6" Orientation="Horizontal">
+            <StackPanel Grid.Column="8" Orientation="Horizontal">
                 <Button x:Name="RefreshButton" Content="刷新数据" Width="80" Click="Refresh_Click" Margin="0,0,6,0" />
                 <Button x:Name="GenerateButton" Content="生成预览" Width="80" Click="Generate_Click" />
             </StackPanel>
 
-            <Button x:Name="CloseButton" Grid.Column="8" Content="关闭" Width="60" Click="Close_Click" />
+            <Button x:Name="CloseButton" Grid.Column="10" Content="关闭" Width="60" Click="Close_Click" />
         </Grid>
 
         <!-- ═══ 主区域 ═══ -->
@@ -45,10 +51,10 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="380" />
+                <ColumnDefinition Width="400" />
             </Grid.ColumnDefinitions>
 
-            <!-- ── 左侧：Canvas ── -->
+            <!-- ── 左: Canvas ── -->
             <Border Grid.Column="0" BorderBrush="#CCC" BorderThickness="1" Background="#FAFAFA">
                 <Canvas x:Name="PreviewCanvas" Background="Transparent"
                         SizeChanged="Canvas_SizeChanged" />
@@ -56,48 +62,48 @@
 
             <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" />
 
-            <!-- ── 右侧：信息面板 ── -->
+            <!-- ── 右: 信息面板 ── -->
             <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
-                    <!-- 汇总 -->
                     <GroupBox Header="汇总" Padding="4" Margin="0,0,0,6">
                         <TextBlock x:Name="SummaryText" FontSize="12" FontFamily="Consolas"
                                    TextWrapping="Wrap" Text="无有效预览。" />
                     </GroupBox>
 
-                    <!-- 诊断 -->
                     <GroupBox Header="读取诊断" Padding="4" Margin="0,0,0,6">
                         <TextBlock x:Name="DiagnosticsText" FontSize="11" FontFamily="Consolas"
                                    TextWrapping="Wrap" Text="—" />
                     </GroupBox>
 
-                    <!-- 差异列表 -->
                     <GroupBox Header="目标显示器图标" Padding="4" Margin="0,0,0,6">
                         <DataGrid x:Name="ItemsGrid" AutoGenerateColumns="False"
-                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="240">
+                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="220">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="#" Width="30" Binding="{Binding Ordinal}" />
-                                <DataGridTextColumn Header="名称" Width="100" Binding="{Binding DisplayName}" />
-                                <DataGridTextColumn Header="状态" Width="70" Binding="{Binding StateText}" />
-                                <DataGridTextColumn Header="CurX" Width="50" Binding="{Binding CurrentX}" />
-                                <DataGridTextColumn Header="CurY" Width="50" Binding="{Binding CurrentY}" />
-                                <DataGridTextColumn Header="TgtX" Width="50" Binding="{Binding TargetX}" />
-                                <DataGridTextColumn Header="TgtY" Width="50" Binding="{Binding TargetY}" />
-                                <DataGridTextColumn Header="DX" Width="50" Binding="{Binding DeltaX}" />
-                                <DataGridTextColumn Header="DY" Width="50" Binding="{Binding DeltaY}" />
-                                <DataGridTextColumn Header="Zone" Width="70" Binding="{Binding ZoneName}" />
+                                <DataGridTextColumn Header="名称" Width="90" Binding="{Binding DisplayName}" />
+                                <DataGridTextColumn Header="StableId" Width="70" Binding="{Binding StableIdTruncated}" />
+                                <DataGridTextColumn Header="状态" Width="65" Binding="{Binding StateText}" />
+                                <DataGridTextColumn Header="CurX" Width="45" Binding="{Binding CurrentX}" />
+                                <DataGridTextColumn Header="CurY" Width="45" Binding="{Binding CurrentY}" />
+                                <DataGridTextColumn Header="TgtX" Width="45" Binding="{Binding TargetX}" />
+                                <DataGridTextColumn Header="TgtY" Width="45" Binding="{Binding TargetY}" />
+                                <DataGridTextColumn Header="DX" Width="45" Binding="{Binding DeltaX}" />
+                                <DataGridTextColumn Header="DY" Width="45" Binding="{Binding DeltaY}" />
+                                <DataGridTextColumn Header="Zone" Width="65" Binding="{Binding ZoneName}" />
                                 <DataGridTextColumn Header="Slot" Width="35" Binding="{Binding SlotIndex}" />
+                                <DataGridTextColumn Header="Row" Width="35" Binding="{Binding RowIndex}" />
+                                <DataGridTextColumn Header="Col" Width="35" Binding="{Binding ColumnIndex}" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </GroupBox>
 
-                    <!-- OutOfScope -->
                     <GroupBox Header="非目标显示器图标" Padding="4" Margin="0,0,0,6">
                         <DataGrid x:Name="OutOfScopeGrid" AutoGenerateColumns="False"
                                   CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="140">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="#" Width="30" Binding="{Binding Ordinal}" />
                                 <DataGridTextColumn Header="名称" Width="100" Binding="{Binding DisplayName}" />
+                                <DataGridTextColumn Header="StableId" Width="70" Binding="{Binding StableIdTruncated}" />
                                 <DataGridTextColumn Header="所属显示器" Width="100" Binding="{Binding MonitorDeviceName}" />
                                 <DataGridTextColumn Header="X" Width="50" Binding="{Binding CurrentX}" />
                                 <DataGridTextColumn Header="Y" Width="50" Binding="{Binding CurrentY}" />
@@ -105,7 +111,6 @@
                         </DataGrid>
                     </GroupBox>
 
-                    <!-- 图例 -->
                     <GroupBox Header="图例" Padding="4">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Width="12" Height="12" Fill="#0078D4" Margin="0,0,4,0" />
@@ -120,7 +125,6 @@
             </ScrollViewer>
         </Grid>
 
-        <!-- ═══ 底部状态 ═══ -->
         <Border Grid.Row="2" Margin="0,6,0,0" Padding="6,4" Background="#F3F3F3" CornerRadius="3">
             <TextBlock x:Name="StatusText" FontSize="12" Foreground="#555" TextWrapping="Wrap" Text="就绪。" />
         </Border>
