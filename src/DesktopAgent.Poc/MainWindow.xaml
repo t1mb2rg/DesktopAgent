@@ -1,7 +1,7 @@
 <Window x:Class="DesktopAgent.Poc.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="DesktopAgent PoC — M1-05C-B 受控布局恢复"
+        Title="DesktopAgent PoC — M2 布局规划"
         Width="1040" Height="1060" MinWidth="860" MinHeight="920"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="20">
@@ -31,8 +31,11 @@
                            Text="M1-01 显示器拓扑  |  M1-02 只读图标枚举  |  M1-03B SQLite 快照  |  M1-04B 单图标移动与恢复" />
             </StackPanel>
             <Button x:Name="OpenTemplateEditorButton" DockPanel.Dock="Right"
-                    Width="140" Height="32" Margin="0,0,0,0"
+                    Width="140" Height="32" Margin="0,0,4,0"
                     Click="OpenTemplateEditor_Click" Content="布局模板编辑器" />
+            <Button x:Name="OpenLayoutPreviewButton" DockPanel.Dock="Right"
+                    Width="80" Height="32" Margin="0,0,0,0"
+                    Click="OpenLayoutPreview_Click" Content="布局预览" />
         </DockPanel>
 
         <!-- ── 2 显示器拓扑 ── -->

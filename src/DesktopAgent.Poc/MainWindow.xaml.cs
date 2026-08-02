@@ -152,6 +152,7 @@ public partial class MainWindow : Window
         ExecuteLayoutRestoreButton.IsEnabled = canExecuteLayout;
 
         OpenTemplateEditorButton.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention;
+        OpenLayoutPreviewButton.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention;
 
         if (hasSession && !busy)
         {
@@ -769,6 +770,28 @@ public partial class MainWindow : Window
             Owner = this
         };
         editor.ShowDialog();
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  布局预览入口
+    // ═══════════════════════════════════════════════════
+
+    private void OpenLayoutPreview_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsAnyOperationInProgress || _activeMoveSession is not null || _layoutRestoreRequiresAttention)
+            return;
+
+        var window = new LayoutTemplates.Preview.LayoutPreviewWindow(
+            _templateStore,
+            _displayTopologyReader,
+            _desktopIconReader,
+            _desktopIconPositionWriter,
+            _staExecutor,
+            _snapshotFactory)
+        {
+            Owner = this
+        };
+        window.ShowDialog();
     }
 
     // ═══════════════════════════════════════════════════
