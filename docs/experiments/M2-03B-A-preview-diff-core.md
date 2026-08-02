@@ -11,7 +11,7 @@
 
 - M2-03B-B 的 WPF 预览窗口需要确定性的 Pure-Core 差异数据源
 - 将显示目标解析、图标筛选、坐标对比逻辑从 UI 中分离
-- 后续 Writer 接入阶段可直接复用 PreviewPlan 的 TargetPosition
+- 后续 Writer 执行阶段只能复用算法和模型，不能直接执行旧 PreviewPlan；Writer 前必须 fresh re-read、重新解析显示器和图标、重新规划、重新通过能力/安全快照/恢复会话门禁
 
 ## 与 M2-02A/B/C 的组合关系
 

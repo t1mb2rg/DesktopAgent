@@ -81,22 +81,28 @@ public static class DesktopLayoutPreviewPlanner
         // M2-02C: 坐标规划
         var placementPlan = DesktopLayoutCoordinatePlanner.Plan(assignmentPlan);
 
-        // 构造 PreviewItems
+        // 构造 PreviewItems（按引用匹配）
         var previewItems = new List<DesktopLayoutPreviewItem>();
-        var placementByOrdinal = new Dictionary<int, DesktopIconTargetPlacement>();
+        var placementByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopIconTargetPlacement>(
+            ReferenceEqualityComparer.Instance);
         foreach (var p in placementPlan.Placements)
-            placementByOrdinal[p.Icon.Ordinal] = p;
+        {
+            if (!placementByIcon.TryAdd(p.Icon, p))
+                throw new InvalidOperationException(
+                    $"PlacementPlan.Placements 中存在重复图标引用 " +
+                    $"(Ordinal={p.Icon.Ordinal}, StableId=\"{p.Icon.StableId}\")。");
+        }
 
-        var unassignedOrdinals = new HashSet<int>(
-            placementPlan.UnassignedIcons.Select(u => u.Ordinal));
+        var unassignedIconSet = new HashSet<DesktopIconSnapshotItem>(
+            placementPlan.UnassignedIcons, ReferenceEqualityComparer.Instance);
 
         foreach (var icon in targetIcons)
         {
-            if (placementByOrdinal.TryGetValue(icon.Ordinal, out var placement))
+            if (placementByIcon.TryGetValue(icon, out var placement))
             {
                 previewItems.Add(DesktopLayoutPreviewItem.FromPlacement(icon, placement));
             }
-            else if (unassignedOrdinals.Contains(icon.Ordinal))
+            else if (unassignedIconSet.Contains(icon))
             {
                 previewItems.Add(DesktopLayoutPreviewItem.ForUnassigned(icon));
             }

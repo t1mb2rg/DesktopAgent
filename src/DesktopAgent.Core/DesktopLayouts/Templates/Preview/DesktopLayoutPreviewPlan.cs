@@ -145,6 +145,12 @@ public sealed record DesktopLayoutPreviewPlan
             if (!oosRefs.Add(oosList[i]))
                 throw new ArgumentException(
                     $"OutOfScopeIcons 中图标实例重复（索引 {i}）。", nameof(outOfScopeIcons));
+            // 引用重叠检查优先于 MonitorDeviceName 检查
+            if (targetRefs.Contains(oosList[i]))
+                throw new ArgumentException(
+                    $"OutOfScopeIcons[{i}] (Ordinal={oosList[i].Ordinal}) " +
+                    "与 TargetDisplayIcons 存在引用重叠。",
+                    nameof(outOfScopeIcons));
             if (string.Equals(oosList[i].MonitorDeviceName ?? "", targetDisplay.DeviceName, StringComparison.Ordinal))
                 throw new ArgumentException(
                     $"OutOfScopeIcons[{i}] (Ordinal={oosList[i].Ordinal}) 属于目标显示器。",

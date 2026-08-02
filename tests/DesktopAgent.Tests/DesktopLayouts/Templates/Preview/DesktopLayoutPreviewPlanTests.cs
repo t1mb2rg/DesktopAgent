@@ -43,6 +43,29 @@ public sealed class DesktopLayoutPreviewPlanTests
         return (t, rt, ap, pp, input, target, oos, items);
     }
 
+    // MaxItemCount=1 → 1 assigned (Ordinal 0) + 1 unassigned (Ordinal 1)
+    private static (DesktopLayoutTemplate t, ResolvedDesktopLayoutTemplate rt, DesktopLayoutAssignmentPlan ap, DesktopLayoutPlacementPlan pp, List<DesktopIconSnapshotItem> input, List<DesktopIconSnapshotItem> target, List<DesktopIconSnapshotItem> oos, List<DesktopLayoutPreviewItem> items) Cap1Setup()
+    {
+        var t = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1, TargetDisplayBinding.ForSelectedTarget(),
+            new[] { Z(Guid.NewGuid(), "Z", R(0, 0, 10000, 10000), 0, max: 1) });
+        var rt = DesktopLayoutTemplateResolver.Resolve(t, WA, SP);
+        var input = new List<DesktopIconSnapshotItem> { I(0, "a"), I(1, "b") };
+        var target = new List<DesktopIconSnapshotItem>(input);
+        var ap = DesktopLayoutAssignmentPlanner.Plan(rt, target);
+        var pp = DesktopLayoutCoordinatePlanner.Plan(ap);
+        var items = new List<DesktopLayoutPreviewItem>();
+        foreach (var icon in target)
+        {
+            var placed = pp.Placements.FirstOrDefault(p => ReferenceEquals(p.Icon, icon));
+            if (placed is not null)
+                items.Add(DesktopLayoutPreviewItem.FromPlacement(icon, placed));
+            else
+                items.Add(DesktopLayoutPreviewItem.ForUnassigned(icon));
+        }
+        var oos = new List<DesktopIconSnapshotItem>();
+        return (t, rt, ap, pp, input, target, oos, items);
+    }
+
     [Fact] public void Valid_Accepted()
     {
         var (t, rt, ap, pp, input, target, oos, items) = ValidSetup();
@@ -77,7 +100,9 @@ public sealed class DesktopLayoutPreviewPlanTests
     {
         var (t, rt, ap, pp, input, target, oos, items) = ValidSetup();
         var overlapOos = new List<DesktopIconSnapshotItem> { target[0] }; // 同一实例
-        Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, overlapOos, items));
+        var ex = Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, overlapOos, items));
+        Assert.Contains("引用重叠", ex.Message);
+        Assert.DoesNotContain("属于目标显示器", ex.Message);
     }
 
     [Fact] public void TargetOutOfScope_MissingInputRef_Fails()
@@ -87,16 +112,36 @@ public sealed class DesktopLayoutPreviewPlanTests
         Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, missing, items));
     }
 
-    [Fact] public void AssignedUnassigned_Swapped_Fails()
+    [Fact] public void AssignedPosedAsUnassigned_Fails()
     {
-        var (t, rt, ap, pp, input, target, oos, items) = ValidSetup();
-        // 交换：assigned 图标设为 Unassigned，反之亦然
-        var swapped = new List<DesktopLayoutPreviewItem>
+        // Cap1: Ordinal 0 已分配, Ordinal 1 未分配
+        var (t, rt, ap, pp, input, target, oos, items) = Cap1Setup();
+        Assert.Equal(DesktopLayoutPreviewItemState.AlreadyAtTarget, items[0].State);
+        Assert.Equal(DesktopLayoutPreviewItemState.Unassigned, items[1].State);
+        // 将已分配图标包装为 Unassigned
+        var bad = new List<DesktopLayoutPreviewItem>
         {
-            DesktopLayoutPreviewItem.ForUnassigned(target[0]), // 应为 assigned
-            DesktopLayoutPreviewItem.FromPlacement(target[1], pp.Placements.First(p => ReferenceEquals(p.Icon, target[1])))
+            DesktopLayoutPreviewItem.ForUnassigned(target[0]), // assigned → unassigned 伪装
+            items[1]
         };
-        Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, oos, swapped));
+        var ex = Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, oos, bad));
+        Assert.Contains("Placement", ex.Message);
+    }
+
+    [Fact] public void UnassignedPosedAsAssigned_Fails()
+    {
+        // Cap1: Ordinal 0 已分配, Ordinal 1 未分配
+        var (t, rt, ap, pp, input, target, oos, items) = Cap1Setup();
+        // 为 target[1]（unassigned）创建来自另一个 PlacementPlan 的 "assigned" item
+        var t2 = new DesktopLayoutTemplate(Guid.NewGuid(), "T2", 1, TargetDisplayBinding.ForSelectedTarget(),
+            new[] { Z(Guid.NewGuid(), "Z", R(0, 0, 10000, 10000), 0) });
+        var rt2 = DesktopLayoutTemplateResolver.Resolve(t2, WA, SP);
+        var ap2 = DesktopLayoutAssignmentPlanner.Plan(rt2, new[] { target[1] });
+        var pp2 = DesktopLayoutCoordinatePlanner.Plan(ap2);
+        var fakeAssigned = DesktopLayoutPreviewItem.FromPlacement(target[1], pp2.Placements[0]);
+        var bad = new List<DesktopLayoutPreviewItem> { items[0], fakeAssigned };
+        var ex = Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, oos, bad));
+        Assert.Contains("State", ex.Message);
     }
 
     [Fact] public void ExternalPlacement_NotFromPlacementPlan_Fails()
@@ -127,12 +172,14 @@ public sealed class DesktopLayoutPreviewPlanTests
         Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, oos, wrong));
     }
 
-    [Fact] public void CurrentPosition_Wrong_Fails()
+    [Fact] public void ItemIconNotSameInstance_AsTargetIcon_Fails()
     {
+        // Items[0].Icon 必须 ReferenceEquals TargetDisplayIcons[0]
         var (t, rt, ap, pp, input, target, oos, items) = ValidSetup();
-        var badIcon = I(target[0].Ordinal, target[0].StableId, px: 999, py: 888);
+        var badIcon = I(target[0].Ordinal, target[0].StableId, px: 999, py: 888); // 不同实例
         var badItems = new List<DesktopLayoutPreviewItem> { DesktopLayoutPreviewItem.ForUnassigned(badIcon), items[1] };
-        Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, oos, badItems));
+        var ex = Assert.Throws<ArgumentException>(() => new DesktopLayoutPreviewPlan(t, DD, rt, ap, pp, input, target, oos, badItems));
+        Assert.Contains("不是同一实例", ex.Message);
     }
 
     [Fact] public void TargetOrder_NotMatchAssignmentPlanInput_Fails()
