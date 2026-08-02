@@ -169,19 +169,18 @@ public sealed class LayoutPreviewSceneBuilderTests
         var t = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1, TargetDisplayBinding.ForPrimaryDisplay(),
             new[] { new DesktopLayoutZone(Guid.NewGuid(), "Z", new NormalizedRect(0, 0, 10000, 10000), 0, ZonePlacementFlow.ColumnMajor, maxItemCount: 2) });
         var dd = new DisplayDescriptor("DISPLAY1", new PixelRect(0, 0, 1920, 1080), wa, 96, 96, true);
-        // Place icons far from target positions to get extreme deltas
+        // int.MinValue → target 0 产生最大正 delta: 0L - (long)int.MinValue = 2147483648
         var plan = DesktopLayoutPreviewPlanner.Plan(t, new[] { dd }, null, new PixelPoint(80, 80),
-            new[] { I(0, "a", px: 10000, py: 10000), I(1, "b", px: -5000, py: 0) });
+            new[] { I(0, "a", mon: "DISPLAY1", px: int.MinValue, py: int.MinValue), I(1, "b", mon: "DISPLAY1", px: 0, py: 0) });
         var transform = new LayoutPreviewCanvasTransform(wa, 800, 640, 0);
         var scene = LayoutPreviewSceneBuilder.Build(plan, transform);
-        foreach (var row in scene.ItemRows)
-        {
-            Assert.NotNull(row.DeltaX);
-            Assert.NotNull(row.DeltaY);
-            // Delta is a long — should parse as integer string
-            Assert.True(long.TryParse(row.DeltaX, out _));
-            Assert.True(long.TryParse(row.DeltaY, out _));
-        }
+        // Icon 0: position (int.MinValue, int.MinValue), target (0, 0)
+        // Delta = target - current = 0L - (long)int.MinValue = 2147483648
+        var row = scene.ItemRows[0];
+        Assert.True(long.TryParse(row.DeltaX, out var dx));
+        Assert.True(long.TryParse(row.DeltaY, out var dy));
+        Assert.True(dx >= int.MaxValue || dx <= int.MinValue);
+        Assert.True(dy >= int.MaxValue || dy <= int.MinValue);
     }
 
     // ═══ Unassigned / OOS ═══
@@ -293,26 +292,32 @@ public sealed class LayoutPreviewSceneBuilderTests
         var plan = MakePlan(wa);
         var transform = new LayoutPreviewCanvasTransform(wa, 800, 640, 0);
 
-        // Build Scene with mutable lists that we'll later modify
-        var zones = new List<LayoutPreviewZoneVisual>();
-        var icons = new List<LayoutPreviewIconVisual>();
-        var rows = new List<LayoutPreviewItemRow>();
-        var oosRows = new List<LayoutPreviewOutOfScopeRow>();
+        // 1. 用 SceneBuilder 合法构建，获取所有数据
+        var builtScene = LayoutPreviewSceneBuilder.Build(plan, transform);
 
-        // Build via SceneBuilder to get real data
-        var scene = LayoutPreviewSceneBuilder.Build(plan, transform);
+        // 2. 把数据拷贝到 mutable lists
+        var zones = new List<LayoutPreviewZoneVisual>(builtScene.Zones);
+        var icons = new List<LayoutPreviewIconVisual>(builtScene.Icons);
+        var rows = new List<LayoutPreviewItemRow>(builtScene.ItemRows);
+        var oosRows = new List<LayoutPreviewOutOfScopeRow>(builtScene.OutOfScopeRows);
 
-        // Capture counts
-        var zoneCount = scene.Zones.Count;
-        var iconCount = scene.Icons.Count;
-        var rowCount = scene.ItemRows.Count;
-        var oosCount = scene.OutOfScopeRows.Count;
+        // 3. 用 mutable lists 手动构造 Scene
+        var scene = new LayoutPreviewScene(plan, transform, zones, icons, rows, oosRows);
 
-        // Verify Scene's copies are independent by ensuring counts are > 0
-        // and the original plan's data is in the scene
-        Assert.True(zoneCount > 0);
-        Assert.True(iconCount > 0);
-        Assert.True(rowCount > 0);
+        // 4. 修改/清空原 mutable lists
+        zones.Clear();
+        icons.Clear();
+        rows.Clear();
+        oosRows.Clear();
+
+        // 5. 断言 Scene 内部集合完全不变
+        Assert.True(scene.Zones.Count > 0);
+        Assert.True(scene.Icons.Count > 0);
+        Assert.True(scene.ItemRows.Count > 0);
+        // 验证具体内容未被清空
+        Assert.Equal(builtScene.Zones[0].Name, scene.Zones[0].Name);
+        Assert.Equal(builtScene.Icons[0].Icon.Ordinal, scene.Icons[0].Icon.Ordinal);
+        Assert.Equal(builtScene.ItemRows[0].Ordinal, scene.ItemRows[0].Ordinal);
     }
 
     // ═══ 确定性 ═══
@@ -493,6 +498,46 @@ public sealed class LayoutPreviewSceneBuilderTests
                 0, 0, 100.0, 200.0, null, "Z", ""));
     }
 
+    [Fact] public void IconVisual_InvalidEnum_Fails()
+    {
+        var icon = I(0, "a");
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewIconVisual(icon, (DesktopLayoutPreviewItemState)99,
+                0, 0, 100.0, 200.0, Guid.NewGuid(), "Z", ""));
+    }
+
+    [Fact] public void IconVisual_Unassigned_WithZoneId_Fails()
+    {
+        var icon = I(0, "a");
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewIconVisual(icon, DesktopLayoutPreviewItemState.Unassigned,
+                0, 0, null, null, Guid.NewGuid(), "", ""));
+    }
+
+    [Fact] public void IconVisual_Unassigned_WithZoneName_Fails()
+    {
+        var icon = I(0, "a");
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewIconVisual(icon, DesktopLayoutPreviewItemState.Unassigned,
+                0, 0, null, null, null, "ExtraZone", ""));
+    }
+
+    [Fact] public void IconVisual_Assigned_GuidEmptyZoneId_Fails()
+    {
+        var icon = I(0, "a");
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewIconVisual(icon, DesktopLayoutPreviewItemState.MoveRequired,
+                0, 0, 100.0, 200.0, Guid.Empty, "Z", ""));
+    }
+
+    [Fact] public void IconVisual_Assigned_EmptyZoneName_Fails()
+    {
+        var icon = I(0, "a");
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewIconVisual(icon, DesktopLayoutPreviewItemState.MoveRequired,
+                0, 0, 100.0, 200.0, Guid.NewGuid(), "", ""));
+    }
+
     // ═══ 构造验证 — ZoneVisual ═══
 
     [Fact] public void ZoneVisual_NegativeCanvasDimensions_Fails()
@@ -521,6 +566,34 @@ public sealed class LayoutPreviewSceneBuilderTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new LayoutPreviewZoneVisual(Guid.NewGuid(), "Z", 0, 0, 0, 800, 600,
                 0, 0, 100, 100, 5, 6, "ColumnMajor"));
+    }
+
+    [Fact] public void ZoneVisual_Capacity0_Assigned1_Fails()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new LayoutPreviewZoneVisual(Guid.NewGuid(), "Z", 0, 0, 0, 800, 600,
+                0, 0, 100, 100, 0, 1, "ColumnMajor"));
+    }
+
+    [Fact] public void ZoneVisual_GuidEmpty_Fails()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewZoneVisual(Guid.Empty, "Z", 0, 0, 0, 800, 600,
+                0, 0, 100, 100, 10, 0, "ColumnMajor"));
+    }
+
+    [Fact] public void ZoneVisual_InvalidPixelBounds_Fails()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewZoneVisual(Guid.NewGuid(), "Z", 0, 800, 600, 0, 0,
+                0, 0, 100, 100, 10, 0, "ColumnMajor"));
+    }
+
+    [Fact] public void ZoneVisual_EmptyPlacementFlow_Fails()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            new LayoutPreviewZoneVisual(Guid.NewGuid(), "Z", 0, 0, 0, 800, 600,
+                0, 0, 100, 100, 10, 0, ""));
     }
 
     // ═══ 构造验证 — Scene ═══

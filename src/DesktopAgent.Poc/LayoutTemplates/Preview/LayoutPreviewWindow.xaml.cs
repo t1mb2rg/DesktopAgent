@@ -73,6 +73,8 @@ public partial class LayoutPreviewWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _isBusy = true;
+        UpdateButtons();
         try
         {
             await _templateStore.InitializeAsync(_windowCts?.Token ?? default);
@@ -91,6 +93,7 @@ public partial class LayoutPreviewWindow : Window
             if (!_isClosing)
                 StatusText.Text = $"初始化失败：{ex.Message}。可点击 刷新数据 重试。";
         }
+        finally { _isBusy = false; if (!_isClosing) UpdateButtons(); }
     }
 
     // ═══ 生成版本 ═══
@@ -147,6 +150,13 @@ public partial class LayoutPreviewWindow : Window
             }
         }
         finally { _suppressTemplateSelectionChanged = false; }
+
+        // 恢复后显式加载一次完整模板（不在 suppress 范围内）
+        if (previousTemplateId.HasValue && TemplateCombo.SelectedItem is not null)
+        {
+            var gen = BumpGeneration();
+            await LoadTemplateAsync(previousTemplateId.Value, gen, _windowCts?.Token ?? default);
+        }
     }
 
     private void SelectTemplateInCombo(Guid templateId)
@@ -161,6 +171,26 @@ public partial class LayoutPreviewWindow : Window
         }
         TemplateCombo.SelectedItem = null;
         _loadedTemplate = null;
+    }
+
+    /// <summary>加载完整模板并更新 UI 状态。可用于 SelectionChanged 和刷新恢复。</summary>
+    private async Task LoadTemplateAsync(Guid templateId, long gen, CancellationToken ct)
+    {
+        var template = await _templateStore.GetAsync(templateId, ct);
+        if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
+        if (template is null)
+        {
+            if (!_isClosing)
+                StatusText.Text = $"模板 {templateId:D} 不存在。";
+            _loadedTemplate = null;
+            return;
+        }
+        _loadedTemplate = template;
+        if (!_isClosing)
+        {
+            UpdateDisplayComboState();
+            StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})。点击 生成预览。";
+        }
     }
 
     private async void TemplateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -181,21 +211,7 @@ public partial class LayoutPreviewWindow : Window
         UpdateButtons();
         try
         {
-            var template = await _templateStore.GetAsync(row.Summary.TemplateId, _windowCts?.Token ?? default);
-            if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
-            if (template is null)
-            {
-                if (!_isClosing)
-                    StatusText.Text = $"模板 {row.Summary.TemplateId:D} 不存在。";
-                _loadedTemplate = null;
-                return;
-            }
-            _loadedTemplate = template;
-            if (!_isClosing)
-            {
-                UpdateDisplayComboState();
-                StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})。点击 生成预览。";
-            }
+            await LoadTemplateAsync(row.Summary.TemplateId, gen, _windowCts?.Token ?? default);
         }
         catch (OperationCanceledException) { /* 静默返回 */ }
         catch (Exception ex)
@@ -268,13 +284,12 @@ public partial class LayoutPreviewWindow : Window
     {
         if (_isBusy) return;
 
-        // 冻结局部变量
+        // 冻结 DisplayCombo 的当前选择，不与旧 _loadedTemplate 混淆
         var templateRow = TemplateCombo.SelectedItem as LayoutPreviewTemplateRow;
         if (templateRow is null) { StatusText.Text = "请先选择模板。"; return; }
         var selectedTemplateId = templateRow.Summary.TemplateId;
-        var localSelectedTarget = _loadedTemplate?.TargetDisplayBinding.Kind == TargetDisplayBindingKind.SelectedTarget
-            ? _selectedTargetDeviceName : null;
-        var localSpacing = new PixelPoint(80, 80); // 默认，会被 capabilities 覆盖
+        var capturedDeviceName = DisplayCombo.SelectedItem is LayoutPreviewDisplayRow dr
+            ? dr.DeviceName : null;
 
         InvalidatePreview();
         var gen = BumpGeneration();
@@ -288,7 +303,16 @@ public partial class LayoutPreviewWindow : Window
             // 1. Fresh re-read 完整模板
             var template = await _templateStore.GetAsync(selectedTemplateId, ct);
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
-            if (template is null) { StatusText.Text = $"模板 {selectedTemplateId:D} 不存在。"; return; }
+            if (template is null)
+            {
+                if (!_isClosing)
+                    StatusText.Text = $"模板 {selectedTemplateId:D} 不存在。";
+                return;
+            }
+
+            // 依据 fresh template 的绑定决定 selectedTarget（不用旧 _loadedTemplate）
+            var localSelectedTarget = template.TargetDisplayBinding.Kind == TargetDisplayBindingKind.SelectedTarget
+                ? capturedDeviceName : null;
 
             // 2. 读取显示器拓扑
             var displays1 = _displayTopologyReader.GetDisplays();
@@ -303,45 +327,37 @@ public partial class LayoutPreviewWindow : Window
             }
             catch (Exception ex)
             {
-                StatusText.Text = $"目标显示器解析失败：{ex.Message}";
+                if (!_isClosing)
+                    StatusText.Text = $"目标显示器解析失败：{ex.Message}";
                 return;
             }
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
 
-            // 4. STA 线程读取
-            LayoutPreviewShellRead? shellRead;
-            try
+            // 4. STA 线程读取 — 内层异常由外层统一处理，不外泄
+            var shellRead = await _staExecutor.RunAsync(() =>
             {
-                shellRead = await _staExecutor.RunAsync(() =>
-                {
-                    var capabilities = _positioningCapabilitiesProvider.GetCapabilities();
-                    var iconRead = _desktopIconReader.ReadDesktopIcons();
-                    return new LayoutPreviewShellRead(capabilities, iconRead);
-                });
-            }
-            catch (Exception ex)
-            {
-                StatusText.Text = $"桌面读取失败：{ex.Message}";
-                return;
-            }
+                var capabilities = _positioningCapabilitiesProvider.GetCapabilities();
+                var iconRead = _desktopIconReader.ReadDesktopIcons();
+                return new LayoutPreviewShellRead(capabilities, iconRead);
+            });
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
 
             // 5. 再次读取拓扑，检查一致性
             var displays2 = _displayTopologyReader.GetDisplays();
             if (!TopologyConsistent(displays1, displays2))
             {
-                StatusText.Text = "读取期间显示器拓扑发生变化，请重试。";
+                if (!_isClosing)
+                    StatusText.Text = "读取期间显示器拓扑发生变化，请重试。";
                 return;
             }
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
 
             if (shellRead.IconRead.FailedItemCount > 0)
             {
-                StatusText.Text = $"图标读取不完整：{shellRead.IconRead.FailedItemCount} 个失败。无法生成预览。";
+                if (!_isClosing)
+                    StatusText.Text = $"图标读取不完整：{shellRead.IconRead.FailedItemCount} 个失败。无法生成预览。";
                 return;
             }
-
-            localSpacing = shellRead.Capabilities.Spacing;
 
             // 6. 分配 MonitorDeviceName
             var assignedIcons = shellRead.IconRead.Icons.Select(icon =>
@@ -537,17 +553,12 @@ public partial class LayoutPreviewWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        // 始终先标记 closing、增加 generation、取消 CTS，
-        // 不依赖"busy 时拒绝关闭"代替取消语义。
+        // 关闭请求一律允许完成：标记 closing、增 generation、取消 CTS，
+        // 不设置 e.Cancel。所有 await 结果必须检查 _isClosing 后丢弃。
         _isClosing = true;
         BumpGeneration();
         _windowCts?.Cancel();
-
-        if (_isBusy)
-        {
-            e.Cancel = true;
-            StatusText.Text = "操作正在进行中，请稍后再试。";
-        }
+        // STA read 无法中断时允许后台结束，但结果不能回写。
     }
 
     // ═══ 格式化 ═══

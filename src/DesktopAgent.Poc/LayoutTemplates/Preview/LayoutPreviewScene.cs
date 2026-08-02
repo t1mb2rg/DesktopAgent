@@ -29,8 +29,13 @@ public sealed class LayoutPreviewZoneVisual
         double canvasLeft, double canvasTop, double canvasWidth, double canvasHeight,
         long effectiveCapacity, int assignedCount, string placementFlow)
     {
+        if (zoneId == Guid.Empty)
+            throw new ArgumentException("ZoneId 不能为 Guid.Empty。", nameof(zoneId));
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Zone Name 不能为空。", nameof(name));
+        if (pixelRight <= pixelLeft || pixelBottom <= pixelTop)
+            throw new ArgumentException(
+                $"Pixel bounds 必须为正面积：({pixelLeft},{pixelTop})-({pixelRight},{pixelBottom})。");
         if (!double.IsFinite(canvasLeft) || !double.IsFinite(canvasTop)
             || !double.IsFinite(canvasWidth) || !double.IsFinite(canvasHeight))
             throw new ArgumentException("Zone 的 Canvas 坐标必须为有限数值。");
@@ -38,9 +43,11 @@ public sealed class LayoutPreviewZoneVisual
             throw new ArgumentException("Zone 的 Canvas 宽高不能为负数。");
         if (effectiveCapacity < 0)
             throw new ArgumentOutOfRangeException(nameof(effectiveCapacity));
-        if (assignedCount < 0 || (effectiveCapacity > 0 && assignedCount > effectiveCapacity))
+        if (assignedCount < 0 || assignedCount > effectiveCapacity)
             throw new ArgumentOutOfRangeException(nameof(assignedCount),
                 $"AssignedCount ({assignedCount}) 超出 EffectiveCapacity ({effectiveCapacity})。");
+        if (string.IsNullOrWhiteSpace(placementFlow))
+            throw new ArgumentException("PlacementFlow 不能为空。", nameof(placementFlow));
 
         ZoneId = zoneId;
         Name = name;
@@ -82,6 +89,8 @@ public sealed class LayoutPreviewIconVisual
         Guid? zoneId, string zoneName, string toolTip)
     {
         if (icon is null) throw new ArgumentNullException(nameof(icon));
+        if (!Enum.IsDefined(state))
+            throw new ArgumentException($"无效的 State 枚举值：{(int)state}。", nameof(state));
         if (!double.IsFinite(currentCanvasX) || !double.IsFinite(currentCanvasY))
             throw new ArgumentException("Current Canvas 坐标必须为有限数值。");
 
@@ -92,14 +101,26 @@ public sealed class LayoutPreviewIconVisual
         if (targetCanvasX.HasValue && (!double.IsFinite(targetCanvasX.Value) || !double.IsFinite(targetCanvasY!.Value)))
             throw new ArgumentException("Target Canvas 坐标必须为有限数值。");
 
-        // Unassigned 不能有 target；非 Unassigned 必须有 target
-        if (state == DesktopLayoutPreviewItemState.Unassigned && targetCanvasX.HasValue)
-            throw new ArgumentException("Unassigned 状态不能有 Target Canvas 坐标。");
-        if (state != DesktopLayoutPreviewItemState.Unassigned && !targetCanvasX.HasValue)
-            throw new ArgumentException("非 Unassigned 状态必须有 Target Canvas 坐标。");
-        // Assigned 必须有 ZoneId 和 ZoneName
-        if (state != DesktopLayoutPreviewItemState.Unassigned && zoneId is null)
-            throw new ArgumentException("Assigned 图标必须有 ZoneId。");
+        // Unassigned 不能有 target / ZoneId / ZoneName
+        if (state == DesktopLayoutPreviewItemState.Unassigned)
+        {
+            if (targetCanvasX.HasValue)
+                throw new ArgumentException("Unassigned 状态不能有 Target Canvas 坐标。");
+            if (zoneId is not null)
+                throw new ArgumentException("Unassigned 状态不能有 ZoneId。");
+            if (!string.IsNullOrEmpty(zoneName))
+                throw new ArgumentException("Unassigned 状态 ZoneName 必须为空。");
+        }
+        else
+        {
+            // Assigned (AlreadyAtTarget / MoveRequired) 必须有 target
+            if (!targetCanvasX.HasValue)
+                throw new ArgumentException("非 Unassigned 状态必须有 Target Canvas 坐标。");
+            if (zoneId is null || zoneId.Value == Guid.Empty)
+                throw new ArgumentException("Assigned 图标必须有非空 ZoneId。");
+            if (string.IsNullOrWhiteSpace(zoneName))
+                throw new ArgumentException("Assigned 图标 ZoneName 不能为空。");
+        }
 
         Icon = icon;
         State = state;
@@ -146,6 +167,24 @@ public sealed class LayoutPreviewScene
                 $" Transform=({transform.WorkArea.Left},{transform.WorkArea.Top})-({transform.WorkArea.Right},{transform.WorkArea.Bottom})" +
                 $" Plan=({plan.TargetDisplay.WorkArea.Left},{plan.TargetDisplay.WorkArea.Top})-({plan.TargetDisplay.WorkArea.Right},{plan.TargetDisplay.WorkArea.Bottom})。",
                 nameof(transform));
+
+        // 集合数量必须与 Plan 一致
+        if (zones.Count != plan.ResolvedTemplate.Zones.Count)
+            throw new ArgumentException(
+                $"Zones 数量 ({zones.Count}) 与 Plan 的 Zone 数量 ({plan.ResolvedTemplate.Zones.Count}) 不一致。",
+                nameof(zones));
+        if (icons.Count != plan.Items.Count)
+            throw new ArgumentException(
+                $"Icons 数量 ({icons.Count}) 与 Plan.Items 数量 ({plan.Items.Count}) 不一致。",
+                nameof(icons));
+        if (itemRows.Count != plan.Items.Count)
+            throw new ArgumentException(
+                $"ItemRows 数量 ({itemRows.Count}) 与 Plan.Items 数量 ({plan.Items.Count}) 不一致。",
+                nameof(itemRows));
+        if (outOfScopeRows.Count != plan.OutOfScopeIcons.Count)
+            throw new ArgumentException(
+                $"OutOfScopeRows 数量 ({outOfScopeRows.Count}) 与 Plan.OutOfScopeIcons 数量 ({plan.OutOfScopeIcons.Count}) 不一致。",
+                nameof(outOfScopeRows));
 
         Plan = plan;
         Transform = transform;
