@@ -35,6 +35,7 @@ public partial class LayoutPreviewWindow : Window
     private bool _isBusy;
     private bool _storeReady;
     private bool _isClosing;
+    private bool _suppressTemplateSelectionChanged;
     private CancellationTokenSource? _windowCts;
     private DesktopLayoutTemplate? _loadedTemplate;
     private IReadOnlyList<DisplayDescriptor> _currentDisplays = Array.Empty<DisplayDescriptor>();
@@ -67,6 +68,7 @@ public partial class LayoutPreviewWindow : Window
 
         _windowCts = new CancellationTokenSource();
         Loaded += OnLoaded;
+        Closed += (_, _) => { _windowCts?.Dispose(); _windowCts = null; };
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -74,15 +76,20 @@ public partial class LayoutPreviewWindow : Window
         try
         {
             await _templateStore.InitializeAsync(_windowCts?.Token ?? default);
+            if (_isClosing) return;
             _storeReady = true;
             await RefreshTemplatesAsync();
+            if (_isClosing) return;
             ReadDisplays();
-            StatusText.Text = "就绪。请选择模板并点击 生成预览。";
+            if (!_isClosing)
+                StatusText.Text = "就绪。请选择模板并点击 生成预览。";
         }
+        catch (OperationCanceledException) { /* 静默返回，窗口正在关闭 */ }
         catch (Exception ex)
         {
             _storeReady = false;
-            StatusText.Text = $"初始化失败：{ex.Message}。可点击 刷新数据 重试。";
+            if (!_isClosing)
+                StatusText.Text = $"初始化失败：{ex.Message}。可点击 刷新数据 重试。";
         }
     }
 
@@ -107,15 +114,39 @@ public partial class LayoutPreviewWindow : Window
     private async Task RefreshTemplatesAsync()
     {
         if (!_storeReady) return;
-        var list = await _templateStore.ListAsync(200, _windowCts?.Token ?? default);
-        _templateRows.Clear();
-        foreach (var s in list) _templateRows.Add(new LayoutPreviewTemplateRow(s));
 
-        // 恢复选择
-        if (_loadedTemplate is not null)
-            SelectTemplateInCombo(_loadedTemplate.TemplateId);
-        else
-            _loadedTemplate = null;
+        // 清空前捕获选择 — _templateRows.Clear() 会同步触发
+        // TemplateCombo_SelectionChanged 将 _loadedTemplate 置 null
+        var previousTemplateId = _loadedTemplate?.TemplateId;
+
+        var list = await _templateStore.ListAsync(200, _windowCts?.Token ?? default);
+        if (_isClosing) return;
+
+        _suppressTemplateSelectionChanged = true;
+        try
+        {
+            _templateRows.Clear();
+            foreach (var s in list) _templateRows.Add(new LayoutPreviewTemplateRow(s));
+
+            // 恢复选择
+            if (previousTemplateId.HasValue)
+            {
+                SelectTemplateInCombo(previousTemplateId.Value);
+                // 如果找不到原模板 ID，SelectTemplateInCombo 会清除选择
+                if (TemplateCombo.SelectedItem is null)
+                {
+                    _loadedTemplate = null;
+                    InvalidatePreview();
+                }
+            }
+            else
+            {
+                TemplateCombo.SelectedItem = null;
+                _loadedTemplate = null;
+                InvalidatePreview();
+            }
+        }
+        finally { _suppressTemplateSelectionChanged = false; }
     }
 
     private void SelectTemplateInCombo(Guid templateId)
@@ -134,6 +165,9 @@ public partial class LayoutPreviewWindow : Window
 
     private async void TemplateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_suppressTemplateSelectionChanged) return;
+        if (_isBusy) return;
+
         InvalidatePreview();
         if (TemplateCombo.SelectedItem is not LayoutPreviewTemplateRow row)
         {
@@ -143,25 +177,34 @@ public partial class LayoutPreviewWindow : Window
         }
 
         var gen = BumpGeneration();
+        _isBusy = true;
+        UpdateButtons();
         try
         {
             var template = await _templateStore.GetAsync(row.Summary.TemplateId, _windowCts?.Token ?? default);
-            if (Interlocked.Read(ref _generation) != gen) return;
+            if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
             if (template is null)
             {
-                StatusText.Text = $"模板 {row.Summary.TemplateId:D} 不存在。";
+                if (!_isClosing)
+                    StatusText.Text = $"模板 {row.Summary.TemplateId:D} 不存在。";
                 _loadedTemplate = null;
                 return;
             }
             _loadedTemplate = template;
-            UpdateDisplayComboState();
-            StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})。点击 生成预览。";
+            if (!_isClosing)
+            {
+                UpdateDisplayComboState();
+                StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})。点击 生成预览。";
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) { /* 静默返回 */ }
+        catch (Exception ex)
         {
-            StatusText.Text = $"加载模板失败：{ex.Message}";
+            if (!_isClosing)
+                StatusText.Text = $"加载模板失败：{ex.Message}";
             _loadedTemplate = null;
         }
+        finally { _isBusy = false; if (!_isClosing) UpdateButtons(); }
     }
 
     // ═══ 显示器 ═══
@@ -342,11 +385,13 @@ public partial class LayoutPreviewWindow : Window
                 ? (plan.HasChanges ? "预览完成：有图标需要移动。" : "预览完成：所有图标已就位。")
                 : "预览完成：容量不足，部分图标未分配。";
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) { /* 静默返回，窗口正在关闭 */ }
+        catch (Exception ex)
         {
-            StatusText.Text = $"生成预览失败：{ex.Message}";
+            if (!_isClosing)
+                StatusText.Text = $"生成预览失败：{ex.Message}";
         }
-        finally { _isBusy = false; UpdateButtons(); }
+        finally { _isBusy = false; if (!_isClosing) UpdateButtons(); }
     }
 
     // ═══ 画布渲染 ═══
@@ -452,6 +497,7 @@ public partial class LayoutPreviewWindow : Window
 
     private void UpdateButtons()
     {
+        if (_isClosing) return;
         GenerateButton.IsEnabled = !_isBusy && _storeReady && _loadedTemplate is not null;
         RefreshButton.IsEnabled = !_isBusy;
         TemplateCombo.IsEnabled = !_isBusy;
@@ -471,27 +517,37 @@ public partial class LayoutPreviewWindow : Window
             if (!_storeReady)
             {
                 await _templateStore.InitializeAsync(_windowCts?.Token ?? default);
+                if (_isClosing) return;
                 _storeReady = true;
             }
             await RefreshTemplatesAsync();
-            StatusText.Text = "已刷新。";
+            if (!_isClosing)
+                StatusText.Text = "已刷新。";
         }
-        catch (Exception ex) { StatusText.Text = $"刷新失败：{ex.Message}"; }
-        finally { _isBusy = false; UpdateButtons(); }
+        catch (OperationCanceledException) { /* 静默返回 */ }
+        catch (Exception ex)
+        {
+            if (!_isClosing)
+                StatusText.Text = $"刷新失败：{ex.Message}";
+        }
+        finally { _isBusy = false; if (!_isClosing) UpdateButtons(); }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        // 始终先标记 closing、增加 generation、取消 CTS，
+        // 不依赖"busy 时拒绝关闭"代替取消语义。
+        _isClosing = true;
+        BumpGeneration();
+        _windowCts?.Cancel();
+
         if (_isBusy)
         {
             e.Cancel = true;
             StatusText.Text = "操作正在进行中，请稍后再试。";
-            return;
         }
-        _isClosing = true;
-        _windowCts?.Cancel();
     }
 
     // ═══ 格式化 ═══
