@@ -438,56 +438,6 @@ public sealed class SqliteDesktopLayoutIconRuleStoreTests : IDisposable
 
     // ═══════════════════════════ D. Corrupt data ═══════════════════════════
 
-    private void InsertRawRule(Guid tid, string stableId, int kind, string? zoneIdStr)
-    {
-        using var c = OpenRawConnection();
-        using var cmd = c.CreateCommand();
-        cmd.CommandText = @"
-            INSERT INTO desktop_layout_template_icon_rules
-                (template_id, stable_id, rule_kind, target_zone_id)
-            VALUES (@tid, @sid, @kind, @zid);
-        ";
-        cmd.Parameters.AddWithValue("@tid", tid.ToString("D"));
-        cmd.Parameters.AddWithValue("@sid", stableId);
-        cmd.Parameters.AddWithValue("@kind", kind);
-        cmd.Parameters.AddWithValue("@zid",
-            zoneIdStr is not null ? (object)zoneIdStr : DBNull.Value);
-        cmd.ExecuteNonQuery();
-    }
-
-    [Fact] public void D1_UndefinedRuleKind_Fails()
-    {
-        var tid = Guid.NewGuid();
-        SaveTemplate(tid);
-        var s = CreateRuleStore();
-
-        // Direct SQL to bypass CHECKs
-        using var c = OpenRawConnection();
-        using var cmd = c.CreateCommand();
-        cmd.CommandText = @"
-            INSERT INTO desktop_layout_template_icon_rules
-                (template_id, stable_id, rule_kind, target_zone_id)
-            VALUES (@tid, 'bad', 99, NULL);
-        ";
-        cmd.Parameters.AddWithValue("@tid", tid.ToString("D"));
-
-        // Might succeed if we disable FK/CHECK, or fail. Let's try without foreign_keys:
-        // SQLite allows this if we turn off foreign_keys, but CHECK is still enforced.
-        // We need to create the table WITHOUT the CHECK constraints for this test.
-        // Let's use a different approach: create a corrupted row via pragma.
-        // Actually the CHECK(rk IN (0,1,2)) will reject 99. We use a workaround:
-        // SQLite doesn't allow ALTER TABLE DROP CHECK.
-        // So for corruption tests, we create the rule table manually without the check
-        // and insert the corrupt data before Initialize runs the schema creation.
-        var builder = new SqliteConnectionStringBuilder
-        {
-            DataSource = _dbPath, Mode = SqliteOpenMode.ReadWriteCreate,
-            ForeignKeys = false, Pooling = false,
-        };
-        using var nc = new SqliteConnection(builder.ConnectionString);
-        nc.Open();
-    }
-
     private void InsertCorruptRule(Guid tid, string stableId, int kind, string? zoneIdStr)
     {
         // Use a connection with ForeignKeys=off to bypass FK, and create a
@@ -654,21 +604,56 @@ public sealed class SqliteDesktopLayoutIconRuleStoreTests : IDisposable
     {
         var tid = Guid.NewGuid();
         SaveTemplate(tid);
-        CreateRuleStore();
+        CreateRuleStore(); // Initialize v3 schema
 
-        // Insert two rules with same StableId (bypass PK via corruption table)
-        InsertCorruptRule(tid, "dup", 0, null);
-        // Can't insert duplicate because our corruption table still has PK.
-        // This is actually a DB-level safety, so the corrupt insert fails.
-        // Test instead that the domain RuleSet rejects duplicates.
+        // Recreate rules table WITHOUT PRIMARY KEY to allow duplicate StableId rows
+        {
+            var builder = new SqliteConnectionStringBuilder
+            {
+                DataSource = _dbPath, Mode = SqliteOpenMode.ReadWriteCreate,
+                ForeignKeys = false, Pooling = false,
+            };
+            using var c = new SqliteConnection(builder.ConnectionString);
+            c.Open();
+
+            using var drop = c.CreateCommand();
+            drop.CommandText = "DROP TABLE IF EXISTS desktop_layout_template_icon_rules;";
+            drop.ExecuteNonQuery();
+
+            using var create = c.CreateCommand();
+            create.CommandText = @"
+                CREATE TABLE desktop_layout_template_icon_rules (
+                    template_id     TEXT NOT NULL,
+                    stable_id       TEXT NOT NULL,
+                    rule_kind       INTEGER NOT NULL,
+                    target_zone_id  TEXT NULL
+                );
+            ";
+            create.ExecuteNonQuery();
+
+            // Insert two rows with identical template_id + stable_id (no PK to stop us)
+            for (int i = 0; i < 2; i++)
+            {
+                using var ins = c.CreateCommand();
+                ins.CommandText = @"
+                    INSERT INTO desktop_layout_template_icon_rules
+                        (template_id, stable_id, rule_kind, target_zone_id)
+                    VALUES (@tid, @sid, @kind, @zid);
+                ";
+                ins.Parameters.AddWithValue("@tid", tid.ToString("D"));
+                ins.Parameters.AddWithValue("@sid", "dup");
+                ins.Parameters.AddWithValue("@kind", 0);
+                ins.Parameters.AddWithValue("@zid", DBNull.Value);
+                ins.ExecuteNonQuery();
+            }
+        }
+
+        // DesktopLayoutIconRuleSet constructor must reject the duplicate StableId
         var s = new SqliteDesktopLayoutIconRuleStore(_dbPath);
-
-        // Normal path: duplicate is caught by RuleSet constructor
-        // We only have the PK preventing duplicates at DB level.
-        // The InvalidDataException would come if we manually INSERT... OR REPLACE.
-        // Let's test: if somehow two rules with same sid exist, Get fails.
-        // Our corrupt table has PK, so duplicates are rejected at DB level.
-        // This test verifies the invariant holds.
+        var ex = Assert.Throws<InvalidDataException>(() =>
+            s.GetAsync(tid).GetAwaiter().GetResult());
+        Assert.Contains(tid.ToString("D"), ex.Message);
+        Assert.Contains("dup", ex.Message);
     }
 
     // ═══════════════════════════ E. Atomicity & cancellation ═══════════════════════════
