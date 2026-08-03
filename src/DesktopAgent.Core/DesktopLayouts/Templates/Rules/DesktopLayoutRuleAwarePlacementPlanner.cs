@@ -70,12 +70,38 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
         zoneOrder.Sort((a, b) => a.Zone.Zone.SortOrder.CompareTo(b.Zone.Zone.SortOrder));
 
         // ═══ 为每个 Zone 计算可用槽位（过滤固定障碍） ═══
-        // zoneAvailableSlots[zoneId] = list of (slotIndex, columnIndex, rowIndex, targetPos, targetCellBounds)
+        // 提前统计每个 Zone 的 Override 数量，用于计算需求上限
+        var zoneOverrideCounts = new Dictionary<Guid, int>();
+        foreach (var match in resolutionPlan.ZoneOverrideMatches)
+        {
+            var zid = match.TargetZone!.ZoneId;
+            zoneOverrideCounts.TryGetValue(zid, out var c);
+            zoneOverrideCounts[zid] = c + 1;
+        }
+
+        // zoneAvailableSlots[zoneId] = list of available slots
         var zoneAvailableSlots = new Dictionary<Guid, List<AvailableSlot>>();
         foreach (var (_, zone) in zoneOrder)
         {
-            var available = ComputeAvailableSlots(zone, iconSpacing, fixedObstacleRects);
-            zoneAvailableSlots[zone.Zone.ZoneId] = available;
+            var zid = zone.Zone.ZoneId;
+            zoneOverrideCounts.TryGetValue(zid, out var ovrCount);
+
+            // 保守需求上限：该 Zone Override 数 + 全部 Default 图标数，但不超过 EffectiveCapacity
+            long maxNeeded = (long)ovrCount + resolutionPlan.DefaultManagedIconCount;
+            if (maxNeeded > zone.EffectiveCapacity)
+                maxNeeded = zone.EffectiveCapacity;
+
+            List<AvailableSlot> available;
+            if (maxNeeded <= 0)
+            {
+                available = new List<AvailableSlot>(0);
+            }
+            else
+            {
+                available = ComputeAvailableSlots(
+                    zone, iconSpacing, fixedObstacleRects, maxNeeded);
+            }
+            zoneAvailableSlots[zid] = available;
         }
 
         // ═══ ZoneOverride 优先分配 ═══
@@ -182,21 +208,25 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
     }
 
     /// <summary>
-    /// 计算指定 Zone 中所有不被固定障碍阻挡的可用槽位。
+    /// 计算指定 Zone 中前 N 个不被固定障碍阻挡的可用槽位。
     /// 按 SlotIndex ASC（即 PlacementFlow 定义的遍历顺序）枚举。
+    /// 需求受限扫描：最多收集 maxNeeded 个槽位后停止。
     /// </summary>
     private static List<AvailableSlot> ComputeAvailableSlots(
         ResolvedDesktopLayoutZone zone,
         PixelPoint iconSpacing,
-        IReadOnlyList<PixelRect> fixedObstacleRects)
+        IReadOnlyList<PixelRect> fixedObstacleRects,
+        long maxNeeded)
     {
         var available = new List<AvailableSlot>();
+        if (maxNeeded <= 0) return available;
+
         long total = zone.TheoreticalCapacity;
         var isColumnMajor = zone.Zone.PlacementFlow == ZonePlacementFlow.ColumnMajor;
 
-        for (var slotIdx = 0; (long)slotIdx < total; slotIdx++)
+        for (long slotIdx = 0; slotIdx < total; slotIdx++)
         {
-            int col, row;
+            long col, row;
             if (isColumnMajor)
             {
                 col = slotIdx / zone.RowCount;
@@ -208,9 +238,13 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
                 col = slotIdx % zone.ColumnCount;
             }
 
+            // 验证 col/row 在合法范围内
+            if (col >= zone.ColumnCount || row >= zone.RowCount)
+                continue;
+
             // 计算 TargetPosition（long 中间运算，checked 转换）
-            long targetX = (long)zone.PixelBounds.Left + (long)col * iconSpacing.X;
-            long targetY = (long)zone.PixelBounds.Top + (long)row * iconSpacing.Y;
+            long targetX = (long)zone.PixelBounds.Left + col * iconSpacing.X;
+            long targetY = (long)zone.PixelBounds.Top + row * iconSpacing.Y;
 
             PixelPoint targetPos;
             PixelRect targetRect;
@@ -238,14 +272,30 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
 
             if (!blocked)
             {
+                // checked 转换 long → int；超出 int 范围时 fail-closed
+                int intSlotIdx;
+                try
+                {
+                    intSlotIdx = checked((int)slotIdx);
+                }
+                catch (OverflowException)
+                {
+                    throw new InvalidOperationException(
+                        $"SlotIndex ({slotIdx}) 超出 int 范围，无法表示。" +
+                        $"ZoneId=\"{zone.Zone.ZoneId:D}\"。");
+                }
+
                 available.Add(new AvailableSlot
                 {
-                    SlotIndex = slotIdx,
-                    ColumnIndex = col,
-                    RowIndex = row,
+                    SlotIndex = intSlotIdx,
+                    ColumnIndex = checked((int)col),
+                    RowIndex = checked((int)row),
                     TargetPosition = targetPos,
                     TargetCellBounds = targetRect,
                 });
+
+                if ((long)available.Count >= maxNeeded)
+                    break;
             }
         }
 

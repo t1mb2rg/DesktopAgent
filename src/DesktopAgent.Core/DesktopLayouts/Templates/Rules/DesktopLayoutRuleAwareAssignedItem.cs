@@ -74,6 +74,10 @@ public sealed class DesktopLayoutRuleAwareAssignedItem
                 $"SlotIndex ({slotIndex}) 超过 Zone TheoreticalCapacity ({zone.TheoreticalCapacity})。" +
                 $"ZoneId=\"{zone.Zone.ZoneId:D}\"。");
 
+        if (!Enum.IsDefined(source))
+            throw new ArgumentException(
+                $"未定义的 AssignmentSource 值：{(int)source}。", nameof(source));
+
         if (source == DesktopLayoutRuleAwareAssignmentSource.Override)
         {
             if (rule is null)
@@ -82,8 +86,18 @@ public sealed class DesktopLayoutRuleAwareAssignedItem
             if (rule.Kind != DesktopLayoutIconRuleKind.ZoneOverride)
                 throw new ArgumentException(
                     $"Override 分配的 Rule Kind 必须为 ZoneOverride，实际 {rule.Kind}。", nameof(rule));
+            if (!StringComparer.Ordinal.Equals(rule.StableId, icon.StableId))
+                throw new ArgumentException(
+                    $"Override Rule.StableId \"{rule.StableId}\" 与 Icon.StableId \"{icon.StableId}\" 不一致。");
+            if (!rule.TargetZoneId.HasValue)
+                throw new ArgumentException(
+                    "Override Rule.TargetZoneId 必须存在。", nameof(rule));
+            if (rule.TargetZoneId.Value != zone.Zone.ZoneId)
+                throw new ArgumentException(
+                    $"Override Rule.TargetZoneId ({rule.TargetZoneId}) " +
+                    $"与 Zone.ZoneId ({zone.Zone.ZoneId}) 不一致。", nameof(zone));
         }
-        else // Default
+        else if (source == DesktopLayoutRuleAwareAssignmentSource.Default)
         {
             if (rule is not null)
                 throw new ArgumentException(

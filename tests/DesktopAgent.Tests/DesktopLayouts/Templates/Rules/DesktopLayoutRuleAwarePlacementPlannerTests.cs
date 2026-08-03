@@ -1268,4 +1268,258 @@ public sealed class DesktopLayoutRuleAwarePlacementPlannerTests
         // Slot 0 is blocked by fixed obstacle at (0,0)
         Assert.NotEqual(0, plan2.DefaultAssignedItems[0].SlotIndex);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX-1: AssignedItem reinforced invariants
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact] public void AssignedItem_UndefinedSource_Rejected()
+    {
+        var template = MakeTwoZoneTemplate();
+        var rt = ResolveTemplate(template);
+        var zone = rt.Zones.First(z => z.Zone.ZoneId == _zid0);
+        var icon = I(0, "a");
+
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopLayoutRuleAwareAssignedItem(
+                icon, zone, _spacing, 0,
+                (DesktopLayoutRuleAwareAssignmentSource)99, null));
+    }
+
+    [Fact] public void AssignedItem_Override_StableIdMismatch_Rejected()
+    {
+        var template = MakeTwoZoneTemplate();
+        var rt = ResolveTemplate(template);
+        var zone = rt.Zones.First(z => z.Zone.ZoneId == _zid0);
+        var icon = I(0, "icon-sid");
+        var rule = DesktopLayoutIconRule.ForZoneOverride("rule-sid", _zid0);
+
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopLayoutRuleAwareAssignedItem(
+                icon, zone, _spacing, 0,
+                DesktopLayoutRuleAwareAssignmentSource.Override, rule));
+    }
+
+    [Fact] public void AssignedItem_Override_TargetZoneIdMismatch_Rejected()
+    {
+        var template = MakeTwoZoneTemplate();
+        var rt = ResolveTemplate(template);
+        // Use zone _zid0 but rule targets _zid1
+        var zone = rt.Zones.First(z => z.Zone.ZoneId == _zid0);
+        var icon = I(0, "a");
+        var rule = DesktopLayoutIconRule.ForZoneOverride("a", _zid1);
+
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopLayoutRuleAwareAssignedItem(
+                icon, zone, _spacing, 0,
+                DesktopLayoutRuleAwareAssignmentSource.Override, rule));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX-2: Plan rejects external equivalent objects
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact] public void Plan_RejectsExternalEquivalentIcon()
+    {
+        var template = MakeTwoZoneTemplate();
+        var rt = ResolveTemplate(template);
+        var realIcon = I(0, "a");
+        var ruleSet = DesktopLayoutIconRuleSet.Empty(_tid);
+        var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
+            template, _dd, new[] { realIcon }, ruleSet);
+
+        // Build valid results but substitute external equivalent Icon
+        var extIcon = I(0, "a"); // same StableId/Ordinal, different instance
+        Assert.NotSame(realIcon, extIcon);
+
+        var extZone = rt.Zones[0];
+        var extAssigned = new DesktopLayoutRuleAwareAssignedItem(
+            extIcon, extZone, _spacing, 0,
+            DesktopLayoutRuleAwareAssignmentSource.Default, null);
+
+        // Plan constructor must reject: external Icon not in DefaultManagedIcons
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopLayoutRuleAwarePlacementPlan(
+                rt, resolutionPlan,
+                Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+                Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+                Array.Empty<PixelRect>(),
+                Array.Empty<DesktopLayoutRuleAwareAssignedItem>(),
+                Array.Empty<DesktopLayoutResolvedIconRule>(),
+                new[] { extAssigned },
+                Array.Empty<DesktopIconSnapshotItem>()));
+    }
+
+    [Fact] public void Plan_RejectsExternalEquivalentRule()
+    {
+        var zid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(zid, "Z0",
+            new NormalizedRect(0, 0, 10000, 10000), 0, ZonePlacementFlow.ColumnMajor, null);
+        var template = MakeTemplate(Guid.NewGuid(), zone);
+        var rt = DesktopLayoutTemplateResolver.Resolve(template, _dd.WorkArea, _spacing);
+
+        var icon = I(0, "a");
+        var realRule = DesktopLayoutIconRule.ForZoneOverride("a", zid);
+        var ruleSet = MakeRuleSet(template.TemplateId, realRule);
+        var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
+            template, _dd, new[] { icon }, ruleSet);
+
+        // External equivalent rule
+        var extRule = DesktopLayoutIconRule.ForZoneOverride("a", zid);
+        Assert.NotSame(realRule, extRule);
+
+        var extAssigned = new DesktopLayoutRuleAwareAssignedItem(
+            icon, rt.Zones[0], _spacing, 0,
+            DesktopLayoutRuleAwareAssignmentSource.Override, extRule);
+
+        // Plan constructor must reject: external Rule not in ZoneOverrideMatches
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopLayoutRuleAwarePlacementPlan(
+                rt, resolutionPlan,
+                Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+                Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+                Array.Empty<PixelRect>(),
+                new[] { extAssigned },
+                Array.Empty<DesktopLayoutResolvedIconRule>(),
+                Array.Empty<DesktopLayoutRuleAwareAssignedItem>(),
+                Array.Empty<DesktopIconSnapshotItem>()));
+    }
+
+    [Fact] public void Plan_RejectsExternalEquivalentZone()
+    {
+        var zid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(zid, "Z0",
+            new NormalizedRect(0, 0, 10000, 10000), 0, ZonePlacementFlow.ColumnMajor, null);
+        var template = MakeTemplate(Guid.NewGuid(), zone);
+        var rt = DesktopLayoutTemplateResolver.Resolve(template, _dd.WorkArea, _spacing);
+
+        var icon = I(0, "a");
+        var ruleSet = DesktopLayoutIconRuleSet.Empty(template.TemplateId);
+        var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
+            template, _dd, new[] { icon }, ruleSet);
+
+        // Create an equivalent ResolvedDesktopLayoutZone NOT from rt.Zones
+        var extZone = new ResolvedDesktopLayoutZone(
+            zone, rt.Zones[0].PixelBounds,
+            rt.Zones[0].ColumnCount, rt.Zones[0].RowCount,
+            rt.Zones[0].TheoreticalCapacity, rt.Zones[0].EffectiveCapacity);
+        // Different instance but equivalent values
+        Assert.NotSame(rt.Zones[0], extZone);
+
+        var extAssigned = new DesktopLayoutRuleAwareAssignedItem(
+            icon, extZone, _spacing, 0,
+            DesktopLayoutRuleAwareAssignmentSource.Default, null);
+
+        // Plan constructor must reject: external Zone not in ResolvedTemplate.Zones
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopLayoutRuleAwarePlacementPlan(
+                rt, resolutionPlan,
+                Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+                Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+                Array.Empty<PixelRect>(),
+                Array.Empty<DesktopLayoutRuleAwareAssignedItem>(),
+                Array.Empty<DesktopLayoutResolvedIconRule>(),
+                new[] { extAssigned },
+                Array.Empty<DesktopIconSnapshotItem>()));
+    }
+
+    [Fact] public void Plan_CorrectReferencesStillPass()
+    {
+        var zid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(zid, "Z0",
+            new NormalizedRect(0, 0, 10000, 10000), 0, ZonePlacementFlow.ColumnMajor, null);
+        var template = MakeTemplate(Guid.NewGuid(), zone);
+        var rt = DesktopLayoutTemplateResolver.Resolve(template, _dd.WorkArea, _spacing);
+
+        var icon = I(0, "a");
+        var rule = DesktopLayoutIconRule.ForZoneOverride("a", zid);
+        var ruleSet = MakeRuleSet(template.TemplateId, rule);
+        var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
+            template, _dd, new[] { icon }, ruleSet);
+
+        // Use exact original references from the resolution chain
+        var realIcon = resolutionPlan.ZoneOverrideMatches[0].Icon;
+        var realRule = resolutionPlan.ZoneOverrideMatches[0].Rule;
+        var realZone = rt.Zones[0];
+
+        var assigned = new DesktopLayoutRuleAwareAssignedItem(
+            realIcon, realZone, _spacing, 0,
+            DesktopLayoutRuleAwareAssignmentSource.Override, realRule);
+
+        // Should NOT throw — all references are original
+        var plan = new DesktopLayoutRuleAwarePlacementPlan(
+            rt, resolutionPlan,
+            Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+            Array.Empty<DesktopLayoutRuleAwareFixedItem>(),
+            Array.Empty<PixelRect>(),
+            new[] { assigned },
+            Array.Empty<DesktopLayoutResolvedIconRule>(),
+            Array.Empty<DesktopLayoutRuleAwareAssignedItem>(),
+            Array.Empty<DesktopIconSnapshotItem>());
+
+        Assert.Equal(1, plan.OverrideAssignedCount);
+        Assert.Same(realIcon, plan.OverrideAssignedItems[0].Icon);
+        Assert.Same(realRule, plan.OverrideAssignedItems[0].Rule);
+        Assert.Same(realZone, plan.OverrideAssignedItems[0].Zone);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIX-3: Large TheoreticalCapacity safe scanning
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact] public void LargeTheoreticalCapacity_SafeScanning()
+    {
+        // Construct a ResolvedDesktopLayoutZone with TheoreticalCapacity > int.MaxValue
+        // 50000 cols × 50000 rows = 2,500,000,000 > int.MaxValue (2,147,483,647)
+        var zid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(zid, "BigZone",
+            new NormalizedRect(0, 0, 10000, 10000), 0, ZonePlacementFlow.ColumnMajor, null);
+
+        // Create ResolvedDesktopLayoutZone directly with large dims
+        // PixelBounds big enough for 50000×50000 at spacing=80: (0,0)-(4,000,000, 4,000,000)
+        var bigPixelBounds = new PixelRect(0, 0, 4_000_000, 4_000_000);
+        var bigColumnCount = 50000;
+        var bigRowCount = 50000;
+        var bigTheoCapacity = checked((long)bigColumnCount * bigRowCount); // 2,500,000,000
+        var bigEffCapacity = bigTheoCapacity;
+
+        var bigZone = new ResolvedDesktopLayoutZone(
+            zone, bigPixelBounds, bigColumnCount, bigRowCount,
+            bigTheoCapacity, bigEffCapacity);
+
+        Assert.True(bigZone.TheoreticalCapacity > int.MaxValue,
+            $"Expected TheoreticalCapacity ({bigZone.TheoreticalCapacity}) > int.MaxValue ({int.MaxValue})");
+
+        // Create a ResolvedTemplate with this zone
+        var template = MakeTemplate(Guid.NewGuid(), zone);
+        var bigRt = new ResolvedDesktopLayoutTemplate(
+            template,
+            new PixelRect(0, 0, 4_000_000, 4_000_000),
+            _spacing,
+            new[] { bigZone });
+
+        // Only 3 default icons — Planner should NOT enumerate all 2.5B slots
+        var icons = new[] { I(0, "a"), I(1, "b"), I(2, "c") };
+        var ruleSet = DesktopLayoutIconRuleSet.Empty(template.TemplateId);
+        var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
+            template, _dd, icons, ruleSet);
+
+        // Must complete quickly (no infinite loop, no int wrap)
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var plan = DesktopLayoutRuleAwarePlacementPlanner.Plan(
+            bigRt, resolutionPlan, _spacing);
+        sw.Stop();
+
+        Assert.Equal(3, plan.DefaultAssignedCount);
+        Assert.Equal(0, plan.DefaultUnassignedCount);
+
+        // Should complete near-instantly (scanning only a few slots, not 2.5B)
+        Assert.True(sw.ElapsedMilliseconds < 1000,
+            $"Scan took {sw.ElapsedMilliseconds}ms, should be < 1000ms (scanned only first few slots)");
+
+        // First 3 slots should be assigned sequentially (no obstacles)
+        Assert.Equal(0, plan.DefaultAssignedItems[0].SlotIndex);
+        Assert.Equal(1, plan.DefaultAssignedItems[1].SlotIndex);
+        Assert.Equal(2, plan.DefaultAssignedItems[2].SlotIndex);
+    }
 }

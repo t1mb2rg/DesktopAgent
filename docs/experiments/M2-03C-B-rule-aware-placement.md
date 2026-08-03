@@ -89,9 +89,16 @@ a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top
 
 - **Icon**: 所有输出中的 Icon 引用必须是 InputIcons 中的原对象
 - **Rule**: FixedItem.Rule 和 AssignedItem.Rule（Override）必须是 RuleSet 中的原对象
-- **Zone**: AssignedItem.Zone 必须是 ResolvedTemplate 中的原对象
+- **Zone**: AssignedItem.Zone 必须是 ResolvedTemplate 中的原对象（`ReferenceEqualityComparer` 验证）
 - **分区无重复无遗漏**: Excluded + Pinned + OverrideAssigned + OverrideUnassigned + DefaultAssigned + DefaultUnassigned 完整覆盖全部 TargetDisplayIcons
-- **外部等值替代实例**被 Plan 构造器拒绝
+- **外部等值替代实例**被 Plan 构造器拒绝 — Plan 构造器包含针对外部等值 Icon、Rule、ResolvedZone 的显式拒绝测试
+
+## 超大 TheoreticalCapacity 安全
+
+- 槽位扫描使用 `long` 索引，避免 `int` 回绕
+- 需求受限扫描：每个 Zone 只收集最多 `min(EffectiveCapacity, OverrideCount + DefaultManagedIconCount)` 个可用槽位
+- 空需求 Zone 不扫描任何槽位
+- `SlotIndex` 转换使用 `checked((int)slotIdx)`，超出 int 范围时 fail-closed
 
 ## 与旧无规则路径的兼容关系
 
@@ -101,7 +108,7 @@ a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top
 
 ## 测试和验证结果
 
-### 新增测试：46 个
+### 新增测试：54 个
 
 **A. 固定障碍 (8)**
 - Exclude 生成固定障碍且不产生目标位置
@@ -146,7 +153,19 @@ a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top
 
 **边界场景 (6)**
 
-### 全量测试：1045/1045 通过，0 失败，0 跳过
+**FIX-1/2: 强化 AssignedItem/Plan 不变量 (7)**
+- 未定义 AssignmentSource 被拒绝
+- Override StableId 不匹配被拒绝
+- Override TargetZoneId 与 Zone 不匹配被拒绝
+- 外部等值 Icon 被 Plan 拒绝
+- 外部等值 Rule 被 Plan 拒绝
+- 外部等值 Zone 被 Plan 拒绝
+- 正确原始引用仍通过
+
+**FIX-3: 超大 TheoreticalCapacity (1)**
+- 2.5B TheoreticalCapacity 安全扫描，< 1s 完成
+
+### 全量测试：1053/1053 通过，0 失败，0 跳过
 
 ## 安全边界
 

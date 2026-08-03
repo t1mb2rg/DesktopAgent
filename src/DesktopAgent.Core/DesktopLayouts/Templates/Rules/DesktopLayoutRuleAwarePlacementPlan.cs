@@ -129,6 +129,11 @@ public sealed class DesktopLayoutRuleAwarePlacementPlan
         }
 
         // ═══ Override Assigned 验证 ═══
+        // 构建 ResolvedTemplate Zones 引用集
+        var rtZones = new HashSet<ResolvedDesktopLayoutZone>(ReferenceEqualityComparer.Instance);
+        foreach (var rz in resolvedTemplate.Zones)
+            rtZones.Add(rz);
+
         foreach (var item in ovrAssignedList)
         {
             if (item is null)
@@ -141,22 +146,42 @@ public sealed class DesktopLayoutRuleAwarePlacementPlan
                 throw new ArgumentException(
                     "OverrideAssignedItems 中 Item Rule 不能为 null。", nameof(overrideAssignedItems));
 
-            // Rule 必须在 ResolutionPlan.ZoneOverrideMatches 中
-            var ruleFound = false;
+            // Zone 必须是 ResolvedTemplate.Zones 中的原对象引用
+            if (!rtZones.Contains(item.Zone))
+                throw new ArgumentException(
+                    $"OverrideAssignedItem Zone (ZoneId=\"{item.Zone.Zone.ZoneId:D}\") " +
+                    "不是 ResolvedTemplate.Zones 中的原对象引用。",
+                    nameof(overrideAssignedItems));
+
+            // Icon 和 Rule 必须对应 ResolutionPlan.ZoneOverrideMatches 中的同一个匹配
+            var matchFound = false;
             foreach (var m in resolutionPlan.ZoneOverrideMatches)
             {
                 if (ReferenceEquals(m.Rule, item.Rule))
                 {
-                    ruleFound = true;
+                    matchFound = true;
                     if (!ReferenceEquals(m.Icon, item.Icon))
                         throw new ArgumentException(
                             $"OverrideAssignedItem Icon 与 ZoneOverrideMatch Icon 不是同一实例。" +
                             $" Rule StableId=\"{item.Rule.StableId}\"。",
                             nameof(overrideAssignedItems));
+                    // Item.Zone.Zone 必须是该匹配 TargetZone 的原始引用
+                    if (!ReferenceEquals(item.Zone.Zone, m.TargetZone))
+                        throw new ArgumentException(
+                            $"OverrideAssignedItem Zone.Zone 与 ZoneOverrideMatch.TargetZone 不是同一实例。" +
+                            $" Rule StableId=\"{item.Rule.StableId}\"。",
+                            nameof(overrideAssignedItems));
+                    // ZoneId 与 Rule.TargetZoneId 一致
+                    if (item.Zone.Zone.ZoneId != item.Rule.TargetZoneId!.Value)
+                        throw new ArgumentException(
+                            $"OverrideAssignedItem Zone.ZoneId ({item.Zone.Zone.ZoneId:D}) " +
+                            $"与 Rule.TargetZoneId ({item.Rule.TargetZoneId}) 不一致。" +
+                            $" Rule StableId=\"{item.Rule.StableId}\"。",
+                            nameof(overrideAssignedItems));
                     break;
                 }
             }
-            if (!ruleFound)
+            if (!matchFound)
                 throw new ArgumentException(
                     $"OverrideAssignedItem Rule (StableId=\"{item.Rule.StableId}\") " +
                     "不在 ResolutionPlan.ZoneOverrideMatches 中。",
@@ -229,6 +254,13 @@ public sealed class DesktopLayoutRuleAwarePlacementPlan
             if (item.Rule is not null)
                 throw new ArgumentException(
                     "DefaultAssignedItems 中 Item Rule 必须为 null。", nameof(defaultAssignedItems));
+
+            // Zone 必须是 ResolvedTemplate.Zones 中的原对象引用
+            if (!rtZones.Contains(item.Zone))
+                throw new ArgumentException(
+                    $"DefaultAssignedItem Zone (ZoneId=\"{item.Zone.Zone.ZoneId:D}\") " +
+                    "不是 ResolvedTemplate.Zones 中的原对象引用。",
+                    nameof(defaultAssignedItems));
 
             // Icon 必须在 ResolutionPlan.DefaultManagedIcons 中
             var iconFound = false;
