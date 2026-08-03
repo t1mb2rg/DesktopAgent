@@ -140,7 +140,8 @@ public sealed class LayoutPreviewIconVisual
 /// </summary>
 public sealed class LayoutPreviewScene
 {
-    public DesktopLayoutPreviewPlan Plan { get; }
+    public DesktopLayoutPreviewPlan? Plan { get; }
+    public DesktopLayoutRuleAwarePreviewPlan? RuleAwarePlan { get; }
     public LayoutPreviewCanvasTransform Transform { get; }
     public IReadOnlyList<LayoutPreviewZoneVisual> Zones { get; }
     public IReadOnlyList<LayoutPreviewIconVisual> Icons { get; }
@@ -163,33 +164,46 @@ public sealed class LayoutPreviewScene
         if (outOfScopeRows is null) throw new ArgumentNullException(nameof(outOfScopeRows));
         if (transform.WorkArea != plan.TargetDisplay.WorkArea)
             throw new ArgumentException(
-                "Transform.WorkArea 必须与 Plan.TargetDisplay.WorkArea 完全一致。" +
-                $" Transform=({transform.WorkArea.Left},{transform.WorkArea.Top})-({transform.WorkArea.Right},{transform.WorkArea.Bottom})" +
-                $" Plan=({plan.TargetDisplay.WorkArea.Left},{plan.TargetDisplay.WorkArea.Top})-({plan.TargetDisplay.WorkArea.Right},{plan.TargetDisplay.WorkArea.Bottom})。",
+                "Transform.WorkArea 必须与 Plan.TargetDisplay.WorkArea 完全一致。",
                 nameof(transform));
 
-        // 集合数量必须与 Plan 一致
         if (zones.Count != plan.ResolvedTemplate.Zones.Count)
-            throw new ArgumentException(
-                $"Zones 数量 ({zones.Count}) 与 Plan 的 Zone 数量 ({plan.ResolvedTemplate.Zones.Count}) 不一致。",
-                nameof(zones));
+            throw new ArgumentException("Zones 数量不一致。", nameof(zones));
         if (icons.Count != plan.Items.Count)
-            throw new ArgumentException(
-                $"Icons 数量 ({icons.Count}) 与 Plan.Items 数量 ({plan.Items.Count}) 不一致。",
-                nameof(icons));
+            throw new ArgumentException("Icons 数量不一致。", nameof(icons));
         if (itemRows.Count != plan.Items.Count)
-            throw new ArgumentException(
-                $"ItemRows 数量 ({itemRows.Count}) 与 Plan.Items 数量 ({plan.Items.Count}) 不一致。",
-                nameof(itemRows));
+            throw new ArgumentException("ItemRows 数量不一致。", nameof(itemRows));
         if (outOfScopeRows.Count != plan.OutOfScopeIcons.Count)
-            throw new ArgumentException(
-                $"OutOfScopeRows 数量 ({outOfScopeRows.Count}) 与 Plan.OutOfScopeIcons 数量 ({plan.OutOfScopeIcons.Count}) 不一致。",
-                nameof(outOfScopeRows));
+            throw new ArgumentException("OutOfScopeRows 数量不一致。", nameof(outOfScopeRows));
 
         Plan = plan;
+        RuleAwarePlan = null;
         Transform = transform;
+        Zones = zones.ToList().AsReadOnly();
+        Icons = icons.ToList().AsReadOnly();
+        ItemRows = itemRows.ToList().AsReadOnly();
+        OutOfScopeRows = outOfScopeRows.ToList().AsReadOnly();
+    }
 
-        // 防御性复制：确保外部修改传入的 List 不会影响 Scene
+    /// <summary>规则感知场景构造器。</summary>
+    internal LayoutPreviewScene(
+        DesktopLayoutRuleAwarePreviewPlan ruleAwarePlan,
+        LayoutPreviewCanvasTransform transform,
+        IReadOnlyList<LayoutPreviewZoneVisual> zones,
+        IReadOnlyList<LayoutPreviewIconVisual> icons,
+        IReadOnlyList<LayoutPreviewItemRow> itemRows,
+        IReadOnlyList<LayoutPreviewOutOfScopeRow> outOfScopeRows)
+    {
+        if (ruleAwarePlan is null) throw new ArgumentNullException(nameof(ruleAwarePlan));
+        if (transform is null) throw new ArgumentNullException(nameof(transform));
+        if (zones is null) throw new ArgumentNullException(nameof(zones));
+        if (icons is null) throw new ArgumentNullException(nameof(icons));
+        if (itemRows is null) throw new ArgumentNullException(nameof(itemRows));
+        if (outOfScopeRows is null) throw new ArgumentNullException(nameof(outOfScopeRows));
+
+        Plan = null;
+        RuleAwarePlan = ruleAwarePlan;
+        Transform = transform;
         Zones = zones.ToList().AsReadOnly();
         Icons = icons.ToList().AsReadOnly();
         ItemRows = itemRows.ToList().AsReadOnly();

@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Editor;
 
@@ -13,6 +14,16 @@ public sealed record LayoutTemplateDraftBuildResult
 {
     public bool IsValid { get; init; }
     public DesktopLayoutTemplate? Template { get; init; }
+    public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>
+/// RuleSet TryBuild 的结果。
+/// </summary>
+public sealed record LayoutRuleSetDraftBuildResult
+{
+    public bool IsValid { get; init; }
+    public DesktopLayoutIconRuleSet? RuleSet { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
 }
 
@@ -55,6 +66,8 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
     public bool IsExactDeviceName => BindingKind == TargetDisplayBindingKind.ExactDeviceName;
 
     public ObservableCollection<LayoutZoneEditorDraft> Zones { get; } = [];
+
+    public ObservableCollection<LayoutIconRuleEditorDraft> Rules { get; } = [];
 
     private bool _isDirty;
     public bool IsDirty
@@ -217,6 +230,71 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
             return new LayoutTemplateDraftBuildResult
             {
                 IsValid = false, Template = null, Errors = errors.AsReadOnly()
+            };
+        }
+    }
+
+    public LayoutRuleSetDraftBuildResult TryBuildRuleSet()
+    {
+        var errors = new List<string>();
+        var rules = new List<DesktopLayoutIconRule>();
+        var seenStableIds = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = 0; i < Rules.Count; i++)
+        {
+            var rd = Rules[i];
+            var rule = rd.TryBuild(out var error);
+            if (rule is null)
+            {
+                errors.Add($"Rule[{i}] (StableId=\"{rd.StableId}\") 构建失败：{error}");
+                continue;
+            }
+
+            if (!seenStableIds.Add(rule.StableId))
+            {
+                errors.Add($"Rule[{i}] StableId \"{rd.StableId}\" 重复。");
+                continue;
+            }
+
+            // ZoneOverride 验证 TargetZoneId 存在于当前草稿 Zones
+            if (rule.Kind == DesktopLayoutIconRuleKind.ZoneOverride)
+            {
+                var zid = rule.TargetZoneId!.Value;
+                var found = false;
+                foreach (var z in Zones)
+                {
+                    if (z.ZoneId == zid) { found = true; break; }
+                }
+                if (!found)
+                {
+                    errors.Add($"Rule[{i}] ZoneOverride TargetZoneId={zid:D} 不在当前 Zones 中。");
+                    continue;
+                }
+            }
+
+            rules.Add(rule);
+        }
+
+        if (errors.Count > 0)
+            return new LayoutRuleSetDraftBuildResult
+            {
+                IsValid = false, RuleSet = null, Errors = errors.AsReadOnly()
+            };
+
+        try
+        {
+            var ruleSet = new DesktopLayoutIconRuleSet(TemplateId, rules);
+            return new LayoutRuleSetDraftBuildResult
+            {
+                IsValid = true, RuleSet = ruleSet, Errors = Array.Empty<string>()
+            };
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"DesktopLayoutIconRuleSet 构造失败：{ex.Message}");
+            return new LayoutRuleSetDraftBuildResult
+            {
+                IsValid = false, RuleSet = null, Errors = errors.AsReadOnly()
             };
         }
     }

@@ -9,16 +9,20 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
+using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Editor;
 
 public partial class LayoutTemplateEditorWindow : Window
 {
     private readonly IDesktopLayoutTemplateStore _templateStore;
+    private readonly IDesktopLayoutIconRuleStore _ruleStore;
     private readonly string[] _knownDeviceNames;
     private bool _operationInProgress;
     private bool _templateStoreReady;
+    private bool _ruleStoreReady;
     private LayoutTemplateEditorDraft _draft;
     private readonly ObservableCollection<TemplateListEntry> _templateList = [];
     private bool _suppressTemplateSelectionChanged;
@@ -39,11 +43,13 @@ public partial class LayoutTemplateEditorWindow : Window
 
     public LayoutTemplateEditorWindow(
         IDesktopLayoutTemplateStore templateStore,
+        IDesktopLayoutIconRuleStore ruleStore,
         string[] knownDeviceNames)
     {
         InitializeComponent();
 
         _templateStore = templateStore;
+        _ruleStore = ruleStore;
         _knownDeviceNames = knownDeviceNames;
 
         ExactDeviceNameCombo.ItemsSource = _knownDeviceNames;
@@ -75,6 +81,19 @@ public partial class LayoutTemplateEditorWindow : Window
             _operationInProgress = false;
             UpdateButtons();
             return;
+        }
+
+        // 阶段 A2：初始化规则 Store
+        try
+        {
+            await _ruleStore.InitializeAsync();
+            _ruleStoreReady = true;
+        }
+        catch (Exception ex)
+        {
+            _ruleStoreReady = false;
+            StatusBarText.Text = $"规则 Store 初始化失败：{ex.Message}。规则保存/加载/删除不可用。";
+            // 不返回 — 模板编辑功能仍可用
         }
 
         // 阶段 B：加载模板列表
@@ -250,11 +269,32 @@ public partial class LayoutTemplateEditorWindow : Window
                 return false;
             }
 
+            // 加载规则
+            DesktopLayoutIconRuleSet? ruleSet = null;
+            if (_ruleStoreReady)
+            {
+                ruleSet = await _ruleStore.GetAsync(templateId);
+                if (ruleSet is null)
+                {
+                    StatusBarText.Text = $"模板 {templateId:D} 的规则集不存在（数据不一致）。";
+                    return false;
+                }
+            }
+
             UnbindDraft();
             _draft = LayoutTemplateEditorDraft.FromTemplate(template);
+
+            // 加载规则到草稿
+            if (ruleSet is not null)
+            {
+                _draft.Rules.Clear();
+                foreach (var rule in ruleSet.Rules)
+                    _draft.Rules.Add(LayoutIconRuleEditorDraft.FromRule(rule));
+            }
+
             BindDraft();
             SelectTemplateInList(templateId);
-            StatusBarText.Text = $"已加载：{template.Name} (v{template.Version})";
+            StatusBarText.Text = $"已加载：{template.Name} (v{template.Version})，{_draft.Rules.Count} 条规则";
             return true;
         }
         catch (Exception ex)
@@ -331,23 +371,15 @@ public partial class LayoutTemplateEditorWindow : Window
                 StatusBarText.Text = $"保存失败：{string.Join("；", buildResult.Errors)}";
                 return;
             }
-
             var template = buildResult.Template!;
-            await _templateStore.SaveAsync(template);
 
-            var readBack = await _templateStore.GetAsync(template.TemplateId);
-            if (readBack is null)
+            var ruleBuildResult = _draft.TryBuildRuleSet();
+            if (!ruleBuildResult.IsValid)
             {
-                StatusBarText.Text = "保存失败：回读返回 null。";
+                StatusBarText.Text = $"规则保存失败：{string.Join("；", ruleBuildResult.Errors)}";
                 return;
             }
-
-            var diff = CompareTemplates(template, readBack);
-            if (diff is not null)
-            {
-                StatusBarText.Text = $"保存验证失败：回读数据不一致 — {diff}。请重试。";
-                return;
-            }
+            var ruleSet = ruleBuildResult.RuleSet!;
 
             // 门禁：保存期间 Draft 未被修改
             if (_draft.TemplateId != template.TemplateId)
@@ -356,8 +388,22 @@ public partial class LayoutTemplateEditorWindow : Window
                 return;
             }
 
+            // 使用协调器保存
+            if (_ruleStoreReady)
+            {
+                var coordResult = await LayoutTemplateAndRulesSaveCoordinator.SaveAsync(
+                    _templateStore, _ruleStore, template, ruleSet);
+                StatusBarText.Text = coordResult.Message!;
+                if (!coordResult.IsSuccess) return;
+            }
+            else
+            {
+                // 规则 Store 不可用：仅保存模板
+                await _templateStore.SaveAsync(template);
+            }
+
             _draft.MarkSaved();
-            StatusBarText.Text = $"保存成功：{template.Name} (v{template.Version})。";
+            StatusBarText.Text = $"保存成功：{template.Name} (v{template.Version})，{ruleSet.RuleCount} 条规则。";
 
             try
             {
@@ -410,10 +456,12 @@ public partial class LayoutTemplateEditorWindow : Window
         {
             var deleted = await _templateStore.DeleteAsync(templateId);
             var check = await _templateStore.GetAsync(templateId);
+            var ruleCheck = _ruleStoreReady
+                ? await _ruleStore.GetAsync(templateId) : null;
 
-            if (check is not null)
+            if (check is not null || ruleCheck is not null)
             {
-                StatusBarText.Text = "删除验证失败：GetAsync 仍返回非 null。未切换草稿。";
+                StatusBarText.Text = $"删除验证失败：Template={check is not null}，Rules={ruleCheck is not null}。未切换草稿。";
                 return;
             }
 

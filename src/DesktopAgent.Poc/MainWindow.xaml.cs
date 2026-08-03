@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
     private readonly TargetDisplayLayoutExecutionCoordinator _layoutExecutionCoordinator;
     private readonly IDesktopLayoutTemplateStore _templateStore;
+    private readonly IDesktopLayoutIconRuleStore _ruleStore;
 
     private readonly ObservableCollection<DisplayRow> _displayRows = [];
     private IReadOnlyList<DisplayDescriptor> _cachedDisplays = Array.Empty<DisplayDescriptor>();
@@ -67,7 +69,8 @@ public partial class MainWindow : Window
         DesktopLayoutSnapshotFactory snapshotFactory,
         IDesktopLayoutSnapshotStore snapshotStore,
         TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator,
-        IDesktopLayoutTemplateStore templateStore)
+        IDesktopLayoutTemplateStore templateStore,
+        IDesktopLayoutIconRuleStore ruleStore)
     {
         InitializeComponent();
 
@@ -79,6 +82,7 @@ public partial class MainWindow : Window
         _snapshotStore = snapshotStore;
         _layoutExecutionCoordinator = layoutExecutionCoordinator;
         _templateStore = templateStore;
+        _ruleStore = ruleStore;
 
         DisplaysGrid.ItemsSource = _displayRows;
         IconsGrid.ItemsSource = _iconRows;
@@ -765,7 +769,7 @@ public partial class MainWindow : Window
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        var editor = new LayoutTemplateEditorWindow(_templateStore, knownDeviceNames)
+        var editor = new LayoutTemplateEditorWindow(_templateStore, _ruleStore, knownDeviceNames)
         {
             Owner = this
         };
@@ -783,6 +787,7 @@ public partial class MainWindow : Window
 
         var window = new LayoutTemplates.Preview.LayoutPreviewWindow(
             _templateStore,
+            _ruleStore,
             _displayTopologyReader,
             _desktopIconReader,
             _desktopIconPositionWriter,

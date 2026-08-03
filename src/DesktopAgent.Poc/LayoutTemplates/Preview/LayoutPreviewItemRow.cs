@@ -91,6 +91,45 @@ public sealed class LayoutPreviewItemRow
         _ => state.ToString()
     };
 
+    /// <summary>从规则感知预览项创建行。</summary>
+    public static LayoutPreviewItemRow FromRuleAware(DesktopLayoutRuleAwarePreviewItem item)
+    {
+        if (item is null) throw new ArgumentNullException(nameof(item));
+
+        string tx = "—", ty = "—", dx = "—", dy = "—";
+        string zn = "—", si = "—", ri = "—", ci = "—";
+
+        if (item.IsAssigned && item.TargetPosition.HasValue)
+        {
+            tx = item.TargetPosition.Value.X.ToString();
+            ty = item.TargetPosition.Value.Y.ToString();
+            dx = ((long)item.TargetPosition.Value.X - item.CurrentPosition.X).ToString();
+            dy = ((long)item.TargetPosition.Value.Y - item.CurrentPosition.Y).ToString();
+            zn = item.TargetZone?.Name ?? "—";
+            si = item.SlotIndex?.ToString() ?? "—";
+        }
+
+        var state = item.PlacementState switch
+        {
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed =>
+                DesktopLayoutPreviewItemState.AlreadyAtTarget,
+            DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget =>
+                DesktopLayoutPreviewItemState.AlreadyAtTarget,
+            DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired =>
+                DesktopLayoutPreviewItemState.MoveRequired,
+            _ => DesktopLayoutPreviewItemState.Unassigned,
+        };
+
+        return new LayoutPreviewItemRow(
+            item.Icon, item.Icon.Ordinal,
+            item.Icon.DisplayName,
+            Truncate(item.Icon.StableId, 60),
+            StateToString(state),
+            item.CurrentPosition.X, item.CurrentPosition.Y,
+            tx, ty, dx, dy, zn, si, ri, ci,
+            state);
+    }
+
     private static string Truncate(string v, int max) => v.Length <= max ? v : v[..(max - 3)] + "...";
 }
 
