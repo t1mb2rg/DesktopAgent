@@ -1,3 +1,5 @@
+using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using Microsoft.Data.Sqlite;
@@ -68,30 +70,31 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         return (long)cmd.ExecuteScalar()! > 0;
     }
 
-    // ═══ Fresh v0 → v2 ═══
+    // ═══ Fresh v0 → v3 ═══
 
     [Fact]
-    public void FreshV0_InitViaSnapshotStore_SetsUserVersion2()
+    public void FreshV0_InitViaSnapshotStore_SetsUserVersion3()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
     }
 
     [Fact]
-    public void FreshV0_InitViaTemplateStore_SetsUserVersion2()
+    public void FreshV0_InitViaTemplateStore_SetsUserVersion3()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
     }
 
     [Fact]
-    public void FreshV0_AllFourTablesExist()
+    public void FreshV0_AllFiveTablesExist()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
         Assert.True(TableExists("desktop_layout_snapshots"));
         Assert.True(TableExists("desktop_layout_snapshot_items"));
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
+        Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
     [Fact]
@@ -109,48 +112,48 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     {
         var s = new SqliteDesktopLayoutSnapshotStore(_dbPath);
         InitS(s); InitS(s); InitS(s);
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
     }
 
     // ═══ Init order ═══
 
     [Fact]
-    public void SnapshotThenTemplate_Version2()
+    public void SnapshotThenTemplate_Version3()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
     }
 
     [Fact]
-    public void TemplateThenSnapshot_Version2()
+    public void TemplateThenSnapshot_Version3()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
     }
 
-    // ═══ Single-store init reaches full v2 ═══
+    // ═══ Single-store init reaches full v3 ═══
 
     [Fact]
-    public void SnapshotOnly_ReachesV2()
+    public void SnapshotOnly_ReachesV3()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
     }
 
     [Fact]
-    public void TemplateOnly_ReachesV2()
+    public void TemplateOnly_ReachesV3()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_snapshots"));
         Assert.True(TableExists("desktop_layout_snapshot_items"));
     }
 
-    // ═══ v1 → v2 upgrade preserves snapshots ═══
+    // ═══ v1 → v3 upgrade preserves snapshots ═══
 
     [Fact]
     public void V1Upgrade_PreservesSnapshotParent()
@@ -252,7 +255,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.True(item.IsFileSystemItem);
     }
 
-    // ═══ v2 repairs missing tables ═══
+    // ═══ v3 repairs missing tables ═══
 
     [Fact]
     public void V2WithMissingTables_RepairsSchema()
@@ -272,7 +275,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
-        Assert.Equal(2, ReadUserVersion());
+        Assert.Equal(3, ReadUserVersion());
     }
 
     [Fact]
@@ -320,7 +323,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() =>
             InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath)));
         Assert.Contains("99", ex.Message);
-        Assert.Contains("2", ex.Message);
+        Assert.Contains("3", ex.Message);
         Assert.Equal(99, ReadUserVersion());
     }
 
@@ -374,5 +377,340 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             new SqliteDesktopLayoutSnapshotStore(_dbPath)
                 .InitializeAsync(cts.Token).GetAwaiter().GetResult());
         Assert.False(File.Exists(_dbPath));
+    }
+
+    // ═══════════════════════════ Schema v3 ═══════════════════════════
+
+    [Fact]
+    public void FreshV0_InitViaRuleStore_SetsUserVersion3()
+    {
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+        Assert.Equal(3, ReadUserVersion());
+        Assert.True(TableExists("desktop_layout_template_icon_rules"));
+    }
+
+    [Fact]
+    public void V1ToV3_PreservesSnapshotData()
+    {
+        using (var c = OpenRawConnection())
+        {
+            using var tx = c.BeginTransaction();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = @"
+                PRAGMA user_version = 1;
+                CREATE TABLE IF NOT EXISTS desktop_layout_snapshots (
+                    snapshot_id TEXT PRIMARY KEY NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    target_monitor_device_name TEXT NULL,
+                    connection_method INTEGER NOT NULL,
+                    format_version INTEGER NOT NULL CHECK(format_version > 0),
+                    icon_count INTEGER NOT NULL CHECK(icon_count >= 0)
+                );
+                INSERT INTO desktop_layout_snapshots VALUES
+                    ('00000000-0000-0000-0000-000000000011',
+                     '2026-07-15T12:00:00.0000000+00:00', 'DISPLAY1', 1, 1, 5);
+            ";
+            cmd.ExecuteNonQuery();
+            tx.Commit();
+        }
+
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(3, ReadUserVersion());
+        Assert.True(TableExists("desktop_layout_template_icon_rules"));
+
+        using var c2 = OpenRawConnection();
+        using var sel = c2.CreateCommand();
+        sel.CommandText = "SELECT icon_count FROM desktop_layout_snapshots WHERE snapshot_id = '00000000-0000-0000-0000-000000000011'";
+        Assert.Equal(5L, (long)sel.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public void V2ToV3_PreservesTemplateData()
+    {
+        using (var c = OpenRawConnection())
+        {
+            using var tx = c.BeginTransaction();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = @"
+                PRAGMA user_version = 2;
+                CREATE TABLE IF NOT EXISTS desktop_layout_templates (
+                    template_id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL, version INTEGER NOT NULL,
+                    target_display_binding_kind INTEGER NOT NULL,
+                    target_display_device_name TEXT NULL,
+                    zone_count INTEGER NOT NULL
+                );
+                INSERT INTO desktop_layout_templates VALUES
+                    ('00000000-0000-0000-0000-000000000021',
+                     'V2-Template', 1, 1, NULL, 2);
+                CREATE TABLE IF NOT EXISTS desktop_layout_template_zones (
+                    template_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+                    zone_id TEXT NOT NULL, name TEXT NOT NULL,
+                    left_value INTEGER NOT NULL, top_value INTEGER NOT NULL,
+                    right_value INTEGER NOT NULL, bottom_value INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL, placement_flow INTEGER NOT NULL,
+                    max_item_count INTEGER NULL,
+                    PRIMARY KEY (template_id, ordinal),
+                    FOREIGN KEY (template_id) REFERENCES desktop_layout_templates(template_id) ON DELETE CASCADE
+                );
+                INSERT INTO desktop_layout_template_zones VALUES
+                    ('00000000-0000-0000-0000-000000000021', 0,
+                     '00000000-0000-0000-0000-0000000000a1', 'Z0',
+                     0, 0, 5000, 10000, 0, 0, NULL);
+                INSERT INTO desktop_layout_template_zones VALUES
+                    ('00000000-0000-0000-0000-000000000021', 1,
+                     '00000000-0000-0000-0000-0000000000a2', 'Z1',
+                     5000, 0, 10000, 10000, 1, 0, NULL);
+            ";
+            cmd.ExecuteNonQuery();
+            tx.Commit();
+        }
+
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(3, ReadUserVersion());
+        Assert.True(TableExists("desktop_layout_template_icon_rules"));
+
+        using var c2 = OpenRawConnection();
+        using var sel = c2.CreateCommand();
+        sel.CommandText = "SELECT name, zone_count FROM desktop_layout_templates WHERE template_id = '00000000-0000-0000-0000-000000000021'";
+        using var r = sel.ExecuteReader();
+        Assert.True(r.Read());
+        Assert.Equal("V2-Template", r.GetString(0));
+        Assert.Equal(2, r.GetInt32(1));
+    }
+
+    [Fact]
+    public void V0ToV3_CreatesAllTables()
+    {
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "PRAGMA user_version = 0;";
+        cmd.ExecuteNonQuery();
+
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(3, ReadUserVersion());
+        Assert.True(TableExists("desktop_layout_snapshots"));
+        Assert.True(TableExists("desktop_layout_templates"));
+        Assert.True(TableExists("desktop_layout_template_icon_rules"));
+    }
+
+    [Fact]
+    public void V3RepeatedInit_Idempotent()
+    {
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+        store.InitializeAsync().GetAwaiter().GetResult();
+        store.InitializeAsync().GetAwaiter().GetResult();
+        Assert.Equal(3, ReadUserVersion());
+        Assert.True(TableExists("desktop_layout_template_icon_rules"));
+    }
+
+    [Fact]
+    public void RuleTable_HasCorrectPK()
+    {
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+            SELECT sql FROM sqlite_master
+            WHERE type='table' AND name='desktop_layout_template_icon_rules';
+        ";
+        var sql = (string)cmd.ExecuteScalar()!;
+        Assert.Contains("PRIMARY KEY", sql);
+        Assert.Contains("template_id", sql);
+        Assert.Contains("stable_id", sql);
+    }
+
+    [Fact]
+    public void RuleFK_CascadeOnTemplateDelete()
+    {
+        var tStore = new SqliteDesktopLayoutTemplateStore(_dbPath);
+        tStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var tid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(Guid.NewGuid(), "Z",
+            new NormalizedRect(0, 0, 10000, 10000), 0,
+            ZonePlacementFlow.ColumnMajor, null);
+        var template = new DesktopLayoutTemplate(tid, "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(), new[] { zone });
+        tStore.SaveAsync(template).GetAwaiter().GetResult();
+
+        var rStore = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        rStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var ruleSet = new DesktopLayoutIconRuleSet(tid,
+            new[] { DesktopLayoutIconRule.ForExclude("a") });
+        rStore.SaveAsync(ruleSet).GetAwaiter().GetResult();
+
+        // Delete template → rules cascade
+        tStore.DeleteAsync(tid).GetAwaiter().GetResult();
+        Assert.Null(rStore.GetAsync(tid).GetAwaiter().GetResult());
+    }
+
+    [Fact]
+    public void RuleKindCheck_RejectsInvalidValue()
+    {
+        var tStore = new SqliteDesktopLayoutTemplateStore(_dbPath);
+        tStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var tid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(Guid.NewGuid(), "Z",
+            new NormalizedRect(0, 0, 10000, 10000), 0,
+            ZonePlacementFlow.ColumnMajor, null);
+        tStore.SaveAsync(new DesktopLayoutTemplate(tid, "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(), new[] { zone }))
+            .GetAwaiter().GetResult();
+
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO desktop_layout_template_icon_rules
+                (template_id, stable_id, rule_kind, target_zone_id)
+            VALUES
+                (@tid, 'test', 99, NULL);
+        ";
+        cmd.Parameters.AddWithValue("@tid", tid.ToString("D"));
+        Assert.Throws<SqliteException>(() => cmd.ExecuteNonQuery());
+    }
+
+    [Fact]
+    public void RuleKindTargetZoneIdCheck_RejectsInvalidCombo()
+    {
+        var tStore = new SqliteDesktopLayoutTemplateStore(_dbPath);
+        tStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var tid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(Guid.NewGuid(), "Z",
+            new NormalizedRect(0, 0, 10000, 10000), 0,
+            ZonePlacementFlow.ColumnMajor, null);
+        tStore.SaveAsync(new DesktopLayoutTemplate(tid, "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(), new[] { zone }))
+            .GetAwaiter().GetResult();
+
+        // Exclude with target_zone_id → rejected
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO desktop_layout_template_icon_rules
+                (template_id, stable_id, rule_kind, target_zone_id)
+            VALUES
+                (@tid, 'ex', 0, @zid);
+        ";
+        cmd.Parameters.AddWithValue("@tid", tid.ToString("D"));
+        cmd.Parameters.AddWithValue("@zid", Guid.NewGuid().ToString("D"));
+        Assert.Throws<SqliteException>(() => cmd.ExecuteNonQuery());
+    }
+
+    [Fact]
+    public void CaseSensitiveStableId_Coexist()
+    {
+        var tStore = new SqliteDesktopLayoutTemplateStore(_dbPath);
+        tStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var tid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(Guid.NewGuid(), "Z",
+            new NormalizedRect(0, 0, 10000, 10000), 0,
+            ZonePlacementFlow.ColumnMajor, null);
+        tStore.SaveAsync(new DesktopLayoutTemplate(tid, "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(), new[] { zone }))
+            .GetAwaiter().GetResult();
+
+        var rStore = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        rStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var ruleSet = new DesktopLayoutIconRuleSet(tid,
+            new[] {
+                DesktopLayoutIconRule.ForExclude("Abc"),
+                DesktopLayoutIconRule.ForExclude("abc")
+            });
+        rStore.SaveAsync(ruleSet).GetAwaiter().GetResult();
+
+        var loaded = rStore.GetAsync(tid).GetAwaiter().GetResult();
+        Assert.Equal(2, loaded!.RuleCount);
+        Assert.Equal("Abc", loaded.Rules[0].StableId);
+        Assert.Equal("abc", loaded.Rules[1].StableId);
+    }
+
+    [Fact]
+    public void DuplicateStableId_PKRejected()
+    {
+        var tStore = new SqliteDesktopLayoutTemplateStore(_dbPath);
+        tStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var tid = Guid.NewGuid();
+        var zone = new DesktopLayoutZone(Guid.NewGuid(), "Z",
+            new NormalizedRect(0, 0, 10000, 10000), 0,
+            ZonePlacementFlow.ColumnMajor, null);
+        tStore.SaveAsync(new DesktopLayoutTemplate(tid, "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(), new[] { zone }))
+            .GetAwaiter().GetResult();
+
+        using var c = OpenRawConnection();
+        using var cmd1 = c.CreateCommand();
+        cmd1.CommandText = @"
+            INSERT INTO desktop_layout_template_icon_rules VALUES (@tid, 'dup', 0, NULL);
+        ";
+        cmd1.Parameters.AddWithValue("@tid", tid.ToString("D"));
+        cmd1.ExecuteNonQuery();
+
+        using var cmd2 = c.CreateCommand();
+        cmd2.CommandText = @"
+            INSERT INTO desktop_layout_template_icon_rules VALUES (@tid, 'dup', 1, NULL);
+        ";
+        cmd2.Parameters.AddWithValue("@tid", tid.ToString("D"));
+        Assert.Throws<SqliteException>(() => cmd2.ExecuteNonQuery());
+    }
+
+    [Fact]
+    public void DifferentTemplates_SameStableId_Allowed()
+    {
+        var tStore = new SqliteDesktopLayoutTemplateStore(_dbPath);
+        tStore.InitializeAsync().GetAwaiter().GetResult();
+
+        var tid1 = Guid.NewGuid();
+        var tid2 = Guid.NewGuid();
+        tStore.SaveAsync(new DesktopLayoutTemplate(tid1, "T1", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopLayoutZone(Guid.NewGuid(), "Z",
+                new NormalizedRect(0, 0, 10000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, null) }))
+            .GetAwaiter().GetResult();
+        tStore.SaveAsync(new DesktopLayoutTemplate(tid2, "T2", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopLayoutZone(Guid.NewGuid(), "Z",
+                new NormalizedRect(0, 0, 10000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, null) }))
+            .GetAwaiter().GetResult();
+
+        var rStore = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        rStore.InitializeAsync().GetAwaiter().GetResult();
+
+        rStore.SaveAsync(new DesktopLayoutIconRuleSet(tid1,
+            new[] { DesktopLayoutIconRule.ForExclude("same") }))
+            .GetAwaiter().GetResult();
+        rStore.SaveAsync(new DesktopLayoutIconRuleSet(tid2,
+            new[] { DesktopLayoutIconRule.ForExclude("same") }))
+            .GetAwaiter().GetResult();
+
+        Assert.Single(rStore.GetAsync(tid1).GetAwaiter().GetResult()!.Rules);
+        Assert.Single(rStore.GetAsync(tid2).GetAwaiter().GetResult()!.Rules);
     }
 }
