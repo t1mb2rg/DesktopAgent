@@ -8,7 +8,7 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 2;
+    internal const int CurrentVersion = 3;
 
     /// <summary>
     /// 初始化或升级数据库。幂等。始终在事务内确保所有表和索引存在。
@@ -38,6 +38,9 @@ internal static class SqliteDesktopAgentSchema
 
             // 确保 v2 Schema
             EnsureV2Schema(connection, tx);
+
+            // 确保 v3 Schema
+            EnsureV3Schema(connection, tx);
 
             // 更新版本标记
             if (version < CurrentVersion)
@@ -143,6 +146,39 @@ internal static class SqliteDesktopAgentSchema
 
             CREATE INDEX IF NOT EXISTS idx_templates_name_id_asc
                 ON desktop_layout_templates (name COLLATE BINARY ASC, template_id ASC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV3Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        // DesktopLayoutIconRuleKind enum values:
+        //   Exclude = 0, Pin = 1, ZoneOverride = 2
+        // CHECK 约束使用枚举整数值，保证数据库只接受合法 Kind。
+        // Exclude(0) / Pin(1) 时 target_zone_id 必须为 NULL。
+        // ZoneOverride(2) 时 target_zone_id 必须非 NULL。
+        // stable_id 不允许空字符串。
+        // 不做 TRIM 检查 — StableId 语义明确不 Trim。
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS desktop_layout_template_icon_rules (
+                template_id     TEXT NOT NULL,
+                stable_id       TEXT NOT NULL,
+                rule_kind       INTEGER NOT NULL
+                    CHECK(rule_kind IN (0, 1, 2)),
+                target_zone_id  TEXT NULL,
+                PRIMARY KEY (template_id, stable_id),
+                FOREIGN KEY (template_id)
+                    REFERENCES desktop_layout_templates(template_id)
+                    ON DELETE CASCADE,
+                CHECK(
+                    (rule_kind IN (0, 1) AND target_zone_id IS NULL)
+                    OR
+                    (rule_kind = 2 AND target_zone_id IS NOT NULL)
+                ),
+                CHECK(stable_id != '')
+            );
         ";
         cmd.ExecuteNonQuery();
     }
