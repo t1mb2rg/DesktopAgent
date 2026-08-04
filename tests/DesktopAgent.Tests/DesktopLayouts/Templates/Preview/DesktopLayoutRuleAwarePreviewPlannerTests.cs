@@ -46,7 +46,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerTests
         Assert.Equal(2, plan.DefaultAssignedCount);
         Assert.Equal(0, plan.DefaultUnassignedCount);
 
-        // Compare with old planner
+        // Compare with old planner — per-item
         var factory = new DesktopLayoutSnapshotFactory();
         var descriptors = icons.Select(icon => new DesktopIconDescriptor(
             icon.StableId, icon.DisplayName, null, ItemKind.File,
@@ -57,6 +57,22 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerTests
             template, new[] { _dd }, null, _spacing, snapshot.Icons);
         Assert.Equal(oldPlan.AssignedCount, plan.DefaultAssignedCount);
         Assert.Equal(oldPlan.UnassignedCount, plan.DefaultUnassignedCount);
+
+        // Per-item comparison: StableId, SlotIndex, TargetPosition, TargetCellBounds
+        for (int i = 0; i < plan.Items.Count; i++)
+        {
+            var newItem = plan.Items[i];
+            var oldItem = oldPlan.Items[i];
+            Assert.Equal(oldItem.Icon.StableId, newItem.Icon.StableId);
+            Assert.Equal(oldItem.Icon.Ordinal, newItem.Icon.Ordinal);
+            if (oldItem.IsAssigned && newItem.IsAssigned)
+            {
+                Assert.Equal(oldItem.Placement!.SlotIndex, newItem.SlotIndex!.Value);
+                Assert.Equal(oldItem.TargetPosition!.Value, newItem.TargetPosition!.Value);
+                Assert.Equal(oldItem.Placement.TargetCellBounds, newItem.TargetCellBounds!);
+                Assert.Equal(oldItem.Placement.Zone.Zone.ZoneId, newItem.ZoneId!.Value);
+            }
+        }
     }
 
     [Fact] public void Exclude_GeneratesFixedItem()

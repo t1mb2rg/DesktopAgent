@@ -129,15 +129,7 @@ public sealed class LayoutPreviewItemRow
             _ => DesktopLayoutPreviewItemState.Unassigned,
         };
 
-        var dispositionText = item.Disposition switch
-        {
-            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded => "Excluded",
-            DesktopLayoutRuleAwarePreviewItemDisposition.Pinned => "Pinned",
-            DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride => "Override",
-            DesktopLayoutRuleAwarePreviewItemDisposition.Default => "Default",
-            _ => item.Disposition.ToString()
-        };
-
+        // PlacementStateText: the canonical user-visible placement text
         var placementText = item.PlacementState switch
         {
             DesktopLayoutRuleAwarePreviewPlacementState.Fixed => "Fixed",
@@ -145,6 +137,15 @@ public sealed class LayoutPreviewItemRow
             DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired => "需移动",
             DesktopLayoutRuleAwarePreviewPlacementState.Unassigned => "未分配",
             _ => item.PlacementState.ToString()
+        };
+
+        var dispositionText = item.Disposition switch
+        {
+            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded => "Excluded",
+            DesktopLayoutRuleAwarePreviewItemDisposition.Pinned => "Pinned",
+            DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride => "Override",
+            DesktopLayoutRuleAwarePreviewItemDisposition.Default => "Default",
+            _ => item.Disposition.ToString()
         };
 
         var ruleText = item.Rule?.Kind switch
@@ -159,7 +160,7 @@ public sealed class LayoutPreviewItemRow
             item.Icon, item.Icon.Ordinal,
             item.Icon.DisplayName,
             Truncate(item.Icon.StableId, 60),
-            StateToString(state),
+            placementText, // StateText shows canonical placement (Fixed/已就位/需移动/未分配)
             item.CurrentPosition.X, item.CurrentPosition.Y,
             tx, ty, dx, dy, zn, si, ri, ci,
             state,

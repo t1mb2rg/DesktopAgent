@@ -237,10 +237,17 @@ public static class LayoutTemplateAndRulesSaveCoordinator
                         ct);
                     if (verifyError is not null)
                     {
+                        // 判断是模板还是规则不一致
+                        var tCheck2 = await templateStore.GetAsync(templateId, ct);
+                        var rCheck2 = await ruleStore.GetAsync(templateId, ct);
+                        bool tOk = tCheck2 is not null && tCheck2.TemplateId == previousTemplate.TemplateId;
+                        bool rOk = rCheck2 is not null && rCheck2.TemplateId == previousTemplate.TemplateId;
                         return result with
                         {
-                            TemplateCompensationOk = false,
-                            TemplateCompensationError = $"补偿后回读验证失败：{verifyError}"
+                            TemplateCompensationOk = tOk,
+                            TemplateCompensationError = tOk ? null : $"补偿后模板回读不一致：{verifyError}",
+                            RuleCompensationOk = rOk,
+                            RuleCompensationError = rOk ? null : $"补偿后规则回读不一致：{verifyError}"
                         };
                     }
                 }
@@ -308,6 +315,8 @@ public static class LayoutTemplateAndRulesSaveCoordinator
 
         var loadedRules = await ruleStore.GetAsync(templateId, ct);
         if (loadedRules is null) return "回读 RuleSet 为 null。";
+        if (loadedRules.TemplateId != expectedRuleSet.TemplateId)
+            return $"回读 RuleSet.TemplateId 不一致：{expectedRuleSet.TemplateId:D} vs {loadedRules.TemplateId:D}。";
         if (loadedRules.RuleCount != expectedRuleSet.RuleCount)
             return $"回读 RuleCount 不一致：{expectedRuleSet.RuleCount} vs {loadedRules.RuleCount}。";
         for (var i = 0; i < loadedRules.RuleCount; i++)

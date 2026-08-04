@@ -59,6 +59,23 @@ public partial class LayoutTemplateEditorWindow : Window
         BindDraft();
 
         Loaded += OnLoaded;
+
+        // 初始化 Kind 下拉框选项
+        RuleKindCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "Exclude",
+            Tag = DesktopLayoutIconRuleKind.Exclude
+        });
+        RuleKindCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "Pin",
+            Tag = DesktopLayoutIconRuleKind.Pin
+        });
+        RuleKindCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "ZoneOverride",
+            Tag = DesktopLayoutIconRuleKind.ZoneOverride
+        });
     }
 
     // ═══ 初始化 ═══
@@ -152,6 +169,7 @@ public partial class LayoutTemplateEditorWindow : Window
 
         UpdateTitle();
         RebuildCanvas();
+        UpdateRuleStats();
     }
 
     private void UnbindDraft()
@@ -172,12 +190,41 @@ public partial class LayoutTemplateEditorWindow : Window
     private void AddRule_Click(object sender, RoutedEventArgs e)
     {
         _draft.Rules.Add(LayoutIconRuleEditorDraft.CreateNew());
+        UpdateRuleStats();
     }
 
     private void RemoveRule_Click(object sender, RoutedEventArgs e)
     {
         if (RulesGrid.SelectedItem is LayoutIconRuleEditorDraft selected)
             _draft.Rules.Remove(selected);
+        UpdateRuleStats();
+    }
+
+    private void RulesGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        var hasSelection = RulesGrid.SelectedItem is LayoutIconRuleEditorDraft;
+        SelectedRulePanel.IsEnabled = hasSelection;
+        if (hasSelection)
+        {
+            var rule = (LayoutIconRuleEditorDraft)RulesGrid.SelectedItem;
+            RuleTargetZoneCombo.IsEnabled = rule.IsZoneOverride;
+        }
+    }
+
+    private void UpdateRuleStats()
+    {
+        var rules = _draft.Rules;
+        int ex = 0, pin = 0, ovr = 0;
+        foreach (var r in rules)
+        {
+            switch (r.Kind)
+            {
+                case Core.DesktopLayouts.Templates.Rules.DesktopLayoutIconRuleKind.Exclude: ex++; break;
+                case Core.DesktopLayouts.Templates.Rules.DesktopLayoutIconRuleKind.Pin: pin++; break;
+                case Core.DesktopLayouts.Templates.Rules.DesktopLayoutIconRuleKind.ZoneOverride: ovr++; break;
+            }
+        }
+        RuleStatsText.Text = $"总数: {rules.Count}   Exclude: {ex}   Pin: {pin}   ZoneOverride: {ovr}";
     }
 
     private void OnDraftPropertyChanged(object? sender, PropertyChangedEventArgs e)

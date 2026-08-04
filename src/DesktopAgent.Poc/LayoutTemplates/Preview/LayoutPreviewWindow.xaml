@@ -66,8 +66,13 @@
             <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <GroupBox Header="汇总" Padding="4" Margin="0,0,0,6">
-                        <TextBlock x:Name="SummaryText" FontSize="12" FontFamily="Consolas"
-                                   TextWrapping="Wrap" Text="无有效预览。" />
+                        <StackPanel>
+                            <TextBlock x:Name="SummaryText" FontSize="12" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Text="无有效预览。" />
+                            <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="#555"
+                                Text="图例 — Excluded: 固定 | Pinned: 占位障碍 | ZoneOverride: 优先进入指定Zone | Default: 剩余槽位"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
                     </GroupBox>
 
                     <GroupBox Header="读取诊断" Padding="4" Margin="0,0,0,6">

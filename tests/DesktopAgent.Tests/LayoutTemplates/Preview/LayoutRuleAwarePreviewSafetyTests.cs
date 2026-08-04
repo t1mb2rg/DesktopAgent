@@ -1,6 +1,7 @@
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Geometry;
+using DesktopAgent.Poc.LayoutTemplates.Preview;
 
 namespace DesktopAgent.Tests.LayoutTemplates.Preview;
 
@@ -119,5 +120,57 @@ public sealed class LayoutRuleAwarePreviewSafetyTests
                 DesktopLayoutRuleAwarePreviewPlacementState.Fixed,
                 new PixelPoint(0, 0), null, null, null, null,
                 new PixelRect(0, 0, 80, 80), null));
+    }
+
+    [Fact] public void Fixed_StateText_IsFixed_NotAlreadyAtTarget()
+    {
+        var icon = new DesktopAgent.Core.DesktopLayouts.DesktopIconSnapshotItem(
+            0, "a", "N", null, DesktopAgent.Core.DesktopIcons.ItemKind.File,
+            new PixelPoint(0, 0), "D1", false, true);
+        var rule = DesktopLayoutIconRule.ForExclude("a");
+        var item = new DesktopLayoutRuleAwarePreviewItem(
+            icon, rule,
+            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded,
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed,
+            new PixelPoint(0, 0), null, null, null, null,
+            new PixelRect(0, 0, 80, 80), null);
+        var row = DesktopAgent.Poc.LayoutTemplates.Preview.LayoutPreviewItemRow.FromRuleAware(item);
+        Assert.Equal("Fixed", row.PlacementStateText);
+        Assert.Equal("Excluded", row.DispositionText);
+        Assert.NotEqual("已就位", row.PlacementStateText); // Fixed must not show as 已就位
+    }
+
+    [Fact] public void DispositionTexts_Correct()
+    {
+        var icon = new DesktopAgent.Core.DesktopLayouts.DesktopIconSnapshotItem(
+            0, "a", "N", null, DesktopAgent.Core.DesktopIcons.ItemKind.File,
+            new PixelPoint(0, 0), "D1", false, true);
+        // Excluded
+        var ei = new DesktopLayoutRuleAwarePreviewItem(icon, DesktopLayoutIconRule.ForExclude("a"),
+            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded,
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed,
+            new PixelPoint(0, 0), null, null, null, null,
+            new PixelRect(0, 0, 80, 80), null);
+        Assert.Equal("Excluded", LayoutPreviewItemRow.FromRuleAware(ei).DispositionText);
+        // Pinned
+        var pi = new DesktopLayoutRuleAwarePreviewItem(icon, DesktopLayoutIconRule.ForPin("a"),
+            DesktopLayoutRuleAwarePreviewItemDisposition.Pinned,
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed,
+            new PixelPoint(0, 0), null, null, null, null,
+            new PixelRect(0, 0, 80, 80), null);
+        Assert.Equal("Pinned", LayoutPreviewItemRow.FromRuleAware(pi).DispositionText);
+    }
+
+    [Fact] public void PlacementStateTexts_Correct()
+    {
+        var icon = new DesktopAgent.Core.DesktopLayouts.DesktopIconSnapshotItem(
+            0, "a", "N", null, DesktopAgent.Core.DesktopIcons.ItemKind.File,
+            new PixelPoint(0, 0), "D1", false, true);
+        var fi = new DesktopLayoutRuleAwarePreviewItem(icon, DesktopLayoutIconRule.ForExclude("a"),
+            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded,
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed,
+            new PixelPoint(0, 0), null, null, null, null,
+            new PixelRect(0, 0, 80, 80), null);
+        Assert.Equal("Fixed", LayoutPreviewItemRow.FromRuleAware(fi).PlacementStateText);
     }
 }

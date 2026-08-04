@@ -197,28 +197,128 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         IReadOnlyList<DesktopIconSnapshotItem> outOfScopeIcons,
         IReadOnlyList<DesktopLayoutRuleAwarePreviewItem> items)
     {
-        Template = template;
-        TargetDisplay = targetDisplay;
-        ResolvedTemplate = resolvedTemplate;
-        ResolutionPlan = resolutionPlan;
-        PlacementPlan = placementPlan;
+        if (template is null) throw new ArgumentNullException(nameof(template));
+        if (targetDisplay is null) throw new ArgumentNullException(nameof(targetDisplay));
+        if (resolvedTemplate is null) throw new ArgumentNullException(nameof(resolvedTemplate));
+        if (resolutionPlan is null) throw new ArgumentNullException(nameof(resolutionPlan));
+        if (placementPlan is null) throw new ArgumentNullException(nameof(placementPlan));
+        if (inputIcons is null) throw new ArgumentNullException(nameof(inputIcons));
+        if (targetDisplayIcons is null) throw new ArgumentNullException(nameof(targetDisplayIcons));
+        if (outOfScopeIcons is null) throw new ArgumentNullException(nameof(outOfScopeIcons));
+        if (items is null) throw new ArgumentNullException(nameof(items));
 
+        // 引用链一致性
+        if (!ReferenceEquals(resolvedTemplate.Template, template))
+            throw new ArgumentException("ResolvedTemplate.Template 与 template 不是同一实例。");
+        if (!ReferenceEquals(resolutionPlan.Template, template))
+            throw new ArgumentException("ResolutionPlan.Template 与 template 不是同一实例。");
+        if (!ReferenceEquals(placementPlan.ResolvedTemplate, resolvedTemplate))
+            throw new ArgumentException("PlacementPlan.ResolvedTemplate 与 resolvedTemplate 不是同一实例。");
+        if (!ReferenceEquals(placementPlan.ResolutionPlan, resolutionPlan))
+            throw new ArgumentException("PlacementPlan.ResolutionPlan 与 resolutionPlan 不是同一实例。");
+
+        // 输入集合验证 + 防御性复制
+        var inputList = inputIcons.ToList();
+        var targetList = targetDisplayIcons.ToList();
+        var oosList = outOfScopeIcons.ToList();
         var itemsList = items.ToList();
-        InputIcons = inputIcons.ToList().AsReadOnly();
-        TargetDisplayIcons = targetDisplayIcons.ToList().AsReadOnly();
-        OutOfScopeIcons = outOfScopeIcons.ToList().AsReadOnly();
-        Items = itemsList.AsReadOnly();
 
-        InputIconCount = InputIcons.Count;
-        TargetDisplayIconCount = TargetDisplayIcons.Count;
-        OutOfScopeIconCount = OutOfScopeIcons.Count;
-        ExcludedCount = placementPlan.ExcludedCount;
-        PinnedCount = placementPlan.PinnedCount;
-        OverrideAssignedCount = placementPlan.OverrideAssignedCount;
-        OverrideUnassignedCount = placementPlan.OverrideUnassignedCount;
-        DefaultAssignedCount = placementPlan.DefaultAssignedCount;
-        DefaultUnassignedCount = placementPlan.DefaultUnassignedCount;
+        // InputIcons: 无 null, Ordinal ASC 唯一, StableId 唯一
+        var inputRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
+        var inputOrdinals = new HashSet<int>();
+        var inputSids = new HashSet<string>(StringComparer.Ordinal);
+        int? prev = null;
+        for (var i = 0; i < inputList.Count; i++)
+        {
+            if (inputList[i] is null)
+                throw new ArgumentException($"InputIcons[{i}] 为 null。");
+            if (!inputRefs.Add(inputList[i]))
+                throw new ArgumentException($"InputIcons 图标重复。");
+            if (!inputOrdinals.Add(inputList[i].Ordinal))
+                throw new ArgumentException($"InputIcons Ordinal {inputList[i].Ordinal} 重复。");
+            if (!inputSids.Add(inputList[i].StableId))
+                throw new ArgumentException($"InputIcons StableId \"{inputList[i].StableId}\" 重复。");
+            if (prev.HasValue && inputList[i].Ordinal <= prev.Value)
+                throw new ArgumentException("InputIcons 未按 Ordinal ASC。");
+            prev = inputList[i].Ordinal;
+        }
 
+        // Target + OOS: 原引用、无重叠、完整覆盖
+        var targetRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
+        var oosRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < targetList.Count; i++)
+        {
+            if (targetList[i] is null)
+                throw new ArgumentException($"TargetDisplayIcons[{i}] 为 null。");
+            if (!inputRefs.Contains(targetList[i]))
+                throw new ArgumentException($"TargetDisplayIcons[{i}] 不在 InputIcons 中。");
+            if (!targetRefs.Add(targetList[i]))
+                throw new ArgumentException("TargetDisplayIcons 重复。");
+        }
+        for (var i = 0; i < oosList.Count; i++)
+        {
+            if (oosList[i] is null)
+                throw new ArgumentException($"OutOfScopeIcons[{i}] 为 null。");
+            if (!inputRefs.Contains(oosList[i]))
+                throw new ArgumentException($"OutOfScopeIcons[{i}] 不在 InputIcons 中。");
+            if (!oosRefs.Add(oosList[i]))
+                throw new ArgumentException("OutOfScopeIcons 重复。");
+        }
+        foreach (var t in targetRefs)
+            if (oosRefs.Contains(t))
+                throw new ArgumentException("Target 与 OOS 重叠。");
+        if (targetRefs.Count + oosRefs.Count != inputRefs.Count)
+            throw new ArgumentException("Target+OOS 未完整覆盖 InputIcons。");
+
+        // Items 与 TargetDisplayIcons 一一对应
+        if (itemsList.Count != targetList.Count)
+            throw new ArgumentException($"Items 数量 ({itemsList.Count}) ≠ TargetDisplayIcons ({targetList.Count})。");
+        var itemIconRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < itemsList.Count; i++)
+        {
+            if (itemsList[i] is null)
+                throw new ArgumentException($"Items[{i}] 为 null。");
+            if (!ReferenceEquals(itemsList[i].Icon, targetList[i]))
+                throw new ArgumentException($"Items[{i}].Icon 与 TargetDisplayIcons[{i}] 不是同一实例。");
+            if (!itemIconRefs.Add(itemsList[i].Icon))
+                throw new ArgumentException($"Items 中 Icon 重复。");
+        }
+
+        // 分类计数与 PlacementPlan 一致
+        int excluded = 0, pinned = 0, ovrAssigned = 0, ovrUnassigned = 0,
+            defAssigned = 0, defUnassigned = 0;
+        foreach (var item in itemsList)
+        {
+            switch (item.Disposition)
+            {
+                case DesktopLayoutRuleAwarePreviewItemDisposition.Excluded: excluded++; break;
+                case DesktopLayoutRuleAwarePreviewItemDisposition.Pinned: pinned++; break;
+                case DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride:
+                    if (item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.Unassigned)
+                        ovrUnassigned++;
+                    else ovrAssigned++;
+                    break;
+                case DesktopLayoutRuleAwarePreviewItemDisposition.Default:
+                    if (item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.Unassigned)
+                        defUnassigned++;
+                    else defAssigned++;
+                    break;
+            }
+        }
+        if (excluded != placementPlan.ExcludedCount)
+            throw new ArgumentException($"ExcludedCount 不一致：{excluded} vs {placementPlan.ExcludedCount}。");
+        if (pinned != placementPlan.PinnedCount)
+            throw new ArgumentException($"PinnedCount 不一致：{pinned} vs {placementPlan.PinnedCount}。");
+        if (ovrAssigned != placementPlan.OverrideAssignedCount)
+            throw new ArgumentException("OverrideAssignedCount 不一致。");
+        if (ovrUnassigned != placementPlan.OverrideUnassignedCount)
+            throw new ArgumentException("OverrideUnassignedCount 不一致。");
+        if (defAssigned != placementPlan.DefaultAssignedCount)
+            throw new ArgumentException("DefaultAssignedCount 不一致。");
+        if (defUnassigned != placementPlan.DefaultUnassignedCount)
+            throw new ArgumentException("DefaultUnassignedCount 不一致。");
+
+        // 统计
         int atTarget = 0, moveReq = 0;
         foreach (var item in itemsList)
         {
@@ -227,6 +327,25 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             else if (item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired)
                 moveReq++;
         }
+
+        Template = template;
+        TargetDisplay = targetDisplay;
+        ResolvedTemplate = resolvedTemplate;
+        ResolutionPlan = resolutionPlan;
+        PlacementPlan = placementPlan;
+        InputIcons = inputList.AsReadOnly();
+        TargetDisplayIcons = targetList.AsReadOnly();
+        OutOfScopeIcons = oosList.AsReadOnly();
+        Items = itemsList.AsReadOnly();
+        InputIconCount = inputList.Count;
+        TargetDisplayIconCount = targetList.Count;
+        OutOfScopeIconCount = oosList.Count;
+        ExcludedCount = excluded;
+        PinnedCount = pinned;
+        OverrideAssignedCount = ovrAssigned;
+        OverrideUnassignedCount = ovrUnassigned;
+        DefaultAssignedCount = defAssigned;
+        DefaultUnassignedCount = defUnassigned;
         AlreadyAtTargetCount = atTarget;
         MoveRequiredCount = moveReq;
         IsComplete = placementPlan.IsComplete;

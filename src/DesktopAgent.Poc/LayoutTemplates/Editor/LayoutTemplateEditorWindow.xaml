@@ -201,10 +201,8 @@
 
                         <!-- 统计 -->
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
-                            <TextBlock FontSize="11" Foreground="Gray">
-                                <Run Text="总数:" /><Run Text="{Binding Rules.Count, Mode=OneWay}" />
-                                <Run Text="  Ex:" FontWeight="SemiBold" />
-                            </TextBlock>
+                            <TextBlock x:Name="RuleStatsText" FontSize="11" Foreground="Gray"
+                                Text="RuleStats" />
                         </StackPanel>
 
                         <!-- 操作按钮 -->
@@ -215,22 +213,49 @@
                                     Margin="6,0,0,0" Click="RemoveRule_Click" />
                         </StackPanel>
 
-                        <!-- 规则 DataGrid -->
-                        <DataGrid x:Name="RulesGrid" Grid.Row="2" AutoGenerateColumns="False"
-                                  CanUserAddRows="False" RowHeight="22" MaxHeight="220"
-                                  ItemsSource="{Binding Rules}">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="StableId" Width="140"
-                                    Binding="{Binding StableId, UpdateSourceTrigger=LostFocus}" />
-                                <DataGridTextColumn Header="Kind" Width="80"
-                                    Binding="{Binding Kind, Mode=OneWay}" />
-                                <DataGridTextColumn Header="TargetZoneId" Width="300"
-                                    Binding="{Binding TargetZoneId, Mode=OneWay}" />
-                            </DataGrid.Columns>
-                        </DataGrid>
+                        <!-- 规则 DataGrid + 编辑面板 -->
+                        <Grid Grid.Row="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <DataGrid x:Name="RulesGrid" Grid.Row="0" AutoGenerateColumns="False"
+                                      CanUserAddRows="False" RowHeight="22" MaxHeight="160"
+                                      ItemsSource="{Binding Rules}"
+                                      SelectionChanged="RulesGrid_SelectionChanged">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="StableId" Width="130"
+                                        Binding="{Binding StableId, Mode=OneWay}" />
+                                    <DataGridTextColumn Header="Kind" Width="75"
+                                        Binding="{Binding Kind, Mode=OneWay}" />
+                                    <DataGridTextColumn Header="Target Zone" Width="*"
+                                        Binding="{Binding TargetZoneId, Mode=OneWay}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <!-- 选中规则编辑面板 -->
+                            <GroupBox Grid.Row="1" Header="编辑选中规则" Padding="4" Margin="0,6,0,0">
+                                <StackPanel x:Name="SelectedRulePanel" IsEnabled="False">
+                                    <TextBlock Text="StableId" FontSize="11" Foreground="Gray" />
+                                    <TextBox x:Name="RuleStableIdText" Margin="0,0,0,4"
+                                             Text="{Binding ElementName=RulesGrid, Path=SelectedItem.StableId, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="Kind" FontSize="11" Foreground="Gray" />
+                                    <ComboBox x:Name="RuleKindCombo" Margin="0,0,0,4"
+                                              SelectedValue="{Binding ElementName=RulesGrid, Path=SelectedItem.Kind, UpdateSourceTrigger=PropertyChanged}"
+                                              SelectedValuePath="Tag" />
+                                    <TextBlock Text="Target Zone" FontSize="11" Foreground="Gray" />
+                                    <ComboBox x:Name="RuleTargetZoneCombo" Margin="0,0,0,4"
+                                              DisplayMemberPath="Name"
+                                              SelectedValuePath="ZoneId"
+                                              ItemsSource="{Binding Zones}"
+                                              SelectedValue="{Binding ElementName=RulesGrid, Path=SelectedItem.TargetZoneId, UpdateSourceTrigger=PropertyChanged}" />
+                                </StackPanel>
+                            </GroupBox>
+                        </Grid>
 
                         <TextBlock Grid.Row="3" Margin="0,4,0,0" FontSize="10" Foreground="Gray"
-                            Text="StableId 不 Trim。双击编辑 StableId 后 Enter 提交。ZoneOverride 必须选择 Target Zone。" TextWrapping="Wrap" />
+                            Text="StableId 不 Trim。ZoneOverride 必须选择 Target Zone。" TextWrapping="Wrap" />
                     </Grid>
                 </TabItem>
             </TabControl>
