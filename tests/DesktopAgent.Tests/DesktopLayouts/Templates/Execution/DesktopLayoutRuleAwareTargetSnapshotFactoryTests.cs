@@ -118,4 +118,24 @@ public sealed class DesktopLayoutRuleAwareTargetSnapshotFactoryTests
             DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
                 plan, Read(icons), new DesktopLayoutSnapshotFactory()));
     }
+
+    [Fact] public void OverrideUnassigned_Throws()
+    {
+        var zid2 = Guid.NewGuid();
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopLayoutZone(zid2, "Z",
+                new NormalizedRect(0, 0, 5000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, 1) });
+        var ruleSet = new DesktopLayoutIconRuleSet(template.TemplateId,
+            new[] { DesktopLayoutIconRule.ForZoneOverride("a", zid2),
+                    DesktopLayoutIconRule.ForZoneOverride("b", zid2) });
+        var icons = new[] { I(0, "a"), I(1, "b") };
+        var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, ruleSet, new[] { _dd }, null, _spacing, icons);
+        Assert.False(plan.IsComplete);
+        Assert.Throws<ArgumentException>(() =>
+            DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
+                plan, Read(icons), new DesktopLayoutSnapshotFactory()));
+    }
 }

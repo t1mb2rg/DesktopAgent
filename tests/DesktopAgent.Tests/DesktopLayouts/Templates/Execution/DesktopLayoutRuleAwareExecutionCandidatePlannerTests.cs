@@ -195,6 +195,48 @@ public sealed class DesktopLayoutRuleAwareExecutionCandidatePlannerTests
         Assert.Equal(plan.TargetDisplay.DeviceName, c.TargetDeviceName);
     }
 
+    // ═══ Single-icon MoveRequired ═══
+    [Fact] public void SingleIcon_MoveRequired_Executable()
+    {
+        var icons = new[] { I(0, "a", pos: new PixelPoint(80, 0)) };
+        var plan = MakePreviewPlan(icons);
+        var read = MakeReadResult(icons);
+        var r = DesktopLayoutRuleAwareExecutionCandidatePlanner.Build(
+            plan, read, new[] { _dd },
+            new DesktopIconPositioningCapabilities(false, _spacing, ConnectionMethod.FindWindowSW, null),
+            new DesktopLayoutSnapshotFactory());
+        Assert.True(r.IsSuccess);
+        Assert.NotNull(r.Candidate);
+        Assert.True(r.Candidate!.IsExecutable);
+        Assert.True(r.Candidate.RequiresUserConfirmation);
+    }
+
+    // ═══ Two-icon swap with staging ═══
+    [Fact] public void TwoIconSwap_HasStaging_StillExecutable()
+    {
+        // Place two icons at each other's target positions → requires staging
+        var pos0 = new PixelPoint(0, 0);
+        var pos1 = new PixelPoint(80, 0);
+        var icons = new[] { I(0, "a", pos: pos1), I(1, "b", pos: pos0) };
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopLayoutZone(Guid.NewGuid(), "Z",
+                new NormalizedRect(0, 0, 10000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, null) });
+        var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, DesktopLayoutIconRuleSet.Empty(template.TemplateId),
+            new[] { _dd }, null, _spacing, icons);
+        var read = MakeReadResult(icons);
+        var r = DesktopLayoutRuleAwareExecutionCandidatePlanner.Build(
+            plan, read, new[] { _dd },
+            new DesktopIconPositioningCapabilities(false, _spacing, ConnectionMethod.FindWindowSW, null),
+            new DesktopLayoutSnapshotFactory());
+        Assert.True(r.IsSuccess);
+        Assert.NotNull(r.Candidate);
+        // Even with staging, this is now considered executable
+        Assert.True(r.Candidate!.IsExecutable);
+    }
+
     // ═══ Safety ═══
     [Fact] public void NullInputs_Throws()
     {

@@ -34,11 +34,13 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
             switch (item.PlacementState)
             {
                 case DesktopLayoutRuleAwarePreviewPlacementState.Fixed:
-                case DesktopLayoutRuleAwarePreviewPlacementState.Unassigned:
-                    // Excluded/Pinned: keep CurrentPosition on target display
                     targetPos = item.CurrentPosition;
                     mon = targetDeviceName;
                     break;
+
+                case DesktopLayoutRuleAwarePreviewPlacementState.Unassigned:
+                    throw new InvalidOperationException(
+                        $"Unassigned 图标 \"{icon.StableId}\" 不能出现在目标快照中。");
 
                 case DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget:
                 case DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired:

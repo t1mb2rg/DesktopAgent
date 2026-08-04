@@ -37,7 +37,7 @@ M1 的 `TargetDisplayLayoutRestorePlanner` 和 `TargetDisplayLayoutExecutionPlan
 
 - `Success`：Candidate 成功生成
 - `Rejected`：包含具体 Issues，不创建部分 Candidate
-- 16 种 IssueCode
+- 15 种 IssueCode
 
 ## Candidate 模型
 
@@ -52,8 +52,8 @@ M1 的 `TargetDisplayLayoutRestorePlanner` 和 `TargetDisplayLayoutExecutionPlan
 
 ## 测试数量
 
-- 新增：18 个（CandidatePlanner 12 + TargetSnapshot 5 + Safety 1）
-- 全量：1173/1173 通过
+- 新增：21 个（CandidatePlanner 14 + TargetSnapshot 6 + Safety 1）
+- 全量：1176/1176 通过
 
 ## Writer 零调用扫描
 

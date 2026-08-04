@@ -63,7 +63,6 @@ public sealed class DesktopLayoutRuleAwareExecutionCandidate
         // IsExecutable 自洽
         bool isExecutable = sourcePreviewPlan.IsComplete
             && !restorePlan.HasBlockingErrors
-            && !restorePlan.RequiresTemporaryStaging
             && executionPlan.IsExecutable;
         if (isExecutable && executionPlan.Steps.Count == 0 && !isNoOp)
             throw new ArgumentException("Executable 但无步骤且非 NoOp。");
