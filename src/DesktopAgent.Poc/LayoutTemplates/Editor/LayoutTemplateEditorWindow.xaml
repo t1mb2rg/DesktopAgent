@@ -57,9 +57,11 @@
 
             <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" />
 
-            <!-- ── 右侧：属性面板 ── -->
-            <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
-                <StackPanel>
+            <!-- ── 右侧：Tab 面板 ── -->
+            <TabControl Grid.Column="4">
+                <TabItem Header="模板与分区">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
                     <!-- 模板属性 -->
                     <GroupBox Header="模板属性" Padding="4" Margin="0,0,0,8">
                         <StackPanel>
@@ -184,8 +186,54 @@
                                      Text="{Binding ElementName=ZoneListBox, Path=SelectedItem.Bottom, UpdateSourceTrigger=PropertyChanged, ValidatesOnExceptions=True, NotifyOnValidationError=True}" />
                         </StackPanel>
                     </GroupBox>
-                </StackPanel>
-            </ScrollViewer>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <TabItem Header="图标规则">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <!-- 统计 -->
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock FontSize="11" Foreground="Gray">
+                                <Run Text="总数:" /><Run Text="{Binding Rules.Count, Mode=OneWay}" />
+                                <Run Text="  Ex:" FontWeight="SemiBold" />
+                            </TextBlock>
+                        </StackPanel>
+
+                        <!-- 操作按钮 -->
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,4">
+                            <Button x:Name="AddRuleButton" Content="＋ 添加规则" Width="100"
+                                    Click="AddRule_Click" />
+                            <Button x:Name="RemoveRuleButton" Content="－ 删除选中" Width="100"
+                                    Margin="6,0,0,0" Click="RemoveRule_Click" />
+                        </StackPanel>
+
+                        <!-- 规则 DataGrid -->
+                        <DataGrid x:Name="RulesGrid" Grid.Row="2" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" RowHeight="22" MaxHeight="220"
+                                  ItemsSource="{Binding Rules}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="StableId" Width="140"
+                                    Binding="{Binding StableId, UpdateSourceTrigger=LostFocus}" />
+                                <DataGridTextColumn Header="Kind" Width="80"
+                                    Binding="{Binding Kind, Mode=OneWay}" />
+                                <DataGridTextColumn Header="TargetZoneId" Width="300"
+                                    Binding="{Binding TargetZoneId, Mode=OneWay}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <TextBlock Grid.Row="3" Margin="0,4,0,0" FontSize="10" Foreground="Gray"
+                            Text="StableId 不 Trim。双击编辑 StableId 后 Enter 提交。ZoneOverride 必须选择 Target Zone。" TextWrapping="Wrap" />
+                    </Grid>
+                </TabItem>
+            </TabControl>
         </Grid>
 
         <!-- ═══ 底部状态栏 ═══ -->

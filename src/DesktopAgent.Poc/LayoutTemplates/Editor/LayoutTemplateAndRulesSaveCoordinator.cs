@@ -223,31 +223,37 @@ public static class LayoutTemplateAndRulesSaveCoordinator
             };
         }
 
-        // 补偿后回读验证
+        // 补偿后精确回读验证
         if (result.AllOk)
         {
             try
             {
-                var tCheck = await templateStore.GetAsync(templateId, ct);
                 if (previousTemplate is not null)
                 {
-                    if (tCheck is null || tCheck.TemplateId != previousTemplate.TemplateId)
+                    var verifyError = await VerifyRoundTripAsync(
+                        templateStore, ruleStore, templateId,
+                        previousTemplate,
+                        previousRuleSet ?? DesktopLayoutIconRuleSet.Empty(templateId),
+                        ct);
+                    if (verifyError is not null)
                     {
                         return result with
                         {
                             TemplateCompensationOk = false,
-                            TemplateCompensationError = "补偿后回读模板不一致。"
+                            TemplateCompensationError = $"补偿后回读验证失败：{verifyError}"
                         };
                     }
                 }
                 else
                 {
-                    if (tCheck is not null)
+                    var tCheck = await templateStore.GetAsync(templateId, ct);
+                    var rCheck = await ruleStore.GetAsync(templateId, ct);
+                    if (tCheck is not null || rCheck is not null)
                     {
                         return result with
                         {
                             TemplateCompensationOk = false,
-                            TemplateCompensationError = "补偿后模板应被删除但仍存在。"
+                            TemplateCompensationError = "补偿后模板/规则应被删除但仍存在。"
                         };
                     }
                 }
@@ -257,7 +263,7 @@ public static class LayoutTemplateAndRulesSaveCoordinator
                 return result with
                 {
                     TemplateCompensationOk = false,
-                    TemplateCompensationError = $"补偿后回读模板异常：{ex.Message}"
+                    TemplateCompensationError = $"补偿后回读异常：{ex.Message}"
                 };
             }
         }

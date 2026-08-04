@@ -61,6 +61,86 @@ public sealed class DesktopLayoutRuleAwarePreviewItem
         PixelRect currentCellBounds,
         DesktopLayoutZone? targetZone)
     {
+        if (icon is null) throw new ArgumentNullException(nameof(icon));
+        if (!Enum.IsDefined(disposition))
+            throw new ArgumentException($"未定义的 Disposition：{disposition}。");
+        if (!Enum.IsDefined(placementState))
+            throw new ArgumentException($"未定义的 PlacementState：{placementState}。");
+        if (currentPosition != icon.PixelPosition)
+            throw new ArgumentException(
+                "CurrentPosition 必须等于 Icon.PixelPosition。");
+
+        // Disposition consistency
+        switch (disposition)
+        {
+            case DesktopLayoutRuleAwarePreviewItemDisposition.Excluded:
+                if (rule is null || rule.Kind != DesktopLayoutIconRuleKind.Exclude)
+                    throw new ArgumentException("Excluded 必须对应 Exclude Rule。");
+                break;
+            case DesktopLayoutRuleAwarePreviewItemDisposition.Pinned:
+                if (rule is null || rule.Kind != DesktopLayoutIconRuleKind.Pin)
+                    throw new ArgumentException("Pinned 必须对应 Pin Rule。");
+                break;
+            case DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride:
+                if (rule is null || rule.Kind != DesktopLayoutIconRuleKind.ZoneOverride)
+                    throw new ArgumentException("ZoneOverride 必须对应 ZoneOverride Rule。");
+                break;
+            case DesktopLayoutRuleAwarePreviewItemDisposition.Default:
+                if (rule is not null)
+                    throw new ArgumentException("Default Disposition 的 Rule 必须为 null。");
+                break;
+        }
+
+        // Rule StableId consistency
+        if (rule is not null)
+        {
+            if (!StringComparer.Ordinal.Equals(rule.StableId, icon.StableId))
+                throw new ArgumentException(
+                    $"Rule.StableId \"{rule.StableId}\" 与 Icon.StableId \"{icon.StableId}\" 不一致。");
+        }
+
+        // PlacementState consistency
+        switch (placementState)
+        {
+            case DesktopLayoutRuleAwarePreviewPlacementState.Fixed:
+                if (disposition != DesktopLayoutRuleAwarePreviewItemDisposition.Excluded
+                    && disposition != DesktopLayoutRuleAwarePreviewItemDisposition.Pinned)
+                    throw new ArgumentException("Fixed 只允许 Excluded/Pinned。");
+                if (targetPosition.HasValue || zoneId.HasValue
+                    || slotIndex.HasValue || targetCellBounds.HasValue || targetZone is not null)
+                    throw new ArgumentException("Fixed 不得拥有目标信息。");
+                break;
+            case DesktopLayoutRuleAwarePreviewPlacementState.Unassigned:
+                if (targetPosition.HasValue || zoneId.HasValue
+                    || slotIndex.HasValue || targetCellBounds.HasValue || targetZone is not null)
+                    throw new ArgumentException("Unassigned 不得拥有目标信息。");
+                break;
+            case DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget:
+                if (!targetPosition.HasValue || !zoneId.HasValue
+                    || !slotIndex.HasValue || !targetCellBounds.HasValue || targetZone is null)
+                    throw new ArgumentException("AlreadyAtTarget 必须拥有完整目标信息。");
+                if (currentPosition != targetPosition.Value)
+                    throw new ArgumentException("AlreadyAtTarget 必须 Current==Target。");
+                if (targetZone.ZoneId != zoneId.Value)
+                    throw new ArgumentException("ZoneId 与 TargetZone.ZoneId 不一致。");
+                if (rule is not null && rule.Kind == DesktopLayoutIconRuleKind.ZoneOverride
+                    && rule.TargetZoneId != zoneId.Value)
+                    throw new ArgumentException("ZoneOverride Rule.TargetZoneId 与 ZoneId 不一致。");
+                break;
+            case DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired:
+                if (!targetPosition.HasValue || !zoneId.HasValue
+                    || !slotIndex.HasValue || !targetCellBounds.HasValue || targetZone is null)
+                    throw new ArgumentException("MoveRequired 必须拥有完整目标信息。");
+                if (currentPosition == targetPosition.Value)
+                    throw new ArgumentException("MoveRequired 必须 Current!=Target。");
+                if (targetZone.ZoneId != zoneId.Value)
+                    throw new ArgumentException("ZoneId 与 TargetZone.ZoneId 不一致。");
+                if (rule is not null && rule.Kind == DesktopLayoutIconRuleKind.ZoneOverride
+                    && rule.TargetZoneId != zoneId.Value)
+                    throw new ArgumentException("ZoneOverride Rule.TargetZoneId 与 ZoneId 不一致。");
+                break;
+        }
+
         Icon = icon;
         Rule = rule;
         Disposition = disposition;

@@ -169,6 +169,17 @@ public partial class LayoutTemplateEditorWindow : Window
         ZoneCanvas.Children.Clear();
     }
 
+    private void AddRule_Click(object sender, RoutedEventArgs e)
+    {
+        _draft.Rules.Add(LayoutIconRuleEditorDraft.CreateNew());
+    }
+
+    private void RemoveRule_Click(object sender, RoutedEventArgs e)
+    {
+        if (RulesGrid.SelectedItem is LayoutIconRuleEditorDraft selected)
+            _draft.Rules.Remove(selected);
+    }
+
     private void OnDraftPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         UpdateTitle();

@@ -1,5 +1,6 @@
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Preview;
 
@@ -25,6 +26,9 @@ public sealed class LayoutPreviewItemRow
     public string RowIndex { get; }
     public string ColumnIndex { get; }
     public DesktopLayoutPreviewItemState State { get; }
+    public string DispositionText { get; }
+    public string PlacementStateText { get; }
+    public string RuleKindText { get; }
 
     private LayoutPreviewItemRow(
         DesktopIconSnapshotItem icon,
@@ -32,7 +36,9 @@ public sealed class LayoutPreviewItemRow
         string stateText, int currentX, int currentY,
         string targetX, string targetY, string deltaX, string deltaY,
         string zoneName, string slotIndex, string rowIndex, string columnIndex,
-        DesktopLayoutPreviewItemState state)
+        DesktopLayoutPreviewItemState state,
+        string dispositionText = "—", string placementStateText = "—",
+        string ruleKindText = "—")
     {
         Icon = icon ?? throw new ArgumentNullException(nameof(icon));
         Ordinal = ordinal;
@@ -50,6 +56,9 @@ public sealed class LayoutPreviewItemRow
         RowIndex = rowIndex;
         ColumnIndex = columnIndex;
         State = state;
+        DispositionText = dispositionText;
+        PlacementStateText = placementStateText;
+        RuleKindText = ruleKindText;
     }
 
     public static LayoutPreviewItemRow From(DesktopLayoutPreviewItem item)
@@ -112,12 +121,38 @@ public sealed class LayoutPreviewItemRow
         var state = item.PlacementState switch
         {
             DesktopLayoutRuleAwarePreviewPlacementState.Fixed =>
-                DesktopLayoutPreviewItemState.AlreadyAtTarget,
+                DesktopLayoutPreviewItemState.AlreadyAtTarget, // canvas: no trajectory
             DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget =>
                 DesktopLayoutPreviewItemState.AlreadyAtTarget,
             DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired =>
                 DesktopLayoutPreviewItemState.MoveRequired,
             _ => DesktopLayoutPreviewItemState.Unassigned,
+        };
+
+        var dispositionText = item.Disposition switch
+        {
+            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded => "Excluded",
+            DesktopLayoutRuleAwarePreviewItemDisposition.Pinned => "Pinned",
+            DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride => "Override",
+            DesktopLayoutRuleAwarePreviewItemDisposition.Default => "Default",
+            _ => item.Disposition.ToString()
+        };
+
+        var placementText = item.PlacementState switch
+        {
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed => "Fixed",
+            DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget => "已就位",
+            DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired => "需移动",
+            DesktopLayoutRuleAwarePreviewPlacementState.Unassigned => "未分配",
+            _ => item.PlacementState.ToString()
+        };
+
+        var ruleText = item.Rule?.Kind switch
+        {
+            DesktopLayoutIconRuleKind.Exclude => "Exclude",
+            DesktopLayoutIconRuleKind.Pin => "Pin",
+            DesktopLayoutIconRuleKind.ZoneOverride => "Override",
+            _ => "—"
         };
 
         return new LayoutPreviewItemRow(
@@ -127,7 +162,8 @@ public sealed class LayoutPreviewItemRow
             StateToString(state),
             item.CurrentPosition.X, item.CurrentPosition.Y,
             tx, ty, dx, dy, zn, si, ri, ci,
-            state);
+            state,
+            dispositionText, placementText, ruleText);
     }
 
     private static string Truncate(string v, int max) => v.Length <= max ? v : v[..(max - 3)] + "...";
