@@ -166,6 +166,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
     public ResolvedDesktopLayoutTemplate ResolvedTemplate { get; }
     public DesktopLayoutIconRuleResolutionPlan ResolutionPlan { get; }
     public DesktopLayoutRuleAwarePlacementPlan PlacementPlan { get; }
+    public PixelPoint IconSpacing { get; }
 
     public IReadOnlyList<DesktopIconSnapshotItem> InputIcons { get; }
     public IReadOnlyList<DesktopIconSnapshotItem> TargetDisplayIcons { get; }
@@ -192,6 +193,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         ResolvedDesktopLayoutTemplate resolvedTemplate,
         DesktopLayoutIconRuleResolutionPlan resolutionPlan,
         DesktopLayoutRuleAwarePlacementPlan placementPlan,
+        PixelPoint iconSpacing,
         IReadOnlyList<DesktopIconSnapshotItem> inputIcons,
         IReadOnlyList<DesktopIconSnapshotItem> targetDisplayIcons,
         IReadOnlyList<DesktopIconSnapshotItem> outOfScopeIcons,
@@ -202,6 +204,8 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         if (resolvedTemplate is null) throw new ArgumentNullException(nameof(resolvedTemplate));
         if (resolutionPlan is null) throw new ArgumentNullException(nameof(resolutionPlan));
         if (placementPlan is null) throw new ArgumentNullException(nameof(placementPlan));
+        if (iconSpacing.X <= 0 || iconSpacing.Y <= 0)
+            throw new ArgumentException("IconSpacing X/Y 必须 > 0。");
         if (inputIcons is null) throw new ArgumentNullException(nameof(inputIcons));
         if (targetDisplayIcons is null) throw new ArgumentNullException(nameof(targetDisplayIcons));
         if (outOfScopeIcons is null) throw new ArgumentNullException(nameof(outOfScopeIcons));
@@ -436,11 +440,31 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
                 moveReq++;
         }
 
+        // CellBounds 验证
+        for (var i = 0; i < itemsList.Count; i++)
+        {
+            var item = itemsList[i];
+            var expectedCurrentRect = DesktopIconLayoutGeometry.CreateRectChecked(
+                item.CurrentPosition, iconSpacing);
+            if (item.CurrentCellBounds != expectedCurrentRect)
+                throw new ArgumentException(
+                    $"Items[{i}] CurrentCellBounds 与 IconSpacing 不一致。");
+            if (item.TargetCellBounds.HasValue)
+            {
+                var expectedTargetRect = DesktopIconLayoutGeometry.CreateRectChecked(
+                    item.TargetPosition!.Value, iconSpacing);
+                if (item.TargetCellBounds.Value != expectedTargetRect)
+                    throw new ArgumentException(
+                        $"Items[{i}] TargetCellBounds 与 IconSpacing 不一致。");
+            }
+        }
+
         Template = template;
         TargetDisplay = targetDisplay;
         ResolvedTemplate = resolvedTemplate;
         ResolutionPlan = resolutionPlan;
         PlacementPlan = placementPlan;
+        IconSpacing = iconSpacing;
         InputIcons = inputList.AsReadOnly();
         TargetDisplayIcons = targetList.AsReadOnly();
         OutOfScopeIcons = oosList.AsReadOnly();
@@ -618,7 +642,7 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
         }
 
         return new DesktopLayoutRuleAwarePreviewPlan(
-            template, targetDisplay, resolvedTemplate, resolutionPlan, placementPlan,
+            template, targetDisplay, resolvedTemplate, resolutionPlan, placementPlan, iconSpacing,
             iconList, targetIcons, oosIcons, orderedItems);
     }
 }
