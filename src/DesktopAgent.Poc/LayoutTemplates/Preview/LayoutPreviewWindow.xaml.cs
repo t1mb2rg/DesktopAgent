@@ -183,42 +183,42 @@ public partial class LayoutPreviewWindow : Window
     /// <summary>加载完整模板并更新 UI 状态。可用于 SelectionChanged 和刷新恢复。</summary>
     private async Task LoadTemplateAsync(Guid templateId, long gen, CancellationToken ct)
     {
+        // 读入局部变量
         var template = await _templateStore.GetAsync(templateId, ct);
         if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
         if (template is null)
         {
-            if (!_isClosing)
-                StatusText.Text = $"模板 {templateId:D} 不存在。";
-            _loadedTemplate = null;
+            _loadedTemplate = null; _loadedRuleSet = null; InvalidatePreview();
+            if (!_isClosing) StatusText.Text = $"模板 {templateId:D} 不存在。";
             return;
         }
+
+        DesktopLayoutIconRuleSet? ruleSet;
+        try { ruleSet = await _ruleStore.GetAsync(templateId, ct); }
+        catch
+        {
+            _loadedTemplate = null; _loadedRuleSet = null; InvalidatePreview();
+            if (!_isClosing) StatusText.Text = "加载规则失败。";
+            return;
+        }
+        if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
+
+        if (ruleSet is null || ruleSet.TemplateId != template.TemplateId)
+        {
+            _loadedTemplate = null; _loadedRuleSet = null; InvalidatePreview();
+            if (!_isClosing) StatusText.Text = $"模板 {templateId:D} 的规则集不存在或 TemplateId 不一致。";
+            return;
+        }
+
+        // 全部成功 → 一次性赋值
         _loadedTemplate = template;
-
-        // 同时加载规则集
-        try
-        {
-            _loadedRuleSet = await _ruleStore.GetAsync(templateId, ct);
-        }
-        catch (Exception ex)
-        {
-            if (!_isClosing)
-                StatusText.Text = $"加载规则失败：{ex.Message}";
-            _loadedRuleSet = null;
-            return;
-        }
-
-        if (_loadedRuleSet is null)
-        {
-            if (!_isClosing)
-                StatusText.Text = $"模板 {templateId:D} 的规则集不存在。";
-            return;
-        }
+        _loadedRuleSet = ruleSet;
 
         if (!_isClosing)
         {
             UpdateDisplayComboState();
             StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})，" +
-                $"{_loadedRuleSet.RuleCount} 条规则。点击 生成预览。";
+                $"{ruleSet.RuleCount} 条规则。点击 生成预览。";
         }
     }
 

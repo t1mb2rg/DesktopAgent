@@ -101,6 +101,7 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
         }
 
         Zones.CollectionChanged += OnZonesCollectionChanged;
+        Rules.CollectionChanged += OnRulesCollectionChanged;
     }
 
     public static LayoutTemplateEditorDraft CreateNew()
@@ -135,6 +136,23 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
         var draft = new LayoutTemplateEditorDraft(
             template.TemplateId, template.Name, template.Version,
             bindingKind, deviceName, zones);
+        draft.IsDirty = false;
+        draft.IsPersisted = true;
+        return draft;
+    }
+
+    public static LayoutTemplateEditorDraft FromTemplateAndRuleSet(
+        DesktopLayoutTemplate template, DesktopLayoutIconRuleSet ruleSet)
+    {
+        if (template is null) throw new ArgumentNullException(nameof(template));
+        if (ruleSet is null) throw new ArgumentNullException(nameof(ruleSet));
+        if (template.TemplateId != ruleSet.TemplateId)
+            throw new ArgumentException(
+                $"TemplateId 不一致：Template={template.TemplateId:D}，RuleSet={ruleSet.TemplateId:D}。");
+
+        var draft = FromTemplate(template);
+        foreach (var rule in ruleSet.Rules)
+            draft.Rules.Add(LayoutIconRuleEditorDraft.FromRule(rule));
         draft.IsDirty = false;
         draft.IsPersisted = true;
         return draft;
@@ -354,6 +372,49 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
     private void OnZonesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         SyncZoneSubscriptions();
+        SetDirty();
+    }
+
+    // ═══ Rule Dirty tracking ═══
+
+    private readonly HashSet<LayoutIconRuleEditorDraft> _subscribedRules =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void SubscribeRule(LayoutIconRuleEditorDraft rule)
+    {
+        if (_subscribedRules.Add(rule))
+            rule.PropertyChanged += OnRulePropertyChanged;
+    }
+
+    private void UnsubscribeRule(LayoutIconRuleEditorDraft rule)
+    {
+        if (_subscribedRules.Remove(rule))
+            rule.PropertyChanged -= OnRulePropertyChanged;
+    }
+
+    private void SyncRuleSubscriptions()
+    {
+        var toRemove = new List<LayoutIconRuleEditorDraft>();
+        foreach (var existing in _subscribedRules)
+        {
+            var found = false;
+            foreach (var r in Rules)
+                if (ReferenceEquals(r, existing)) { found = true; break; }
+            if (!found) toRemove.Add(existing);
+        }
+        foreach (var item in toRemove)
+            UnsubscribeRule(item);
+
+        foreach (var rule in Rules)
+            if (!_subscribedRules.Contains(rule))
+                SubscribeRule(rule);
+    }
+
+    private void OnRulePropertyChanged(object? sender, PropertyChangedEventArgs e) => SetDirty();
+
+    private void OnRulesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        SyncRuleSubscriptions();
         SetDirty();
     }
 

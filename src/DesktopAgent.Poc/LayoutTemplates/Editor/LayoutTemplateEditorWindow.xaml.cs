@@ -92,8 +92,10 @@ public partial class LayoutTemplateEditorWindow : Window
         catch (Exception ex)
         {
             _ruleStoreReady = false;
-            StatusBarText.Text = $"规则 Store 初始化失败：{ex.Message}。规则保存/加载/删除不可用。";
-            // 不返回 — 模板编辑功能仍可用
+            StatusBarText.Text = $"规则 Store 初始化失败：{ex.Message}。可编辑未持久化草稿，但 SAVE / RELOAD / DELETE / LOAD 已禁用。";
+            _operationInProgress = false;
+            UpdateButtons();
+            return;
         }
 
         // 阶段 B：加载模板列表
@@ -256,11 +258,12 @@ public partial class LayoutTemplateEditorWindow : Window
 
     private async Task<bool> LoadTemplateAsync(Guid templateId)
     {
-        if (!_templateStoreReady) return false;
+        if (!_templateStoreReady || !_ruleStoreReady) return false;
         _operationInProgress = true;
         UpdateButtons();
         try
         {
+            // 先读入局部变量
             var template = await _templateStore.GetAsync(templateId);
             if (template is null)
             {
@@ -269,29 +272,21 @@ public partial class LayoutTemplateEditorWindow : Window
                 return false;
             }
 
-            // 加载规则
-            DesktopLayoutIconRuleSet? ruleSet = null;
-            if (_ruleStoreReady)
+            var ruleSet = await _ruleStore.GetAsync(templateId);
+            if (ruleSet is null)
             {
-                ruleSet = await _ruleStore.GetAsync(templateId);
-                if (ruleSet is null)
-                {
-                    StatusBarText.Text = $"模板 {templateId:D} 的规则集不存在（数据不一致）。";
-                    return false;
-                }
+                StatusBarText.Text = $"模板 {templateId:D} 的规则集不存在（数据不一致）。";
+                return false;
+            }
+            if (ruleSet.TemplateId != template.TemplateId)
+            {
+                StatusBarText.Text = $"模板 {templateId:D} 的规则集 TemplateId 不一致。";
+                return false;
             }
 
+            // 全部成功后才替换 Draft
             UnbindDraft();
-            _draft = LayoutTemplateEditorDraft.FromTemplate(template);
-
-            // 加载规则到草稿
-            if (ruleSet is not null)
-            {
-                _draft.Rules.Clear();
-                foreach (var rule in ruleSet.Rules)
-                    _draft.Rules.Add(LayoutIconRuleEditorDraft.FromRule(rule));
-            }
-
+            _draft = LayoutTemplateEditorDraft.FromTemplateAndRuleSet(template, ruleSet);
             BindDraft();
             SelectTemplateInList(templateId);
             StatusBarText.Text = $"已加载：{template.Name} (v{template.Version})，{_draft.Rules.Count} 条规则";
@@ -345,7 +340,7 @@ public partial class LayoutTemplateEditorWindow : Window
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (_operationInProgress || !_templateStoreReady) return;
+        if (_operationInProgress || !_templateStoreReady || !_ruleStoreReady) return;
 
         var element = Keyboard.FocusedElement as UIElement;
         if (element is TextBox tb)
@@ -389,18 +384,10 @@ public partial class LayoutTemplateEditorWindow : Window
             }
 
             // 使用协调器保存
-            if (_ruleStoreReady)
-            {
-                var coordResult = await LayoutTemplateAndRulesSaveCoordinator.SaveAsync(
-                    _templateStore, _ruleStore, template, ruleSet);
-                StatusBarText.Text = coordResult.Message!;
-                if (!coordResult.IsSuccess) return;
-            }
-            else
-            {
-                // 规则 Store 不可用：仅保存模板
-                await _templateStore.SaveAsync(template);
-            }
+            var coordResult = await LayoutTemplateAndRulesSaveCoordinator.SaveAsync(
+                _templateStore, _ruleStore, template, ruleSet);
+            StatusBarText.Text = coordResult.Message!;
+            if (!coordResult.IsSuccess) return;
 
             _draft.MarkSaved();
             StatusBarText.Text = $"保存成功：{template.Name} (v{template.Version})，{ruleSet.RuleCount} 条规则。";
@@ -442,7 +429,7 @@ public partial class LayoutTemplateEditorWindow : Window
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (_operationInProgress || !_templateStoreReady || !_draft.IsPersisted) return;
+        if (_operationInProgress || !_templateStoreReady || !_ruleStoreReady || !_draft.IsPersisted) return;
 
         var templateId = _draft.TemplateId;
         var dr = MessageBox.Show(
@@ -456,8 +443,7 @@ public partial class LayoutTemplateEditorWindow : Window
         {
             var deleted = await _templateStore.DeleteAsync(templateId);
             var check = await _templateStore.GetAsync(templateId);
-            var ruleCheck = _ruleStoreReady
-                ? await _ruleStore.GetAsync(templateId) : null;
+            var ruleCheck = await _ruleStore.GetAsync(templateId);
 
             if (check is not null || ruleCheck is not null)
             {
