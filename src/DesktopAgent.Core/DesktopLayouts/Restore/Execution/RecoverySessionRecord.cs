@@ -128,8 +128,11 @@ public sealed record RecoverySessionRecord
             TargetDisplayLayoutExecutionRunStatus.PositionUncertain
                 => RecoverySessionLifecycle.PositionUncertain,
 
-            // FailedBeforeWrite / 其他 → 不应持久化（无 Session，Writer 未启动）
-            _ => RecoverySessionLifecycle.Ready,
+            TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite
+                => throw new ArgumentException(
+                    $"RunStatus.{status} 无对应 RecoverySession，不应调用 DeriveLifecycle。"),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(status), status, $"未定义的 RunStatus 值：{status}。"),
         };
 
     /// <summary>
@@ -294,7 +297,23 @@ public sealed record RecoverySessionRecord
             }
         }
 
+        // Revision
+        if (Revision <= 0)
+            errors.Add($"Revision 必须 > 0，实际为 {Revision}。");
+
         // 状态标志一致性
+        if (Lifecycle == RecoverySessionLifecycle.Ready
+            && (RequiresManualRecovery || IsPositionUncertain))
+            errors.Add("Ready 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
+
+        if (Lifecycle == RecoverySessionLifecycle.Executing)
+        {
+            if (RequiresManualRecovery)
+                errors.Add("Executing 状态下 RequiresManualRecovery 必须为 false。");
+            if (IsPositionUncertain)
+                errors.Add("Executing 状态下 IsPositionUncertain 必须为 false。");
+        }
+
         if (Lifecycle == RecoverySessionLifecycle.Completed
             && (RequiresManualRecovery || IsPositionUncertain))
             errors.Add("Completed 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
@@ -317,6 +336,14 @@ public sealed record RecoverySessionRecord
                 errors.Add("PositionUncertain 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须都为 true。");
         }
 
+        // 失败证据要求
+        if (Lifecycle is RecoverySessionLifecycle.FailedRollbackIncomplete
+            or RecoverySessionLifecycle.PositionUncertain)
+        {
+            if (string.IsNullOrWhiteSpace(ForwardFailureType))
+                errors.Add($"{Lifecycle} 状态下 ForwardFailureType 必须非空。");
+        }
+
         // Verification 一致性
         if (VerificationResult is not null)
         {
@@ -326,6 +353,18 @@ public sealed record RecoverySessionRecord
                 errors.Add($"无效的 VerificationResult.Status：{(int)VerificationResult.Status}。");
             if (VerificationResult.FailedItemCount < 0)
                 errors.Add($"VerificationResult.FailedItemCount 不能为负数：{VerificationResult.FailedItemCount}。");
+
+            // FailedItemCount 与 Status 一致性
+            if (VerificationResult.Status == ExecutionVerificationStatus.Passed
+                && VerificationResult.FailedItemCount != 0)
+                errors.Add($"Verification Passed 但 FailedItemCount={VerificationResult.FailedItemCount}（应为 0）。");
+            if (VerificationResult.Status == ExecutionVerificationStatus.Passed
+                && VerificationResult.Issues.Count > 0)
+                errors.Add($"Verification Passed 但 Issues.Count={VerificationResult.Issues.Count}（应为 0）。");
+            if (VerificationResult.Status == ExecutionVerificationStatus.Failed
+                && VerificationResult.FailedItemCount <= 0
+                && VerificationResult.Issues.Count == 0)
+                errors.Add("Verification Failed 但 FailedItemCount ≤ 0 且 Issues 为空。");
 
             // Phase 与 Lifecycle 一致性
             if (Lifecycle == RecoverySessionLifecycle.Completed

@@ -364,6 +364,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
             RequiresManualRecovery = true,
             IsPositionUncertain = true,
+            ForwardFailureType = "StaleTest",
         };
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => store.UpdateAsync(stale));
@@ -459,6 +460,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
             RequiresManualRecovery = true,
             IsPositionUncertain = true,
+            ForwardFailureType = "TestFailure",
             StartedAtUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
         };
         var r2 = MakeReadyRecord() with
@@ -466,6 +468,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
             RequiresManualRecovery = true,
             IsPositionUncertain = true,
+            ForwardFailureType = "TestFailure",
             StartedAtUtc = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero),
         };
         var r3 = MakeReadyRecord() with
@@ -473,6 +476,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
             RequiresManualRecovery = true,
             IsPositionUncertain = true,
+            ForwardFailureType = "TestFailure",
             StartedAtUtc = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
         };
 
@@ -789,9 +793,10 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         {
             Lifecycle = RecoverySessionLifecycle.FailedRollbackIncomplete,
             RequiresManualRecovery = true,
+            ForwardFailureType = "InexactPosition",
             RollbackAttempts = new[] { MakeExactAttempt(1, 0, TargetDisplayLayoutExecutionAttemptPhase.Rollback) },
             VerificationResult = TargetDisplayLayoutExecutionVerificationResult.RollbackFailed(
-                0, Array.Empty<string>(), DateTimeOffset.UtcNow),
+                1, new[] { "位置未恢复" }, DateTimeOffset.UtcNow),
         };
         var result = await store2.UpdateAsync(updated);
         Assert.Equal(2, result.Revision);
@@ -1045,6 +1050,105 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         sel.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
         var count = (long)sel.ExecuteScalar()!;
         Assert.Equal(1L, count);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  X. 6 项阻断修复验证
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public void DeriveLifecycle_FailedBeforeWrite_Throws()
+    {
+        var ex = Assert.Throws<ArgumentException>(() =>
+            RecoverySessionRecord.DeriveLifecycle(
+                TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite));
+        Assert.Contains("FailedBeforeWrite", ex.Message);
+    }
+
+    [Fact]
+    public void DeriveLifecycle_UnknownStatus_Throws()
+    {
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            RecoverySessionRecord.DeriveLifecycle((TargetDisplayLayoutExecutionRunStatus)999));
+        Assert.Contains("999", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_ReadyWithManualRecovery_Throws()
+    {
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Ready,
+            RequiresManualRecovery = true,
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("Ready", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_ExecutingWithPositionUncertain_Throws()
+    {
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            IsPositionUncertain = true,
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("Executing", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_PositionUncertainWithoutFailureType_Throws()
+    {
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.PositionUncertain,
+            RequiresManualRecovery = true,
+            IsPositionUncertain = true,
+            ForwardFailureType = null,
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("ForwardFailureType", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_RevisionZero_Throws()
+    {
+        var record = MakeReadyRecord() with { Revision = 0 };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("Revision", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_VerificationPassedWithFailedItemCount_Throws()
+    {
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Completed,
+            ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            VerificationResult = new TargetDisplayLayoutExecutionVerificationResult(
+                ExecutionVerificationPhase.Forward,
+                ExecutionVerificationStatus.Passed, 5, // FailedItemCount=5 but Passed
+                Array.Empty<string>(), DateTimeOffset.UtcNow),
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("FailedItemCount", ex.Message);
+    }
+
+    [Fact]
+    public async Task PlanJson_ExecutableNoOp_EmptySteps_IsValid()
+    {
+        // NoOp plans with empty steps should pass round-trip
+        var plan = new TargetDisplayLayoutExecutionPlan(TD, false, true,
+            Array.Empty<TargetDisplayLayoutExecutionStep>(),
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+
+        var json = RecoveryPlanJsonSerializer.SerializeExecutionPlan(plan);
+        var restored = RecoveryPlanJsonSerializer.DeserializeExecutionPlan(json);
+        Assert.True(restored.IsNoOp);
+        Assert.False(restored.IsExecutable);
+        Assert.Empty(restored.Steps);
     }
 
     // ═══════════════════════════════════════════════════

@@ -251,6 +251,21 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback)
             .ToList().AsReadOnly();
 
+        // ── Plan JSON round-trip 完整性验证 ──
+        if (sourceRestorePlan.Items is null || sourceRestorePlan.Items.Count == 0)
+        {
+            if (sourceRestorePlan.SnapshotTargetIconCount > 0)
+                throw new InvalidDataException(
+                    $"会话 {sessionId:D} RestorePlan SnapshotTargetIconCount={sourceRestorePlan.SnapshotTargetIconCount} 但 Items 为空。");
+        }
+        if (executionPlan.Steps is null)
+            throw new InvalidDataException(
+                $"会话 {sessionId:D} ExecutionPlan Steps 为 null。");
+        if (executionPlan.IsExecutable && !executionPlan.IsNoOp
+            && executionPlan.Steps.Count == 0)
+            throw new InvalidDataException(
+                $"会话 {sessionId:D} ExecutionPlan IsExecutable=true, IsNoOp=false 但 Steps 为空。");
+
         // 一致性验证：数量匹配
         if (forwardAttempts.Count != declaredFwdCount)
             throw new InvalidDataException(
