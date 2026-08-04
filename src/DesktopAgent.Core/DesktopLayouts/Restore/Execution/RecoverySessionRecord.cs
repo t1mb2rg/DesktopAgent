@@ -47,6 +47,26 @@ public sealed record RecoverySessionRecord
     public int Revision { get; init; }
     public DateTimeOffset UpdatedAtUtc { get; init; }
 
+    // ── 派生属性（由 Attempts 计算，非持久化列） ──
+
+    /// <summary>从 ForwardAttempts 推导的已完成正向步骤索引（仅 ExactSuccess）。</summary>
+    public IReadOnlyList<int> ComputedForwardStepIndexes =>
+        ForwardAttempts
+            .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+            .Select(a => a.SourceStepIndex)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList().AsReadOnly();
+
+    /// <summary>从 RollbackAttempts 推导的已完成回滚源步骤索引（仅 ExactSuccess）。</summary>
+    public IReadOnlyList<int> ComputedRollbackSourceStepIndexes =>
+        RollbackAttempts
+            .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+            .Select(a => a.SourceStepIndex)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList().AsReadOnly();
+
     // ═══════════════════════════════════════════════════
     //  工厂与序列化
     // ═══════════════════════════════════════════════════
@@ -108,7 +128,24 @@ public sealed record RecoverySessionRecord
             TargetDisplayLayoutExecutionRunStatus.PositionUncertain
                 => RecoverySessionLifecycle.PositionUncertain,
 
+            // FailedBeforeWrite / 其他 → 不应持久化（无 Session，Writer 未启动）
             _ => RecoverySessionLifecycle.Ready,
+        };
+
+    /// <summary>
+    /// 从 Lifecycle 反向映射为 RecoverySession.Status 字符串。
+    /// 用于从持久化 Record 重建 RecoverySession。
+    /// </summary>
+    public static string DeriveStatus(RecoverySessionLifecycle lifecycle) =>
+        lifecycle switch
+        {
+            RecoverySessionLifecycle.Ready => "Ready",
+            RecoverySessionLifecycle.Executing => "Executing",
+            RecoverySessionLifecycle.Completed => "Completed",
+            RecoverySessionLifecycle.FailedAndRolledBack => "FailedAndRolledBack",
+            RecoverySessionLifecycle.FailedRollbackIncomplete => "FailedRollbackIncomplete",
+            RecoverySessionLifecycle.PositionUncertain => "PositionUncertain",
+            _ => "Unknown",
         };
 
     /// <summary>
@@ -194,6 +231,67 @@ public sealed record RecoverySessionRecord
         {
             if (LastFailedStepIndex < 0 || LastFailedStepIndex >= ExecutionPlan.Steps.Count)
                 errors.Add($"LastFailedStepIndex {LastFailedStepIndex} 超出范围 [0, {ExecutionPlan.Steps.Count})。");
+        }
+
+        // ── RestorePlan 摘要计数一致性 ──
+        if (SourceRestorePlan is not null)
+        {
+            var items = SourceRestorePlan.Items;
+            var actualAlready = items.Count(it => it.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget);
+            var actualMove = items.Count(it => it.State == TargetDisplayLayoutRestoreItemState.MoveRequired);
+            var actualMissing = items.Count(it => it.State == TargetDisplayLayoutRestoreItemState.MissingFromCurrent);
+            var actualBlocked = items.Count(it =>
+                it.State == TargetDisplayLayoutRestoreItemState.BlockedByStationaryIcon
+                || it.State == TargetDisplayLayoutRestoreItemState.NotFileSystemItem
+                || it.State == TargetDisplayLayoutRestoreItemState.SystemItem);
+
+            if (SourceRestorePlan.AlreadyAtTargetCount != actualAlready)
+                errors.Add($"RestorePlan AlreadyAtTargetCount={SourceRestorePlan.AlreadyAtTargetCount}，实际={actualAlready}。");
+            if (SourceRestorePlan.MoveRequiredCount != actualMove)
+                errors.Add($"RestorePlan MoveRequiredCount={SourceRestorePlan.MoveRequiredCount}，实际={actualMove}。");
+            if (SourceRestorePlan.MissingCount != actualMissing)
+                errors.Add($"RestorePlan MissingCount={SourceRestorePlan.MissingCount}，实际={actualMissing}。");
+            if (SourceRestorePlan.BlockedCount != actualBlocked)
+                errors.Add($"RestorePlan BlockedCount={SourceRestorePlan.BlockedCount}，实际={actualBlocked}。");
+            if (SourceRestorePlan.SnapshotTargetIconCount != actualAlready + actualMove)
+                errors.Add($"RestorePlan SnapshotTargetIconCount={SourceRestorePlan.SnapshotTargetIconCount}，" +
+                    $"实际 Already+Move={actualAlready + actualMove}。");
+        }
+
+        // ── ExecutionPlan 步骤分类计数一致性 ──
+        if (ExecutionPlan is not null)
+        {
+            var actualDirect = ExecutionPlan.Steps.Count(
+                s => s.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTarget);
+            var actualStagingIn = ExecutionPlan.Steps.Count(
+                s => s.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging);
+            var actualStagingOut = ExecutionPlan.Steps.Count(
+                s => s.Kind == TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget);
+
+            if (ExecutionPlan.DirectMoveStepCount != actualDirect)
+                errors.Add($"ExecutionPlan DirectMoveStepCount={ExecutionPlan.DirectMoveStepCount}，实际={actualDirect}。");
+            if (ExecutionPlan.StagingMoveStepCount != actualStagingIn)
+                errors.Add($"ExecutionPlan StagingMoveStepCount={ExecutionPlan.StagingMoveStepCount}，实际={actualStagingIn}。");
+            if (ExecutionPlan.TargetMoveStepCount != actualStagingOut)
+                errors.Add($"ExecutionPlan TargetMoveStepCount={ExecutionPlan.TargetMoveStepCount}，实际={actualStagingOut}。");
+            if (ExecutionPlan.UsesTemporaryStaging != (actualStagingIn > 0))
+                errors.Add($"ExecutionPlan UsesTemporaryStaging={ExecutionPlan.UsesTemporaryStaging}，实际 staging steps={actualStagingIn}。");
+        }
+
+        // ── Attempt ExpectedStableId 与 ExecutionStep.StableId 交叉验证 ──
+        if (ExecutionPlan is not null)
+        {
+            foreach (var a in ForwardAttempts.Concat(RollbackAttempts))
+            {
+                if (a.SourceStepIndex >= 0 && a.SourceStepIndex < ExecutionPlan.Steps.Count)
+                {
+                    var step = ExecutionPlan.Steps[a.SourceStepIndex];
+                    if (!string.Equals(a.ExpectedStableId, step.StableId, StringComparison.Ordinal))
+                        errors.Add(
+                            $"Attempt #{a.AttemptIndex} ExpectedStableId \"{a.ExpectedStableId}\" " +
+                            $"≠ Step[{a.SourceStepIndex}].StableId \"{step.StableId}\"。");
+                }
+            }
         }
 
         // 状态标志一致性

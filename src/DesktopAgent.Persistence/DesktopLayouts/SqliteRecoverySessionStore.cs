@@ -308,6 +308,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             FROM desktop_layout_recovery_sessions
             WHERE lifecycle IN (1, 4, 5)  -- Executing, FailedRollbackIncomplete, PositionUncertain
                OR requires_manual_recovery = 1
+               OR is_position_uncertain = 1
             ORDER BY started_at_utc DESC, session_id DESC
             LIMIT @limit
         ";
@@ -413,6 +414,8 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 requires_manual_recovery = @rmr,
                 is_position_uncertain = @ipu,
                 last_failed_step_index = @lfsi,
+                source_restore_plan_json = @srpj,
+                execution_plan_json = @epj,
                 forward_failure_type = @fft,
                 forward_failure_message = @ffm,
                 recovery_failure_type = @rft,
@@ -428,6 +431,12 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         upd.Parameters.AddWithValue("@rmr", record.RequiresManualRecovery ? 1 : 0);
         upd.Parameters.AddWithValue("@ipu", record.IsPositionUncertain ? 1 : 0);
         upd.Parameters.AddWithValue("@lfsi", (object?)record.LastFailedStepIndex ?? DBNull.Value);
+
+        var srpJson = RecoveryPlanJsonSerializer.SerializeRestorePlan(record.SourceRestorePlan);
+        var epJson = RecoveryPlanJsonSerializer.SerializeExecutionPlan(record.ExecutionPlan);
+        upd.Parameters.AddWithValue("@srpj", srpJson);
+        upd.Parameters.AddWithValue("@epj", epJson);
+
         upd.Parameters.AddWithValue("@fft", (object?)record.ForwardFailureType ?? DBNull.Value);
         upd.Parameters.AddWithValue("@ffm", (object?)record.ForwardFailureMessage ?? DBNull.Value);
         upd.Parameters.AddWithValue("@rft", (object?)record.RecoveryFailureType ?? DBNull.Value);

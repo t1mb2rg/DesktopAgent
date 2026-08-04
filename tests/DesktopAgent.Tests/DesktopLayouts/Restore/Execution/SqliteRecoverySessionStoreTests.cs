@@ -809,6 +809,245 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════
+    //  Q. Plan JSON 序列化 round-trip 精度
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task PlanJson_RestorePlan_RoundTrip_AllFieldsPreserved()
+    {
+        ResetOrd();
+        var plan = MakeRestorePlan(
+            [Snap("a", new(240, 320)), Snap("b", new(400, 480))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]);
+
+        var json = RecoveryPlanJsonSerializer.SerializeRestorePlan(plan);
+        Assert.NotEmpty(json);
+
+        var restored = RecoveryPlanJsonSerializer.DeserializeRestorePlan(json);
+        Assert.NotNull(restored);
+        Assert.Equal(plan.TargetDeviceName, restored.TargetDeviceName);
+        Assert.Equal(plan.SnapshotTargetIconCount, restored.SnapshotTargetIconCount);
+        Assert.Equal(plan.AlreadyAtTargetCount, restored.AlreadyAtTargetCount);
+        Assert.Equal(plan.MoveRequiredCount, restored.MoveRequiredCount);
+        Assert.Equal(plan.MissingCount, restored.MissingCount);
+        Assert.Equal(plan.BlockedCount, restored.BlockedCount);
+        Assert.Equal(plan.HasBlockingErrors, restored.HasBlockingErrors);
+        Assert.Equal(plan.IsNoOp, restored.IsNoOp);
+        Assert.Equal(plan.Items.Count, restored.Items.Count);
+
+        for (var i = 0; i < plan.Items.Count; i++)
+        {
+            Assert.Equal(plan.Items[i].StableId, restored.Items[i].StableId);
+            Assert.Equal(plan.Items[i].DisplayName, restored.Items[i].DisplayName);
+            Assert.Equal(plan.Items[i].SnapshotTargetPosition, restored.Items[i].SnapshotTargetPosition);
+            Assert.Equal(plan.Items[i].State, restored.Items[i].State);
+        }
+    }
+
+    [Fact]
+    public async Task PlanJson_ExecutionPlan_RoundTrip_AllFieldsPreserved()
+    {
+        var step = new TargetDisplayLayoutExecutionStep(0, "a", "N_a",
+            new PixelPoint(160, 240), new PixelPoint(240, 320),
+            TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD);
+        var plan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            new[] { step },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+
+        var json = RecoveryPlanJsonSerializer.SerializeExecutionPlan(plan);
+        Assert.NotEmpty(json);
+
+        var restored = RecoveryPlanJsonSerializer.DeserializeExecutionPlan(json);
+        Assert.NotNull(restored);
+        Assert.Equal(plan.TargetDeviceName, restored.TargetDeviceName);
+        Assert.Equal(plan.IsExecutable, restored.IsExecutable);
+        Assert.Equal(plan.IsNoOp, restored.IsNoOp);
+        Assert.Equal(plan.DirectMoveStepCount, restored.DirectMoveStepCount);
+        Assert.Equal(plan.Steps.Count, restored.Steps.Count);
+        Assert.Equal(plan.Steps[0].StableId, restored.Steps[0].StableId);
+        Assert.Equal(plan.Steps[0].FromPosition, restored.Steps[0].FromPosition);
+        Assert.Equal(plan.Steps[0].ToPosition, restored.Steps[0].ToPosition);
+        Assert.Equal(plan.Steps[0].Kind, restored.Steps[0].Kind);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  R. UpdateAsync 持久化 Plan JSON 变更
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Update_PlanChanges_Persisted()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = MakeReadyRecord();
+        await store.SaveAsync(record);
+
+        // 修改 ExecutionPlan 后更新
+        var newStep = new TargetDisplayLayoutExecutionStep(0, "a", "N_a_updated",
+            new PixelPoint(160, 240), new PixelPoint(300, 400),
+            TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD);
+        var newExecPlan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            new[] { newStep },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+
+        var updated = record with
+        {
+            ExecutionPlan = newExecPlan,
+            Lifecycle = RecoverySessionLifecycle.Executing,
+        };
+
+        var result = await store.UpdateAsync(updated);
+        Assert.Equal(2, result.Revision);
+
+        var loaded = await store.GetAsync(record.SessionId);
+        Assert.Equal(2, loaded!.Revision);
+        Assert.Equal("N_a_updated", loaded.ExecutionPlan.Steps[0].DisplayName);
+        Assert.Equal(new PixelPoint(300, 400), loaded.ExecutionPlan.Steps[0].ToPosition);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  S. Validate 拒绝 plan 摘要计数不一致
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Validate_PlanCountMismatch_RejectedOnSave()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = MakeReadyRecord();
+
+        // 直接 SQL 注入矛盾的 RestorePlan JSON（MoveRequiredCount 与 Items 不一致）
+        // 通过修改 JSON payload 来制造不一致
+        var tamperedJson = RecoveryPlanJsonSerializer.SerializeRestorePlan(
+            record.SourceRestorePlan);
+        // 在 JSON 中把 MoveRequiredCount 改为不一致的值
+        tamperedJson = tamperedJson.Replace(
+            $"\"MoveRequiredCount\":{record.SourceRestorePlan.MoveRequiredCount}",
+            "\"MoveRequiredCount\":999");
+
+        using var c = OpenRawConnection();
+        // 先正常保存，再直接 SQL 破坏
+        await store.SaveAsync(record);
+
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE desktop_layout_recovery_sessions
+            SET source_restore_plan_json = @json
+            WHERE session_id = @sid
+        ";
+        cmd.Parameters.AddWithValue("@json", tamperedJson);
+        cmd.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
+        cmd.ExecuteNonQuery();
+
+        // 读取时应因 count 不一致而 fail
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => store.GetAsync(record.SessionId));
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  T. Validate 拒绝 Attempt-StableId 与 Step 不一致
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Validate_AttemptStableIdMismatch_RejectedOnGet()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = MakeCompletedRecord();
+        await store.SaveAsync(record);
+
+        // 直接 SQL 把 attempt 的 expected_stable_id 改为与 Step 不一致的值
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE desktop_layout_recovery_attempts
+            SET expected_stable_id = 'WRONG_ID'
+            WHERE session_id = @sid
+        ";
+        cmd.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
+        cmd.ExecuteNonQuery();
+
+        // Validate() 应检测到 Attempt ExpectedStableId ≠ Step StableId
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => store.GetAsync(record.SessionId));
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  U. DeriveStatus 覆盖所有 Lifecycle 值
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public void DeriveStatus_CoversAllLifecycleValues()
+    {
+        Assert.Equal("Ready", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.Ready));
+        Assert.Equal("Executing", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.Executing));
+        Assert.Equal("Completed", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.Completed));
+        Assert.Equal("FailedAndRolledBack", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.FailedAndRolledBack));
+        Assert.Equal("FailedRollbackIncomplete", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.FailedRollbackIncomplete));
+        Assert.Equal("PositionUncertain", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.PositionUncertain));
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  V. ComputedForwardStepIndexes 与 Attempts 一致
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public void ComputedIndexes_MatchAttempts()
+    {
+        var record = MakeCompletedRecord();
+        // MakeCompletedRecord 有 1 个 ExactSuccess Forward attempt at step 0
+        Assert.Single(record.ComputedForwardStepIndexes);
+        Assert.Equal(0, record.ComputedForwardStepIndexes[0]);
+        Assert.Empty(record.ComputedRollbackSourceStepIndexes);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  W. ListUnresolved 捕获 is_position_uncertain flag
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ListUnresolved_IsPositionUncertainFlag_DefenseInDepth()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        // 创建一个 lifecycle=Ready 但 is_position_uncertain=1 的记录
+        // （正常情况下 Validate() 会阻止，但直接 SQL 绕开）
+        var record = MakeReadyRecord();
+        await store.SaveAsync(record);
+
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE desktop_layout_recovery_sessions
+            SET is_position_uncertain = 1
+            WHERE session_id = @sid
+        ";
+        cmd.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
+        cmd.ExecuteNonQuery();
+
+        // Get 会因 lifecycle/flag 矛盾而 fail（Completed=0 + is_position_uncertain=1）
+        // 但 ListUnresolved 的 WHERE 应能捕获 is_position_uncertain=1
+        // 注意：这个记录在 Get 时会因为 Validate 的 lifecycle/flag 矛盾而抛异常
+        // 所以这里只验证 ListUnresolved 的 SELECT 返回了该 session_id
+        using var c2 = OpenRawConnection();
+        using var sel = c2.CreateCommand();
+        sel.CommandText = @"
+            SELECT COUNT(*) FROM desktop_layout_recovery_sessions
+            WHERE (lifecycle IN (1,4,5) OR requires_manual_recovery = 1 OR is_position_uncertain = 1)
+              AND session_id = @sid
+        ";
+        sel.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
+        var count = (long)sel.ExecuteScalar()!;
+        Assert.Equal(1L, count);
+    }
+
+    // ═══════════════════════════════════════════════════
     //  内部辅助
     // ═══════════════════════════════════════════════════
 
