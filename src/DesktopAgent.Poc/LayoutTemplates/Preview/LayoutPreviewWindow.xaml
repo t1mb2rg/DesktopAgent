@@ -40,7 +40,10 @@
 
             <StackPanel Grid.Column="8" Orientation="Horizontal">
                 <Button x:Name="RefreshButton" Content="刷新数据" Width="80" Click="Refresh_Click" Margin="0,0,6,0" />
-                <Button x:Name="GenerateButton" Content="生成预览" Width="80" Click="Generate_Click" />
+                <Button x:Name="GenerateButton" Content="生成预览" Width="80" Click="Generate_Click" Margin="0,0,6,0" />
+                <Button x:Name="ExecuteButton" Content="执行" Width="60" Click="Execute_Click"
+                        Background="#E81123" Foreground="White" FontWeight="SemiBold"
+                        ToolTip="基于当前预览生成执行候选、展示风险、二次确认后通过 Coordinator 批量执行。" />
             </StackPanel>
 
             <Button x:Name="CloseButton" Grid.Column="10" Content="关闭" Width="60" Click="Close_Click" />
@@ -115,7 +118,7 @@
                         </DataGrid>
                     </GroupBox>
 
-                    <GroupBox Header="图例" Padding="4">
+                    <GroupBox Header="图例" Padding="4" Margin="0,0,0,6">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Width="12" Height="12" Fill="#0078D4" Margin="0,0,4,0" />
                             <TextBlock Text="当前位置" Margin="0,0,12,0" FontSize="11" />
@@ -123,6 +126,36 @@
                             <TextBlock Text="目标位置" Margin="0,0,12,0" FontSize="11" />
                             <Path Stroke="#107C10" StrokeThickness="2" Data="M0,6 L20,6" Margin="0,0,4,0" />
                             <TextBlock Text="移动" FontSize="11" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox x:Name="CandidateGroup" Header="执行候选与风险" Padding="4" Margin="0,0,0,6"
+                              Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock x:Name="CandidateSummaryText" FontSize="11" FontFamily="Consolas"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="CandidateIssuesText" FontSize="11" Foreground="Red"
+                                       FontFamily="Consolas" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock x:Name="StagingWarningText" FontSize="11" Foreground="OrangeRed"
+                                       FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <CheckBox x:Name="ExecutionConsentCheckBox" Content="我已阅读以上风险并确认执行"
+                                      Margin="0,6,0,0" IsChecked="False"
+                                      Checked="ExecutionConsent_Changed"
+                                      Unchecked="ExecutionConsent_Changed" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox x:Name="ExecutionResultGroup" Header="执行结果" Padding="4" Margin="0,0,0,6"
+                              Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock x:Name="ExecutionResultText" FontSize="11" FontFamily="Consolas"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="ExecutionVerificationText" FontSize="11" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Margin="0,4,0,0" />
+                            <TextBlock x:Name="ManualRecoveryWarning" FontSize="12" Foreground="Red"
+                                       FontWeight="Bold" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Visibility="Collapsed"
+                                       Text="⚠ 需要人工处理 — 已进入保护锁。请勿继续操作，关闭本窗口并查看主窗口诊断。" />
                         </StackPanel>
                     </GroupBox>
                 </StackPanel>

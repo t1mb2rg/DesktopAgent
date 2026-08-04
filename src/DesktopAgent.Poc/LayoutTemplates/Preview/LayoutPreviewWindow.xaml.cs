@@ -8,6 +8,7 @@ using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
+using DesktopAgent.Core.DesktopLayouts.Templates.Execution;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
@@ -15,6 +16,8 @@ using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.Displays;
+using DesktopAgent.Core.DesktopLayouts.Restore;
+using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Preview;
 
@@ -27,6 +30,7 @@ public partial class LayoutPreviewWindow : Window
     private readonly IDesktopIconPositionWriter _positioningCapabilitiesProvider;
     private readonly StaThreadExecutor _staExecutor;
     private readonly DesktopLayoutSnapshotFactory _snapshotFactory;
+    private readonly Func<TargetDisplayLayoutRestorePlan, Task<TargetDisplayLayoutExecutionRunResult>>? _executionCallback;
 
     // M2-03B-B 仅使用 GetCapabilities 的只读能力查询；本窗口永远不能调用 MoveDesktopIcon。
     private readonly ObservableCollection<LayoutPreviewTemplateRow> _templateRows = [];
@@ -47,6 +51,17 @@ public partial class LayoutPreviewWindow : Window
     private long _generation;
     private string? _selectedTargetDeviceName;
 
+    // M2-04B 执行候选与结果
+    private DesktopLayoutRuleAwareExecutionCandidateBuildResult? _candidateBuildResult;
+    private DesktopLayoutRuleAwareExecutionCandidate? _activeCandidate;
+    private TargetDisplayLayoutExecutionRunResult? _lastExecutionResult;
+    private bool _requiresManualRecovery;
+    private string? _escapedException;
+
+    public bool RequiresManualRecovery => _requiresManualRecovery;
+    public TargetDisplayLayoutExecutionRunResult? LastExecutionResult => _lastExecutionResult;
+    public string? EscapedException => _escapedException;
+
     public LayoutPreviewWindow(
         IDesktopLayoutTemplateStore templateStore,
         IDesktopLayoutIconRuleStore ruleStore,
@@ -54,7 +69,8 @@ public partial class LayoutPreviewWindow : Window
         IDesktopIconReader desktopIconReader,
         IDesktopIconPositionWriter positioningCapabilitiesProvider,
         StaThreadExecutor staExecutor,
-        DesktopLayoutSnapshotFactory snapshotFactory)
+        DesktopLayoutSnapshotFactory snapshotFactory,
+        Func<TargetDisplayLayoutRestorePlan, Task<TargetDisplayLayoutExecutionRunResult>>? executionCallback = null)
     {
         InitializeComponent();
 
@@ -65,6 +81,7 @@ public partial class LayoutPreviewWindow : Window
         _positioningCapabilitiesProvider = positioningCapabilitiesProvider;
         _staExecutor = staExecutor;
         _snapshotFactory = snapshotFactory;
+        _executionCallback = executionCallback;
 
         TemplateCombo.ItemsSource = _templateRows;
         DisplayCombo.ItemsSource = _displayRows;
@@ -117,6 +134,23 @@ public partial class LayoutPreviewWindow : Window
         _oosRows.Clear();
         SummaryText.Text = "无有效预览。";
         DiagnosticsText.Text = "—";
+        InvalidateExecutionState();
+    }
+
+    private void InvalidateExecutionState()
+    {
+        _candidateBuildResult = null;
+        _activeCandidate = null;
+        _lastExecutionResult = null;
+        CandidateGroup.Visibility = Visibility.Collapsed;
+        CandidateSummaryText.Text = "";
+        CandidateIssuesText.Text = "";
+        StagingWarningText.Text = "";
+        ExecutionConsentCheckBox.IsChecked = false;
+        ExecutionResultGroup.Visibility = Visibility.Collapsed;
+        ExecutionResultText.Text = "";
+        ExecutionVerificationText.Text = "";
+        ManualRecoveryWarning.Visibility = Visibility.Collapsed;
     }
 
     // ═══ 模板 ═══
@@ -448,6 +482,282 @@ public partial class LayoutPreviewWindow : Window
         finally { _isBusy = false; if (!_isClosing) UpdateButtons(); }
     }
 
+    // ═══ 执行候选生成与执行 ═══
+
+    private async void Execute_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isBusy) return;
+        if (_requiresManualRecovery)
+        {
+            StatusText.Text = "[M2-04B] 需要人工处理，执行已锁定。请关闭本窗口并查看主窗口诊断。";
+            return;
+        }
+        if (_executionCallback is null)
+        {
+            StatusText.Text = "[M2-04B] 此预览窗口未连接执行引擎。";
+            return;
+        }
+        if (_ruleAwarePreviewPlan is null)
+        {
+            StatusText.Text = "[M2-04B] 没有有效预览，请先生成预览。";
+            return;
+        }
+        if (ExecutionConsentCheckBox.IsChecked != true)
+        {
+            StatusText.Text = "[M2-04B] 请先阅读风险并勾选确认框。";
+            return;
+        }
+
+        // 清除上次执行结果
+        _lastExecutionResult = null;
+        ExecutionResultGroup.Visibility = Visibility.Collapsed;
+        ManualRecoveryWarning.Visibility = Visibility.Collapsed;
+
+        _isBusy = true;
+        UpdateButtons();
+        StatusText.Text = "[M2-04B] 正在重新读取桌面并生成执行候选…";
+
+        try
+        {
+            // 1. 重新读取显示器拓扑
+            var displays1 = _displayTopologyReader.GetDisplays();
+            if (_isClosing) return;
+
+            // 2. 解析目标显示器
+            DisplayDescriptor targetDisplay;
+            try
+            {
+                targetDisplay = DesktopLayoutTargetDisplayResolver.Resolve(
+                    _ruleAwarePreviewPlan.Template.TargetDisplayBinding,
+                    displays1,
+                    _selectedTargetDeviceName);
+            }
+            catch (Exception ex)
+            {
+                if (!_isClosing)
+                    StatusText.Text = $"[M2-04B] 目标显示器解析失败：{ex.Message}";
+                return;
+            }
+
+            // 3. STA 线程读取桌面
+            var shellRead = await _staExecutor.RunAsync(() =>
+            {
+                var capabilities = _positioningCapabilitiesProvider.GetCapabilities();
+                var iconRead = _desktopIconReader.ReadDesktopIcons();
+                return new LayoutPreviewShellRead(capabilities, iconRead);
+            });
+            if (_isClosing) return;
+
+            // 4. 再次读取拓扑，检查一致性
+            var displays2 = _displayTopologyReader.GetDisplays();
+            if (!TopologyConsistent(displays1, displays2))
+            {
+                if (!_isClosing)
+                    StatusText.Text = "[M2-04B] 读取期间显示器拓扑发生变化，请重试。";
+                return;
+            }
+
+            // 5. 分配显示器归属
+            var assignedIcons = shellRead.IconRead.Icons.Select(icon =>
+            {
+                var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, displays2);
+                return icon with { MonitorDeviceName = monitor?.DeviceName };
+            }).ToList();
+            var currentRead = new DesktopIconReadResult(
+                assignedIcons, shellRead.IconRead.FailedItemCount,
+                shellRead.IconRead.ConnectionMethod, shellRead.IconRead.ReadTime,
+                shellRead.IconRead.PrimaryPathException);
+
+            // 6. 构建 Candidate
+            var buildResult = DesktopLayoutRuleAwareExecutionCandidatePlanner.Build(
+                _ruleAwarePreviewPlan, currentRead, displays2,
+                shellRead.Capabilities, _snapshotFactory);
+
+            _candidateBuildResult = buildResult;
+
+            if (!buildResult.IsSuccess)
+            {
+                // 展示拒绝原因
+                DisplayCandidateRejection(buildResult);
+                StatusText.Text = "[M2-04B] 执行候选被拒绝。桌面状态在预览后已变化。请重新生成预览。";
+                return;
+            }
+
+            var candidate = buildResult.Candidate!;
+            _activeCandidate = candidate;
+
+            // 7. 展示候选摘要与风险
+            DisplayCandidate(candidate);
+
+            // 8. 二次确认
+            var stepsDetail = new System.Text.StringBuilder();
+            foreach (var step in candidate.ExecutionPlan.Steps)
+            {
+                stepsDetail.AppendLine(
+                    $"  [{step.StepIndex}] {step.DisplayName} ({step.StableId}) " +
+                    $"({step.FromPosition.X},{step.FromPosition.Y}) → " +
+                    $"({step.ToPosition.X},{step.ToPosition.Y}) " +
+                    $"显示器={step.ExpectedMonitorDeviceName}");
+            }
+
+            var confirmMsg =
+                $"确认执行批量桌面图标移动？\n\n" +
+                $"模板: {candidate.SourcePreviewPlan.Template.Name} v{candidate.SourcePreviewPlan.Template.Version}\n" +
+                $"目标显示器: {candidate.TargetDeviceName}\n" +
+                $"需移动图标: {candidate.MoveRequiredCount} 个\n" +
+                $"执行步骤: {candidate.ExecutionStepCount} 步\n" +
+                $"条件: 无中转直接执行\n\n" +
+                $"执行步骤:\n{stepsDetail}\n" +
+                $"Coordinator 将再次读取桌面、重新规划、通过安全闸门、保存安全快照后执行。\n" +
+                $"该操作不可撤销。";
+
+            var dlgResult = MessageBox.Show(confirmMsg, "二次确认 — 批量桌面图标执行",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (dlgResult != MessageBoxResult.Yes)
+            {
+                StatusText.Text += "\n用户取消执行。";
+                return;
+            }
+
+            // 9. 执行（通过回调 → MainWindow → Coordinator）
+            StatusText.Text = "[M2-04B] 正在通过 Coordinator 执行…";
+            TargetDisplayLayoutExecutionRunResult runResult;
+            try
+            {
+                runResult = await _executionCallback(candidate.RestorePlan);
+            }
+            catch (Exception ex)
+            {
+                // 逃逸异常 — 无法确定是否已发生写入
+                _requiresManualRecovery = true;
+                _escapedException = $"{ex.GetType().Name}: {ex.Message}";
+                _lastExecutionResult = null;
+
+                ExecutionResultGroup.Visibility = Visibility.Visible;
+                ExecutionResultText.Text = $"执行逃逸异常：{_escapedException}\n\n" +
+                    "无法确定 Writer 是否已被调用。已进入人工处理锁。";
+                ManualRecoveryWarning.Visibility = Visibility.Visible;
+                StatusText.Text = $"[M2-04B] 执行逃逸异常：{_escapedException}。需要人工处理。";
+                UpdateButtons();
+                return;
+            }
+
+            _lastExecutionResult = runResult;
+
+            // 10. 显示结果
+            DisplayExecutionResult(runResult);
+
+            // 11. 状态处理
+            switch (runResult.Status)
+            {
+                case TargetDisplayLayoutExecutionRunStatus.Completed:
+                    StatusText.Text = "[M2-04B] 执行成功。";
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.CompletedNoOp:
+                    StatusText.Text = "[M2-04B] NoOp — 无需移动。";
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite:
+                    StatusText.Text = "[M2-04B] Writer 未启动，无副作用。请重新生成预览。";
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack:
+                    StatusText.Text = "[M2-04B] 正向失败但已确认回滚，无残留副作用。";
+                    break;
+                case TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete:
+                case TargetDisplayLayoutExecutionRunStatus.PositionUncertain:
+                    _requiresManualRecovery = true;
+                    StatusText.Text = "[M2-04B] ⚠ 需要人工处理。请关闭本窗口并查看主窗口诊断。";
+                    break;
+            }
+        }
+        catch (OperationCanceledException) { /* 静默返回 */ }
+        catch (Exception ex)
+        {
+            if (!_isClosing)
+            {
+                // 此 catch 只捕获第 1–8 步（Candidate 构建、确认对话框等）及第 10–11 步（结果展示）
+                // 中的异常。第 9 步（回调/Writer）的逃逸异常已在内部 catch 中处理并设置人工处理锁。
+                // 此处不设人工处理锁，因为 Writer 未在此路径中启动。
+                StatusText.Text = $"[M2-04B] 阶段异常（Writer 未启动或已完成）：{ex.Message}。";
+            }
+        }
+        finally
+        {
+            _isBusy = false;
+            if (!_isClosing) UpdateButtons();
+        }
+    }
+
+    private void DisplayCandidate(DesktopLayoutRuleAwareExecutionCandidate candidate)
+    {
+        CandidateGroup.Visibility = Visibility.Visible;
+        ExecutionResultGroup.Visibility = Visibility.Collapsed;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"需移动图标: {candidate.MoveRequiredCount}");
+        sb.AppendLine($"执行步骤: {candidate.ExecutionStepCount} (全部 MoveToTarget)");
+        sb.AppendLine($"已就位: {candidate.AlreadyAtTargetCount}");
+        sb.AppendLine($"固定/排除: {candidate.FixedCount}");
+        sb.AppendLine($"恢复受阻: {candidate.RestoreBlockedCount}");
+        sb.AppendLine($"恢复缺失: {candidate.RestoreMissingCount}");
+        sb.AppendLine($"目标显示器: {candidate.TargetDeviceName}");
+        sb.AppendLine($"IsNoOp: {candidate.IsNoOp}");
+        sb.AppendLine($"IsExecutable: {candidate.IsExecutable}");
+
+        CandidateSummaryText.Text = sb.ToString();
+        CandidateIssuesText.Text = "";
+        StagingWarningText.Text = candidate.UsesTemporaryStaging
+            ? "⚠ 该计划需要临时中转，不允许批量执行。请重新生成预览。"
+            : "";
+    }
+
+    private void DisplayCandidateRejection(
+        DesktopLayoutRuleAwareExecutionCandidateBuildResult buildResult)
+    {
+        CandidateGroup.Visibility = Visibility.Visible;
+        ExecutionResultGroup.Visibility = Visibility.Collapsed;
+
+        CandidateSummaryText.Text = "执行候选生成被拒绝。";
+        var issues = new System.Text.StringBuilder();
+        foreach (var issue in buildResult.Issues)
+        {
+            issues.AppendLine($"  [{issue.Code}] {issue.Message}");
+        }
+        CandidateIssuesText.Text = issues.ToString();
+        StagingWarningText.Text = "";
+        ExecutionConsentCheckBox.IsChecked = false;
+    }
+
+    private void DisplayExecutionResult(TargetDisplayLayoutExecutionRunResult runResult)
+    {
+        ExecutionResultGroup.Visibility = Visibility.Visible;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Status: {runResult.Status}");
+        sb.AppendLine($"SafetySnapshotId: {runResult.SafetySnapshotId}");
+        sb.AppendLine($"SessionId: {runResult.Session?.SessionId}");
+        sb.AppendLine($"FailedStepIndex: {runResult.FailedStepIndex}");
+        sb.AppendLine($"RequiresManualRecovery: {runResult.RequiresManualRecovery}");
+        sb.AppendLine($"IsPositionUncertain: {runResult.IsPositionUncertain}");
+        sb.AppendLine($"ForwardAttempts: {runResult.ForwardAttempts.Count}");
+        sb.AppendLine($"RollbackAttempts: {runResult.RollbackAttempts.Count}");
+
+        if (runResult.ForwardFailureType is not null)
+            sb.AppendLine($"ForwardFailure: {runResult.ForwardFailureType}: {runResult.ForwardFailureMessage}");
+        if (runResult.RecoveryFailureType is not null)
+            sb.AppendLine($"RecoveryFailure: {runResult.RecoveryFailureType}: {runResult.RecoveryFailureMessage}");
+
+        ExecutionResultText.Text = sb.ToString();
+        ExecutionVerificationText.Text = ""; // verification done in MainWindow
+
+        ManualRecoveryWarning.Visibility = runResult.RequiresManualRecovery || runResult.IsPositionUncertain
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ExecutionConsent_Changed(object sender, RoutedEventArgs e)
+    {
+        UpdateButtons();
+    }
+
     // ═══ 画布渲染 ═══
 
     private void RenderScene()
@@ -556,6 +866,18 @@ public partial class LayoutPreviewWindow : Window
         RefreshButton.IsEnabled = !_isBusy;
         TemplateCombo.IsEnabled = !_isBusy;
         DisplayCombo.IsEnabled = !_isBusy && _loadedTemplate?.TargetDisplayBinding.Kind == TargetDisplayBindingKind.SelectedTarget;
+
+        var canExecute = !_isBusy && _storeReady && _ruleAwarePreviewPlan is not null
+            && _ruleAwarePreviewPlan.HasChanges && _ruleAwarePreviewPlan.IsComplete
+            && _executionCallback is not null
+            && !_requiresManualRecovery;
+        ExecuteButton.IsEnabled = canExecute;
+        if (_requiresManualRecovery)
+            ExecuteButton.ToolTip = "需要人工处理，执行已锁定。";
+        else if (_executionCallback is null)
+            ExecuteButton.ToolTip = "此预览窗口未连接执行引擎。";
+        else
+            ExecuteButton.ToolTip = "基于当前预览生成执行候选、展示风险、二次确认后通过 Coordinator 批量执行。";
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e)

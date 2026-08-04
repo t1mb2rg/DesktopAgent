@@ -14,6 +14,7 @@ using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+using DesktopAgent.Core.DesktopLayouts.Templates.Execution;
 using DesktopAgent.Poc.LayoutTemplates.Editor;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
@@ -792,11 +793,91 @@ public partial class MainWindow : Window
             _desktopIconReader,
             _desktopIconPositionWriter,
             _staExecutor,
-            _snapshotFactory)
+            _snapshotFactory,
+            ExecuteBatchFromPreviewAsync)
         {
             Owner = this
         };
         window.ShowDialog();
+
+        // 子窗口人工处理锁传回 MainWindow
+        if (window.RequiresManualRecovery)
+        {
+            _layoutRestoreRequiresAttention = true;
+            if (window.LastExecutionResult is not null)
+            {
+                _lastLayoutExecutionResult = window.LastExecutionResult;
+                _layoutRestoreEscapedException = null;
+            }
+            else
+            {
+                _layoutRestoreEscapedException = window.EscapedException;
+                _lastLayoutExecutionResult = null;
+            }
+
+            var details = window.LastExecutionResult is not null
+                ? $"Status: {window.LastExecutionResult.Status}\n" +
+                  $"SafetySnapshotId: {window.LastExecutionResult.SafetySnapshotId}\n" +
+                  $"SessionId: {window.LastExecutionResult.Session?.SessionId}"
+                : $"逃逸异常: {window.EscapedException}";
+
+            StatusText.Text = $"[M2-04B] ⚠ 预览窗口批量执行需要人工处理！\n\n{details}\n\n" +
+                "已进入保护锁。所有写入入口已禁用。请重新启动 PoC。";
+            StatusText.ScrollToHome();
+        }
+        else if (window.LastExecutionResult is not null
+            && window.LastExecutionResult.Status == TargetDisplayLayoutExecutionRunStatus.Completed)
+        {
+            // 执行成功 — 使图标缓存失效
+            _lastReadResult = null;
+            _iconRows.Clear();
+            IconStatsText.Text = "桌面图标已变更。请重新读取。";
+            StatusText.Text = "[M2-04B] 批量执行成功。请重新读取桌面图标以查看最新状态。";
+            StatusText.ScrollToHome();
+        }
+        else if (window.LastExecutionResult is not null
+            && window.LastExecutionResult.Status == TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack)
+        {
+            StatusText.Text = "[M2-04B] 批量执行失败但已确认回滚，无残留副作用。";
+            StatusText.ScrollToHome();
+        }
+
+        UpdateInteractiveState();
+    }
+
+    /// <summary>
+    /// 批量执行回调 — Preview 窗口通过此委托调用 Coordinator。
+    /// WPF 不直接调用 Writer，所有写入经过 Coordinator。
+    /// </summary>
+    private async Task<TargetDisplayLayoutExecutionRunResult> ExecuteBatchFromPreviewAsync(
+        TargetDisplayLayoutRestorePlan restorePlan)
+    {
+        // 执行前清空上次执行结果（防止陈旧诊断污染）
+        _lastLayoutExecutionResult = null;
+        _layoutRestoreEscapedException = null;
+
+        // 适配 Core GateResult → Interop GateResult
+        var result = await _layoutExecutionCoordinator.ExecuteWithScopeGateAsync(
+            restorePlan,
+            (rp, ep) =>
+            {
+                var coreResult = DesktopLayoutRuleAwareExecutionScopeGate.EvaluateDirectExecution(rp, ep);
+                return coreResult.IsAllowed
+                    ? TargetDisplayLayoutExecutionScopeGate.GateResult.Allowed()
+                    : TargetDisplayLayoutExecutionScopeGate.GateResult.Rejected(
+                        coreResult.RejectionReasons.ToList());
+            },
+            CancellationToken.None);
+
+        _lastLayoutExecutionResult = result;
+
+        // 如果需要人工处理，记录
+        if (result.RequiresManualRecovery || result.IsPositionUncertain)
+        {
+            _layoutRestoreRequiresAttention = true;
+        }
+
+        return result;
     }
 
     // ═══════════════════════════════════════════════════
