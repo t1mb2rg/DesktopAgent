@@ -306,13 +306,25 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
     [Fact]
     public async Task VerificationNotSkippableByUICancel()
     {
-        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new ScriptedDesktopIconPositionWriter();
-        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+        // 2-step plan: step 0 blocks → cancel while blocked → release
+        // → step 0 completes exact → step 1 pre-writer check detects cancel
+        // → rolls back step 0 → rollback verification uses CancellationToken.None
+        // → verification still completes despite cancelled token
+        var plan = MakeRestorePlan(
+            [Snap("a", new(240, 80)), Snap("b", new(400, 80))],
+            [Live("a", new(160, 80)), Live("b", new(320, 80))]);
 
+        var writer = new ScriptedDesktopIconPositionWriter();
+        var started0 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release0 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        writer.ScriptBlockingExact("a", new(240, 80), new(160, 80), started0, release0);
+        // Rollback for step 0
+        writer.ScriptExactResult("a", new(240, 80), new(160, 80));
+
+        // Reader: initial re-read then rollback verification (returns original positions)
         var reader = new ScriptedDesktopIconReader();
-        reader.Enqueue([Live("a", new(160, 240))]); // initial re-read
-        reader.Enqueue([Live("a", new(240, 320))]); // verification succeeds
+        reader.Enqueue([Live("a", new(160, 80)), Live("b", new(320, 80))]); // initial re-read
+        reader.Enqueue([Live("a", new(160, 80)), Live("b", new(320, 80))]); // rollback verification: both at original
 
         var store = new InMemoryDesktopLayoutSnapshotStore();
         var coordinator = new TargetDisplayLayoutExecutionCoordinator(
@@ -320,10 +332,20 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
 
-        // Cancel token — writer already happened, verification must still complete
         using var cts = new CancellationTokenSource();
-        var result = await coordinator.ExecuteAsync(plan, cts.Token);
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+        var task = coordinator.ExecuteAsync(plan, cts.Token);
+
+        // Wait for writer step 0 to start
+        await started0.Task;
+        // Cancel while writer is blocked
+        cts.Cancel();
+        // Release writer
+        release0.TrySetResult();
+
+        var result = await task;
+        // Rollback completed + verification ran despite cancelled token
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
         Assert.NotNull(result.VerificationResult);
+        Assert.Equal(ExecutionVerificationPhase.Rollback, result.VerificationResult!.Phase);
     }
 }

@@ -398,8 +398,9 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
             .Select(a => a.SourceStepIndex).ToList();
 
+        // 使用 CancellationToken.None — Writer 已发生，验证不可被 UI 取消
         var verificationResult = await _verifyForward(
-            executionPlan, session, cancellationToken);
+            executionPlan, session, CancellationToken.None);
 
         var successSession = BuildSession(session, forwardOnly,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
@@ -886,6 +887,17 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                         $"目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
                 }
             }
+
+            // 验证 AlreadyAtTarget 项也在正确位置
+            if (item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
+            {
+                if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
+                {
+                    issues.Add($"\"{item.StableId}\" (AlreadyAtTarget) Forward 验证位置 " +
+                        $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
+                        $"快照目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
+                }
+            }
         }
 
         if (missingCount > 0)
@@ -974,6 +986,24 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
                     $"原始 FromPosition ({expectedPos.X},{expectedPos.Y})。");
                 notRestored++;
+            }
+
+            // 验证回滚后显示器归属与原始状态一致
+            var targetDeviceName = session.TargetDeviceName;
+            if (!string.Equals(currentIcon.MonitorDeviceName ?? "", targetDeviceName, StringComparison.Ordinal))
+            {
+                // 回滚后图标可能在其他显示器上 — 记录但不算位置错误
+                // 除非原始图标就在目标显示器上且有明确的 CurrentMonitorDeviceName
+                foreach (var item in session.SourceRestorePlan.Items)
+                {
+                    if (string.Equals(item.StableId, sid, StringComparison.Ordinal)
+                        && item.CurrentMonitorDeviceName is not null
+                        && !string.Equals(currentIcon.MonitorDeviceName ?? "", item.CurrentMonitorDeviceName, StringComparison.Ordinal))
+                    {
+                        issues.Add($"\"{sid}\" Rollback 验证显示器 \"{currentIcon.MonitorDeviceName}\" ≠ " +
+                            $"原始 \"{item.CurrentMonitorDeviceName}\"。");
+                    }
+                }
             }
         }
 

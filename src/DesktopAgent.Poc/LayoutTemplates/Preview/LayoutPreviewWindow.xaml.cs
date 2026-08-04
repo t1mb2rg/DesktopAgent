@@ -963,10 +963,13 @@ public partial class LayoutPreviewWindow : Window
         catch (OperationCanceledException) { /* 静默返回 */ }
         catch (Exception ex)
         {
-            _manualRecoveryRequired = true;
+            // Writer 前异常（fresh re-read/re-plan/semantic comparison）— 不进入人工处理锁
+            // Writer 尚未启动，没有副作用
             EscapedException = $"{ex.GetType().Name}: {ex.Message}";
             LastExecutionResult = null;
-            DisplayExecutionResult(null, EscapedException);
+            ExecutionResultText.Text = $"执行准备阶段失败（Writer 未启动，无副作用）：\n{ex.Message}\n请重新生成预览。";
+            ManualRecoveryText.Visibility = Visibility.Collapsed;
+            StatusText.Text = $"执行准备阶段失败：{ex.Message}。请重新预览。";
         }
         finally
         {

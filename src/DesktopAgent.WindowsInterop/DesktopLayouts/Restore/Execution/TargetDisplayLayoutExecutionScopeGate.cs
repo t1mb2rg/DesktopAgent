@@ -178,6 +178,22 @@ internal static class TargetDisplayLayoutExecutionScopeGate
             reasons.Add($"ExecutionPlan.Steps.Count = {executionPlan.Steps.Count}，" +
                 $"但 RestorePlan.MoveRequiredCount = {restorePlan.MoveRequiredCount}，不一致。");
 
+        // ── MoveRequired Items StableId 唯一性 ──
+        var moveSids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in moveRequiredItems)
+        {
+            if (!moveSids.Add(item.StableId))
+                reasons.Add($"MoveRequired items 中存在重复 StableId \"{item.StableId}\"。");
+        }
+
+        // ── 收集非 MoveRequired 的 StableId（不可被 step 引用）──
+        var nonMoveSids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in restorePlan.Items)
+        {
+            if (item.State != TargetDisplayLayoutRestoreItemState.MoveRequired)
+                nonMoveSids.Add(item.StableId);
+        }
+
         // ── 逐 Step 检查 ──
         var stepSids = new HashSet<string>(StringComparer.Ordinal);
         var itemBySid = new Dictionary<string, TargetDisplayLayoutRestorePlanItem>(StringComparer.Ordinal);
@@ -204,6 +220,10 @@ internal static class TargetDisplayLayoutExecutionScopeGate
             if (step.FromPosition == step.ToPosition)
                 reasons.Add($"Steps[{i}] (\"{step.StableId}\") FromPosition == ToPosition " +
                     $"({step.FromPosition.X},{step.FromPosition.Y})。");
+
+            // 不能引用非 MoveRequired Item 的 StableId
+            if (nonMoveSids.Contains(step.StableId))
+                reasons.Add($"Steps[{i}] StableId \"{step.StableId}\" 属于非 MoveRequired item（AlreadyAtTarget/Blocked 等）。");
 
             // 能按 StableId 唯一映射到一个 MoveRequired Item
             if (!itemBySid.TryGetValue(step.StableId, out var item))

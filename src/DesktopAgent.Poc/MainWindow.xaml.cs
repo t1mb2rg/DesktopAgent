@@ -817,8 +817,16 @@ public partial class MainWindow : Window
 
             StatusText.Text = "[MainWindow] 布局预览窗口返回人工处理锁：所有旧写入入口已禁用。";
             LayoutRestorePreviewText.Text = "布局恢复已禁用（来自布局预览的批量执行人工处理锁）。";
-            UpdateInteractiveState();
         }
+        else
+        {
+            // 正常关闭 — 清除可能残留的陈旧诊断状态
+            if (_lastLayoutExecutionResult is not null)
+                _lastLayoutExecutionResult = null;
+            if (_layoutRestoreEscapedException is not null)
+                _layoutRestoreEscapedException = null;
+        }
+        UpdateInteractiveState();
     }
 
     // ═══════════════════════════════════════════════════
