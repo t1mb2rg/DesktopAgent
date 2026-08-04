@@ -96,6 +96,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             TargetDisplayLayoutExecutionScopeGate.GateResult>? scopeGate,
         CancellationToken cancellationToken)
     {
+        try
+        {
         // ═══ 1. 重新读取 + 分配显示器 ═══
         DesktopIconPositioningCapabilities capabilities;
         DesktopIconReadResult currentRead;
@@ -268,6 +270,13 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         // ═══ 8. 逐步执行 ═══
         return await ExecuteStepsAsync(
             session, executionPlan, safetySnapshot.SnapshotId, cancellationToken);
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Writer 未启动前取消 → FailedBeforeWrite，不进入人工处理锁
+            return FailedBeforeWriteS("OperationCanceledBeforeWrite",
+                $"Writer 未启动即取消：{ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     // ═══════════════════════════════════════════════
@@ -298,7 +307,9 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                         "OperationCanceledException", "步骤间取消。",
                         null, null, cancellationToken);
                 }
-                cancellationToken.ThrowIfCancellationRequested();
+                // 无副作用 → 返回 FailedBeforeWrite，不抛出 OCE 逃逸到 UI
+                return FailedBeforeWriteS("OperationCanceledBeforeWrite",
+                    "Writer 未启动即取消。");
             }
 
             // 调用 Writer（不取消等待）

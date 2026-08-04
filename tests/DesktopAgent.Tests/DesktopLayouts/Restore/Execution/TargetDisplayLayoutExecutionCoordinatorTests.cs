@@ -448,9 +448,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             ((IList<TargetDisplayLayoutExecutionAttemptResult>)result.RollbackAttempts).Clear());
     }
 
-    // ═══════════ 20. Cancellation before Writer ═══════════
-    [Fact] public async Task CancellationBeforeWriter_NoWriteOccurs()
+    // ═══════════ 20. Cancellation before Writer → FailedBeforeWrite (Blocker 1) ═══════════
+    [Fact] public async Task CancellationBeforeWriter_ReturnsFailedBeforeWrite_NoThrow()
     {
+        // OCE before Writer 不得逃逸 Coordinator → 返回 FailedBeforeWrite，不进入人工处理锁
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
         var writer = new ScriptedDesktopIconPositionWriter();
         writer.ScriptExactResult("a", new(160, 240), new(240, 320));
@@ -459,8 +460,38 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new InMemoryDesktopLayoutSnapshotStore());
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => coordinator.ExecuteAsync(plan, cts.Token));
+        // 不抛异常 → 返回结构化 FailedBeforeWrite
+        var result = await coordinator.ExecuteAsync(plan, cts.Token);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Equal("OperationCanceledBeforeWrite", result.ForwardFailureType);
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
+        Assert.Equal(0, writer.AttemptCount);
+    }
+
+    // ═══════════ Blocker 2: ExecuteStepsAsync pre-Writer OCE → FailedBeforeWrite ═══════════
+    [Fact]
+    public async Task CancellationBeforeFirstWriter_ReturnsFailedBeforeWrite_NotEscaped()
+    {
+        // 步骤间取消且无先前精确成功 → 返回 FailedBeforeWrite（不抛 OCE）
+        // 使用内部构造函数 + 预取消 token 通过 ExecuteCoreAsync 的 OCE 外层捕获
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore());
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var result = await coordinator.ExecuteAsync(plan, cts.Token);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Equal("OperationCanceledBeforeWrite", result.ForwardFailureType);
+        Assert.Contains("Writer 未启动即取消", result.ForwardFailureMessage);
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
         Assert.Equal(0, writer.AttemptCount);
     }
 
