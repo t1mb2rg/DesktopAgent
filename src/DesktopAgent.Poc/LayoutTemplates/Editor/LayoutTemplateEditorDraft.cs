@@ -69,6 +69,11 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
 
     public ObservableCollection<LayoutIconRuleEditorDraft> Rules { get; } = [];
 
+    public int RuleCount => Rules.Count;
+    public int ExcludeRuleCount => Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.Exclude);
+    public int PinRuleCount => Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.Pin);
+    public int ZoneOverrideRuleCount => Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.ZoneOverride);
+
     private bool _isDirty;
     public bool IsDirty
     {
@@ -410,12 +415,26 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
                 SubscribeRule(rule);
     }
 
-    private void OnRulePropertyChanged(object? sender, PropertyChangedEventArgs e) => SetDirty();
+    private void OnRulePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        SetDirty();
+        if (e.PropertyName is null || e.PropertyName == nameof(LayoutIconRuleEditorDraft.Kind))
+            NotifyRuleStatsChanged();
+    }
 
     private void OnRulesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         SyncRuleSubscriptions();
         SetDirty();
+        NotifyRuleStatsChanged();
+    }
+
+    private void NotifyRuleStatsChanged()
+    {
+        OnPropertyChanged(nameof(RuleCount));
+        OnPropertyChanged(nameof(ExcludeRuleCount));
+        OnPropertyChanged(nameof(PinRuleCount));
+        OnPropertyChanged(nameof(ZoneOverrideRuleCount));
     }
 
     // ═══ INotifyPropertyChanged ═══

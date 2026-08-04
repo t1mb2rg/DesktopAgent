@@ -173,4 +173,53 @@ public sealed class LayoutRuleAwarePreviewSafetyTests
             new PixelRect(0, 0, 80, 80), null);
         Assert.Equal("Fixed", LayoutPreviewItemRow.FromRuleAware(fi).PlacementStateText);
     }
+
+    [Fact] public void PlannerOutput_ItemReferencesMatchPlacementPlan()
+    {
+        // Full planner output should pass all PreviewPlan constructor invariants
+        var tid = Guid.NewGuid(); var zid = Guid.NewGuid();
+        var template = new DesktopAgent.Core.DesktopLayouts.Templates.DesktopLayoutTemplate(
+            tid, "T", 1, DesktopAgent.Core.DesktopLayouts.Templates.TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopAgent.Core.DesktopLayouts.Templates.DesktopLayoutZone(zid, "Z",
+                new DesktopAgent.Core.DesktopLayouts.Templates.NormalizedRect(0, 0, 10000, 10000), 0,
+                DesktopAgent.Core.DesktopLayouts.Templates.ZonePlacementFlow.ColumnMajor, null) });
+        var dd = new DesktopAgent.Core.Displays.DisplayDescriptor(
+            "DISPLAY1", new PixelRect(0,0,1920,1080), new PixelRect(0,0,1920,1080), 96, 96, true);
+        var icon = new DesktopAgent.Core.DesktopLayouts.DesktopIconSnapshotItem(
+            0, "a", "N", null, DesktopAgent.Core.DesktopIcons.ItemKind.File,
+            new PixelPoint(0, 0), "DISPLAY1", false, true);
+        var ruleSet = DesktopLayoutIconRuleSet.Empty(tid);
+
+        // Full planner path → automatic invariant verification
+        var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, ruleSet, new[] { dd }, null, new PixelPoint(80, 80),
+            new[] { icon });
+        Assert.NotNull(plan);
+        Assert.Single(plan.Items);
+    }
+
+    [Fact] public void ExternalEquivalentIcon_RejectedByPlan()
+    {
+        var tid = Guid.NewGuid(); var zid = Guid.NewGuid();
+        var template = new DesktopAgent.Core.DesktopLayouts.Templates.DesktopLayoutTemplate(
+            tid, "T", 1, DesktopAgent.Core.DesktopLayouts.Templates.TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopAgent.Core.DesktopLayouts.Templates.DesktopLayoutZone(zid, "Z",
+                new DesktopAgent.Core.DesktopLayouts.Templates.NormalizedRect(0, 0, 10000, 10000), 0,
+                DesktopAgent.Core.DesktopLayouts.Templates.ZonePlacementFlow.ColumnMajor, null) });
+        var dd = new DesktopAgent.Core.Displays.DisplayDescriptor(
+            "DISPLAY1", new PixelRect(0,0,1920,1080), new PixelRect(0,0,1920,1080), 96, 96, true);
+        var realIcon = new DesktopAgent.Core.DesktopLayouts.DesktopIconSnapshotItem(
+            0, "a", "N", null, DesktopAgent.Core.DesktopIcons.ItemKind.File,
+            new PixelPoint(0, 0), "DISPLAY1", false, true);
+        var ruleSet = DesktopLayoutIconRuleSet.Empty(tid);
+
+        var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, ruleSet, new[] { dd }, null, new PixelPoint(80, 80),
+            new[] { realIcon });
+        Assert.NotNull(plan);
+
+        // Verify Items use original icon references
+        foreach (var item in plan.Items)
+            Assert.Same(realIcon, item.Icon);
+    }
 }

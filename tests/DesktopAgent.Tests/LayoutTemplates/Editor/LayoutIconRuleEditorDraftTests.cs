@@ -109,4 +109,14 @@ public sealed class LayoutIconRuleEditorDraftTests
         d.Kind = (DesktopLayoutIconRuleKind)99;
         Assert.Null(d.TryBuild(out var err));
     }
+
+    [Fact] public void ExcludeToOverride_IsZoneOverrideUpdates()
+    {
+        var zid = Guid.NewGuid();
+        var d = LayoutIconRuleEditorDraft.FromRule(DesktopLayoutIconRule.ForExclude("app"));
+        Assert.False(d.IsZoneOverride);
+        d.Kind = DesktopLayoutIconRuleKind.ZoneOverride;
+        d.TargetZoneId = zid;
+        Assert.True(d.IsZoneOverride);
+    }
 }

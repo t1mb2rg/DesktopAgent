@@ -111,7 +111,8 @@ PlacementState：Fixed / AlreadyAtTarget / MoveRequired / Unassigned
 
 ## 测试数量与结果
 
-- 全量：1107/1107 通过
+- 新增测试：48 个（草稿 20 + 协调器 6 + Preview 15 + 安全 7）
+- 全量：1155/1155 通过（CI build #75）
 - Build：0 errors
 - NuGet：0 漏洞
 

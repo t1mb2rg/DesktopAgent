@@ -131,4 +131,55 @@ public sealed class LayoutTemplateEditorRuleDraftTests
         removed.StableId = "polluted";
         Assert.False(draft.IsDirty); // 解除订阅后不污染
     }
+
+    [Fact] public void KindChange_UpdatesStats()
+    {
+        var tid = Guid.NewGuid();
+        var draft = LayoutTemplateEditorDraft.FromTemplateAndRuleSet(
+            MakeTemplate(tid, Guid.NewGuid()),
+            new DesktopLayoutIconRuleSet(tid,
+                new[] { DesktopLayoutIconRule.ForExclude("a"), DesktopLayoutIconRule.ForPin("b") }));
+        Assert.Equal(2, draft.RuleCount);
+        Assert.Equal(1, draft.ExcludeRuleCount);
+        Assert.Equal(1, draft.PinRuleCount);
+        Assert.Equal(0, draft.ZoneOverrideRuleCount);
+        draft.Rules[0].Kind = DesktopLayoutIconRuleKind.ZoneOverride;
+        draft.Rules[0].TargetZoneId = draft.Zones[0].ZoneId;
+        Assert.Equal(0, draft.ExcludeRuleCount);
+        Assert.Equal(1, draft.PinRuleCount);
+        Assert.Equal(1, draft.ZoneOverrideRuleCount);
+    }
+
+    [Fact] public void AddRemove_UpdatesStats()
+    {
+        var tid = Guid.NewGuid();
+        var draft = LayoutTemplateEditorDraft.FromTemplateAndRuleSet(
+            MakeTemplate(tid, Guid.NewGuid()),
+            DesktopLayoutIconRuleSet.Empty(tid));
+        Assert.Equal(0, draft.RuleCount);
+        draft.Rules.Add(new LayoutIconRuleEditorDraft("a",
+            DesktopLayoutIconRuleKind.Exclude, null));
+        Assert.Equal(1, draft.RuleCount);
+        Assert.Equal(1, draft.ExcludeRuleCount);
+        draft.Rules.RemoveAt(0);
+        Assert.Equal(0, draft.RuleCount);
+        Assert.Equal(0, draft.ExcludeRuleCount);
+    }
+
+    [Fact] public void FromRuleSet_StatsCorrect()
+    {
+        var tid = Guid.NewGuid(); var zid = Guid.NewGuid();
+        var draft = LayoutTemplateEditorDraft.FromTemplateAndRuleSet(
+            MakeTemplate(tid, zid),
+            new DesktopLayoutIconRuleSet(tid, new[]
+            {
+                DesktopLayoutIconRule.ForExclude("a"),
+                DesktopLayoutIconRule.ForPin("b"),
+                DesktopLayoutIconRule.ForZoneOverride("c", zid),
+            }));
+        Assert.Equal(3, draft.RuleCount);
+        Assert.Equal(1, draft.ExcludeRuleCount);
+        Assert.Equal(1, draft.PinRuleCount);
+        Assert.Equal(1, draft.ZoneOverrideRuleCount);
+    }
 }

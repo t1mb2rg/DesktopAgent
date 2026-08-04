@@ -201,8 +201,12 @@
 
                         <!-- 统计 -->
                         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
-                            <TextBlock x:Name="RuleStatsText" FontSize="11" Foreground="Gray"
-                                Text="RuleStats" />
+                            <TextBlock FontSize="11" Foreground="Gray">
+                                <Run Text="总数:" /><Run Text="{Binding RuleCount, Mode=OneWay}" />
+                                <Run Text="  Exclude:" /><Run Text="{Binding ExcludeRuleCount, Mode=OneWay}" />
+                                <Run Text="  Pin:" /><Run Text="{Binding PinRuleCount, Mode=OneWay}" />
+                                <Run Text="  ZoneOverride:" /><Run Text="{Binding ZoneOverrideRuleCount, Mode=OneWay}" />
+                            </TextBlock>
                         </StackPanel>
 
                         <!-- 操作按钮 -->
@@ -249,6 +253,7 @@
                                               DisplayMemberPath="Name"
                                               SelectedValuePath="ZoneId"
                                               ItemsSource="{Binding Zones}"
+                                              IsEnabled="{Binding ElementName=RulesGrid, Path=SelectedItem.IsZoneOverride}"
                                               SelectedValue="{Binding ElementName=RulesGrid, Path=SelectedItem.TargetZoneId, UpdateSourceTrigger=PropertyChanged}" />
                                 </StackPanel>
                             </GroupBox>

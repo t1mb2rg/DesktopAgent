@@ -217,6 +217,33 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         if (!ReferenceEquals(placementPlan.ResolutionPlan, resolutionPlan))
             throw new ArgumentException("PlacementPlan.ResolutionPlan 与 resolutionPlan 不是同一实例。");
 
+        // TargetDisplay 一致性
+        if (!ReferenceEquals(resolutionPlan.TargetDisplay, targetDisplay))
+            throw new ArgumentException("ResolutionPlan.TargetDisplay 与 targetDisplay 不是同一实例。");
+
+        // ═══ ResolutionPlan 来源验证 ═══
+        // InputIcons 与 resolutionPlan.InputIcons 逐项同引用
+        if (inputIcons.Count != resolutionPlan.InputIcons.Count)
+            throw new ArgumentException(
+                $"InputIcons 数量 ({inputIcons.Count}) != ResolutionPlan.InputIcons ({resolutionPlan.InputIcons.Count})。");
+        for (var i = 0; i < inputIcons.Count; i++)
+            if (!ReferenceEquals(inputIcons[i], resolutionPlan.InputIcons[i]))
+                throw new ArgumentException($"InputIcons[{i}] 与 ResolutionPlan.InputIcons[{i}] 不是同一实例。");
+
+        // TargetDisplayIcons 与 resolutionPlan 逐项同引用
+        if (targetDisplayIcons.Count != resolutionPlan.TargetDisplayIcons.Count)
+            throw new ArgumentException("TargetDisplayIcons 数量与 ResolutionPlan 不一致。");
+        for (var i = 0; i < targetDisplayIcons.Count; i++)
+            if (!ReferenceEquals(targetDisplayIcons[i], resolutionPlan.TargetDisplayIcons[i]))
+                throw new ArgumentException($"TargetDisplayIcons[{i}] 与 ResolutionPlan 不是同一实例。");
+
+        // OutOfScopeIcons 与 resolutionPlan 逐项同引用
+        if (outOfScopeIcons.Count != resolutionPlan.OutOfScopeIcons.Count)
+            throw new ArgumentException("OutOfScopeIcons 数量与 ResolutionPlan 不一致。");
+        for (var i = 0; i < outOfScopeIcons.Count; i++)
+            if (!ReferenceEquals(outOfScopeIcons[i], resolutionPlan.OutOfScopeIcons[i]))
+                throw new ArgumentException($"OutOfScopeIcons[{i}] 与 ResolutionPlan 不是同一实例。");
+
         // 输入集合验证 + 防御性复制
         var inputList = inputIcons.ToList();
         var targetList = targetDisplayIcons.ToList();
@@ -317,6 +344,87 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             throw new ArgumentException("DefaultAssignedCount 不一致。");
         if (defUnassigned != placementPlan.DefaultUnassignedCount)
             throw new ArgumentException("DefaultUnassignedCount 不一致。");
+
+        // ═══ 每个 PreviewItem 精确对应 PlacementPlan 原始来源 ═══
+        // 构建 PlacementPlan 引用索引
+        var ppExcludedByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopLayoutRuleAwareFixedItem>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var fi in placementPlan.ExcludedItems)
+            ppExcludedByIcon[fi.Icon] = fi;
+        var ppPinnedByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopLayoutRuleAwareFixedItem>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var fi in placementPlan.PinnedItems)
+            ppPinnedByIcon[fi.Icon] = fi;
+        var ppOvrAssignedByRule = new Dictionary<DesktopLayoutIconRule, DesktopLayoutRuleAwareAssignedItem>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var ai in placementPlan.OverrideAssignedItems)
+            ppOvrAssignedByRule[ai.Rule!] = ai;
+        var ppOvrUnassignedByRule = new HashSet<DesktopLayoutIconRule>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var ou in placementPlan.OverrideUnassignedItems)
+            ppOvrUnassignedByRule.Add(ou.Rule);
+        var ppDefAssignedByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopLayoutRuleAwareAssignedItem>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var ai in placementPlan.DefaultAssignedItems)
+            ppDefAssignedByIcon[ai.Icon] = ai;
+        var ppDefUnassignedIcons = new HashSet<DesktopIconSnapshotItem>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var du in placementPlan.DefaultUnassignedItems)
+            ppDefUnassignedIcons.Add(du);
+
+        for (var i = 0; i < itemsList.Count; i++)
+        {
+            var item = itemsList[i];
+            switch (item.Disposition)
+            {
+                case DesktopLayoutRuleAwarePreviewItemDisposition.Excluded:
+                    if (!ppExcludedByIcon.TryGetValue(item.Icon, out var exFi))
+                        throw new ArgumentException($"Items[{i}] Excluded Icon 不在 PlacementPlan.ExcludedItems 中。");
+                    if (!ReferenceEquals(exFi.Rule, item.Rule))
+                        throw new ArgumentException($"Items[{i}] Excluded Rule 与 PlacementPlan 不一致。");
+                    break;
+                case DesktopLayoutRuleAwarePreviewItemDisposition.Pinned:
+                    if (!ppPinnedByIcon.TryGetValue(item.Icon, out var pinFi))
+                        throw new ArgumentException($"Items[{i}] Pinned Icon 不在 PlacementPlan.PinnedItems 中。");
+                    if (!ReferenceEquals(pinFi.Rule, item.Rule))
+                        throw new ArgumentException($"Items[{i}] Pinned Rule 与 PlacementPlan 不一致。");
+                    break;
+                case DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride:
+                    if (item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.Unassigned)
+                    {
+                        if (!ppOvrUnassignedByRule.Contains(item.Rule!))
+                            throw new ArgumentException($"Items[{i}] OverrideUnassigned Rule 不在 PlacementPlan 中。");
+                    }
+                    else
+                    {
+                        if (!ppOvrAssignedByRule.TryGetValue(item.Rule!, out var ovrAi))
+                            throw new ArgumentException($"Items[{i}] OverrideAssigned Rule 不在 PlacementPlan 中。");
+                        if (!ReferenceEquals(ovrAi.Icon, item.Icon))
+                            throw new ArgumentException($"Items[{i}] OverrideAssigned Icon 不一致。");
+                        if (ovrAi.SlotIndex != item.SlotIndex)
+                            throw new ArgumentException($"Items[{i}] OverrideAssigned SlotIndex 不一致。");
+                        if (ovrAi.TargetPosition != item.TargetPosition)
+                            throw new ArgumentException($"Items[{i}] OverrideAssigned TargetPosition 不一致。");
+                    }
+                    break;
+                case DesktopLayoutRuleAwarePreviewItemDisposition.Default:
+                    if (item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.Unassigned)
+                    {
+                        if (!ppDefUnassignedIcons.Contains(item.Icon))
+                            throw new ArgumentException($"Items[{i}] DefaultUnassigned Icon 不在 PlacementPlan 中。");
+                    }
+                    else
+                    {
+                        if (!ppDefAssignedByIcon.TryGetValue(item.Icon, out var defAi))
+                            throw new ArgumentException($"Items[{i}] DefaultAssigned Icon 不在 PlacementPlan 中。");
+                        if (defAi.SlotIndex != item.SlotIndex)
+                            throw new ArgumentException($"Items[{i}] DefaultAssigned SlotIndex 不一致。");
+                        if (defAi.TargetPosition != item.TargetPosition)
+                            throw new ArgumentException($"Items[{i}] DefaultAssigned TargetPosition 不一致。");
+                    }
+                    break;
+            }
+        }
 
         // 统计
         int atTarget = 0, moveReq = 0;
