@@ -375,4 +375,240 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
         Assert.NotNull(result.VerificationResult);
         Assert.Equal(ExecutionVerificationPhase.Rollback, result.VerificationResult!.Phase);
     }
+
+    // ═══════════════════════════════════════════════════
+    //  Invariant 1: Verifier exception → PositionUncertain
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ForwardVerifierThrows_ReturnsPositionUncertain_NotEscaped()
+    {
+        // Verifier 异常不得逃出 Coordinator → 转化为 PositionUncertain
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial re-read
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store,
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            verifyForward: (_, _, _) => throw new InvalidOperationException("verifier BOMB"),
+            verifyRollback: null);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        // 必须返回 PositionUncertain，不能逃出异常
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("ForwardVerificationException", result.ForwardFailureType);
+        Assert.Contains("verifier BOMB", result.ForwardFailureMessage);
+        Assert.NotNull(result.Session);
+        Assert.True(result.Session!.RequiresManualRecovery);
+        Assert.True(result.Session.IsPositionUncertain);
+    }
+
+    [Fact]
+    public async Task RollbackVerifierThrows_ReturnsPositionUncertain_NotEscaped()
+    {
+        // 回滚验证异常不得逃出 Coordinator → 转化为 PositionUncertain
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult("a", new(160, 240), new(240, 320), new(250, 330));
+        writer.ScriptExactResult("a", new(250, 330), new(160, 240)); // rollback exact
+
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial re-read
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store,
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            verifyForward: null,
+            verifyRollback: (_, _, _) => throw new InvalidOperationException("rollback verifier BOMB"));
+
+        var result = await coordinator.ExecuteAsync(plan);
+        // 必须返回 PositionUncertain，不能逃出异常
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("RollbackVerificationException", result.RecoveryFailureType);
+        Assert.Contains("rollback verifier BOMB", result.RecoveryFailureMessage);
+        Assert.NotNull(result.Session);
+        Assert.True(result.Session!.RequiresManualRecovery);
+        Assert.True(result.Session.IsPositionUncertain);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Invariant 2: FailedAndRolledBack 仅在独立重读证明
+    //  所有相关图标的原始坐标和显示器归属都恢复后成立
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Rollback_PositionNotRestored_NotFailedAndRolledBack()
+    {
+        // Rollback Writer 精确但独立重读位置未恢复 → 不得返回 FailedAndRolledBack
+        // Invariant 2: FailedAndRolledBack 仅在独立重读证明位置恢复后成立
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult("a", new(160, 240), new(240, 320), new(250, 330));
+        writer.ScriptExactResult("a", new(250, 330), new(160, 240)); // rollback Writer says OK
+
+        // Rollback verification: 独立重读显示位置 ≠ 原始 FromPosition
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial re-read
+        reader.Enqueue([Live("a", new(999, 999))]); // rollback verification: NOT at original
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        // 不得返回 FailedAndRolledBack（独立重读证明位置未恢复）
+        Assert.NotEqual(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.NotNull(result.VerificationResult);
+        Assert.Equal(ExecutionVerificationStatus.Failed, result.VerificationResult!.Status);
+    }
+
+    [Fact]
+    public async Task Rollback_PositionCorrectMonitorCorrect_FailedAndRolledBack()
+    {
+        // Rollback 后位置和显示器都恢复 → FailedAndRolledBack
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult("a", new(160, 240), new(240, 320), new(250, 330));
+        writer.ScriptExactResult("a", new(250, 330), new(160, 240)); // rollback exact
+
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial re-read
+        reader.Enqueue([Live("a", new(160, 240))]); // rollback verification: position + monitor correct
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
+        Assert.NotNull(result.VerificationResult);
+        Assert.Equal(ExecutionVerificationStatus.Passed, result.VerificationResult!.Status);
+        Assert.Equal(ExecutionVerificationPhase.Rollback, result.VerificationResult.Phase);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Invariant 3: Forward verification 非 Passed →
+    //  RunResult + RecoverySession 一致
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ForwardVerificationFailed_RunResultAndSession_Consistent()
+    {
+        // Forward 验证 Failed → RunResult 与 RecoverySession 必须同时满足
+        // RequiresManualRecovery=true, IsPositionUncertain=true
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+
+        // Verification: position mismatch → Failed
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial
+        reader.Enqueue([Live("a", new(999, 999))]); // verification: wrong position
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal(ExecutionVerificationStatus.Failed, result.VerificationResult!.Status);
+
+        // Invariant 3: RunResult 标志
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+
+        // Invariant 3: Session 标志必须与 RunResult 一致
+        Assert.NotNull(result.Session);
+        Assert.True(result.Session!.RequiresManualRecovery,
+            "Session.RequiresManualRecovery 必须为 true（与 RunResult 一致）");
+        Assert.True(result.Session!.IsPositionUncertain,
+            "Session.IsPositionUncertain 必须为 true（与 RunResult 一致）");
+        Assert.Equal("PositionUncertain", result.Session.Status);
+    }
+
+    [Fact]
+    public async Task ForwardVerificationUncertain_RunResultAndSession_Consistent()
+    {
+        // Forward 验证 Uncertain → RunResult 与 RecoverySession 标志一致
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+
+        // Verification: incomplete read → Uncertain
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial
+        reader.Enqueue(new DesktopIconReadResult(
+            [Live("a", new(240, 320))], 1, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null));
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal(ExecutionVerificationStatus.Uncertain, result.VerificationResult!.Status);
+
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.NotNull(result.Session);
+        Assert.True(result.Session!.RequiresManualRecovery);
+        Assert.True(result.Session!.IsPositionUncertain);
+        Assert.Equal("PositionUncertain", result.Session.Status);
+    }
+
+    [Fact]
+    public async Task ForwardVerificationPassed_RunResultAndSession_Consistent()
+    {
+        // Forward 验证 Passed → 两处都为 false（对照组）
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]); // initial
+        reader.Enqueue([Live("a", new(240, 320))]); // verification: correct position
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+        Assert.Equal(ExecutionVerificationStatus.Passed, result.VerificationResult!.Status);
+
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
+        Assert.NotNull(result.Session);
+        Assert.False(result.Session!.RequiresManualRecovery);
+        Assert.False(result.Session!.IsPositionUncertain);
+        Assert.Equal("Completed", result.Session.Status);
+    }
 }

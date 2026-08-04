@@ -808,12 +808,9 @@ public partial class MainWindow : Window
         if (window.RequiresManualRecovery)
         {
             _layoutRestoreRequiresAttention = true;
-            if (window.LastExecutionResult is not null)
-                _lastLayoutExecutionResult = window.LastExecutionResult;
-            if (window.EscapedException is not null)
-                _layoutRestoreEscapedException = window.EscapedException;
-            else
-                _layoutRestoreEscapedException = null;
+            // 始终同步本次结果和诊断 — 不得保留上一次陈旧值
+            _lastLayoutExecutionResult = window.LastExecutionResult;
+            _layoutRestoreEscapedException = window.EscapedException;
 
             StatusText.Text = "[MainWindow] 布局预览窗口返回人工处理锁：所有旧写入入口已禁用。";
             LayoutRestorePreviewText.Text = "布局恢复已禁用（来自布局预览的批量执行人工处理锁）。";
@@ -821,10 +818,8 @@ public partial class MainWindow : Window
         else
         {
             // 正常关闭 — 清除可能残留的陈旧诊断状态
-            if (_lastLayoutExecutionResult is not null)
-                _lastLayoutExecutionResult = null;
-            if (_layoutRestoreEscapedException is not null)
-                _layoutRestoreEscapedException = null;
+            _lastLayoutExecutionResult = null;
+            _layoutRestoreEscapedException = null;
         }
         UpdateInteractiveState();
     }
@@ -1207,6 +1202,7 @@ public partial class MainWindow : Window
                 case TargetDisplayLayoutExecutionRunStatus.CompletedNoOp:
                     LayoutRestorePreviewText.Text = result.IsNoOp ? "NoOp 完成。" : "执行成功。";
                     LayoutRestoreConsentCheckBox.IsChecked = false;
+                    _layoutRestoreRequiresAttention = false;
                     break;
                 case TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite:
                     if (result.ForwardFailureType == "ExecutionScopeRejected")
@@ -1218,10 +1214,12 @@ public partial class MainWindow : Window
                     {
                         sb.AppendLine("\nWriter 未开始，没有副作用。");
                     }
+                    _layoutRestoreRequiresAttention = false;
                     // 预览已失效，用户只能重新预览
                     break;
                 case TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack:
                     sb.AppendLine("\n正向失败但已确认回滚，没有残留副作用。");
+                    _layoutRestoreRequiresAttention = false;
                     break;
                 case TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete:
                 case TargetDisplayLayoutExecutionRunStatus.PositionUncertain:

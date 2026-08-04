@@ -1034,4 +1034,30 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
         Assert.Equal(0, writer.AttemptCount);
         Assert.Equal(0, store.SaveCount);
     }
+
+    // ═══════════ Invariant 1: Verifier OCE → PositionUncertain ═══════════
+    [Fact]
+    public async Task ForwardVerifierThrowsOCE_ReturnsPositionUncertain()
+    {
+        // Verifier 的 OperationCanceledException 也必须被捕获，不能逃出 Coordinator
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(),
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            verifyForward: (_, _, _) => throw new OperationCanceledException("verifier cancelled"),
+            verifyRollback: null);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("ForwardVerificationException", result.ForwardFailureType);
+        Assert.Contains("verifier cancelled", result.ForwardFailureMessage);
+    }
 }

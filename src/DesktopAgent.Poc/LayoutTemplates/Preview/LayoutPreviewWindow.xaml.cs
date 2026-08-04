@@ -944,10 +944,17 @@ public partial class LayoutPreviewWindow : Window
                     freshCandidate.RestorePlan,
                     TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch,
                     CancellationToken.None); // 使用 None — 执行不可中途取消
+
+                // ═══ Writer 后结果展示必须在同一 try 内 ═══
+                // 若 DisplayExecutionResult 抛异常，不得落入外层 "Writer 未启动" 分支
+                LastExecutionResult = result;
+                EscapedException = null;
+                DisplayExecutionResult(result, null);
             }
             catch (Exception ex)
             {
-                // 逃逸异常 — 进入人工处理锁
+                // Coordinator 逃逸异常 或 Writer 后结果展示异常 — 进入人工处理锁
+                // 无法区分异常发生在 Writer 前还是后，必须保守处理
                 _manualRecoveryRequired = true;
                 LastExecutionResult = null;
                 EscapedException = $"{ex.GetType().Name}: {ex.Message}";
@@ -955,10 +962,6 @@ public partial class LayoutPreviewWindow : Window
                 UpdateButtons();
                 return;
             }
-
-            LastExecutionResult = result;
-            EscapedException = null;
-            DisplayExecutionResult(result, null);
         }
         catch (OperationCanceledException) { /* 静默返回 */ }
         catch (Exception ex)

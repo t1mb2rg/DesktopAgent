@@ -399,22 +399,42 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             .Select(a => a.SourceStepIndex).ToList();
 
         // 使用 CancellationToken.None — Writer 已发生，验证不可被 UI 取消
-        var verificationResult = await _verifyForward(
-            executionPlan, session, CancellationToken.None);
+        // 验证异常不得逃出 Coordinator → 转化为 PositionUncertain
+        TargetDisplayLayoutExecutionVerificationResult verificationResult;
+        try
+        {
+            verificationResult = await _verifyForward(
+                executionPlan, session, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            var veSession = BuildSession(session, forwardOnly,
+                Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                null, true, true, "PositionUncertain");
+            return new TargetDisplayLayoutExecutionRunResult(
+                TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                false, false, veSession, safetySnapshotId,
+                forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                null, true, true,
+                "ForwardVerificationException",
+                $"Forward 验证抛出异常：{ex.GetType().Name}: {ex.Message}",
+                null, null);
+        }
 
+        // 非 Passed 验证 → 同时设置 RequiresManualRecovery=true, IsPositionUncertain=true
+        // Session 与 RunResult 保持含义一致
+        var nonPassed = verificationResult.Status != ExecutionVerificationStatus.Passed;
         var successSession = BuildSession(session, forwardOnly,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null, false, false, verificationResult.Status == ExecutionVerificationStatus.Passed
-                ? "Completed" : "PositionUncertain");
+            null, nonPassed, nonPassed, nonPassed
+                ? "PositionUncertain" : "Completed");
         successSession = new TargetDisplayLayoutRecoverySession(
             successSession.SessionId, successSession.SafetySnapshotId, successSession.TargetDeviceName,
             successSession.StartedAtUtc, successSession.SourceRestorePlan, successSession.ExecutionPlan,
             completedFwd, Array.Empty<int>(),
             null,
-            verificationResult.Status != ExecutionVerificationStatus.Passed,
-            verificationResult.Status == ExecutionVerificationStatus.Uncertain,
-            verificationResult.Status == ExecutionVerificationStatus.Passed
-                ? "Completed" : "PositionUncertain");
+            nonPassed, nonPassed,
+            nonPassed ? "PositionUncertain" : "Completed");
 
         if (verificationResult.Status == ExecutionVerificationStatus.Passed)
         {
@@ -602,9 +622,27 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
             .Select(a => a.SourceStepIndex).ToList();
 
-        // 回滚后验证使用不可取消 token
-        var rbVerification = await _verifyRollback(
-            executionPlan, session, CancellationToken.None);
+        // 回滚后验证使用不可取消 token；验证异常不得逃出 Coordinator
+        TargetDisplayLayoutExecutionVerificationResult rbVerification;
+        try
+        {
+            rbVerification = await _verifyRollback(
+                executionPlan, session, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            var rbeSession = BuildSession(session, allForward, allRollback,
+                failedStepIndex, true, true, "PositionUncertain");
+            return new TargetDisplayLayoutExecutionRunResult(
+                TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                false, false, rbeSession, safetySnapshotId,
+                allForward, allRollback,
+                failedStepIndex, true, true,
+                forwardFailureType, forwardFailureMessage,
+                "RollbackVerificationException",
+                $"回滚后验证抛出异常：{ex.GetType().Name}: {ex.Message}",
+                null);
+        }
 
         switch (rbVerification.Status)
         {
