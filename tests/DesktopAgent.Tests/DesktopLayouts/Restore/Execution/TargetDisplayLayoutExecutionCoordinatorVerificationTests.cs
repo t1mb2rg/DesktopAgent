@@ -29,6 +29,25 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
     private static DesktopIconDescriptor Live(string sid, PixelPoint pos) =>
         new(sid, $"N_{sid}", null, ItemKind.File, pos, TD, false, true);
 
+    private sealed class ScriptedDisplayTopologyReader : IDisplayTopologyReader
+    {
+        private readonly Queue<IReadOnlyList<DisplayDescriptor>> _reads;
+
+        public ScriptedDisplayTopologyReader(
+            params IReadOnlyList<DisplayDescriptor>[] reads)
+        {
+            _reads = new Queue<IReadOnlyList<DisplayDescriptor>>(reads);
+        }
+
+        public IReadOnlyList<DisplayDescriptor> GetDisplays()
+        {
+            if (_reads.Count == 0)
+                throw new InvalidOperationException("No scripted display topology remains.");
+
+            return _reads.Count == 1 ? _reads.Peek() : _reads.Dequeue();
+        }
+    }
+
     private TargetDisplayLayoutRestorePlan MakeRestorePlan(
         DesktopIconSnapshotItem[] snaps, DesktopIconDescriptor[] lives)
     {
@@ -410,6 +429,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
         Assert.NotNull(result.Session);
         Assert.True(result.Session!.RequiresManualRecovery);
         Assert.True(result.Session.IsPositionUncertain);
+        Assert.NotNull(result.VerificationResult);
+        Assert.Equal(ExecutionVerificationPhase.Forward, result.VerificationResult!.Phase);
+        Assert.Equal(ExecutionVerificationStatus.Uncertain, result.VerificationResult.Status);
+        Assert.Contains("verifier BOMB", string.Join("; ", result.VerificationResult.Issues));
     }
 
     [Fact]
@@ -443,6 +466,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
         Assert.NotNull(result.Session);
         Assert.True(result.Session!.RequiresManualRecovery);
         Assert.True(result.Session.IsPositionUncertain);
+        Assert.NotNull(result.VerificationResult);
+        Assert.Equal(ExecutionVerificationPhase.Rollback, result.VerificationResult!.Phase);
+        Assert.Equal(ExecutionVerificationStatus.Uncertain, result.VerificationResult.Status);
+        Assert.Contains("rollback verifier BOMB", string.Join("; ", result.VerificationResult.Issues));
     }
 
     // ═══════════════════════════════════════════════════
@@ -506,6 +533,82 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
         Assert.NotNull(result.VerificationResult);
         Assert.Equal(ExecutionVerificationStatus.Passed, result.VerificationResult!.Status);
         Assert.Equal(ExecutionVerificationPhase.Rollback, result.VerificationResult.Phase);
+    }
+
+    [Fact]
+    public async Task Rollback_PositionCorrectButOriginalMonitorWrong_FailedRollbackIncomplete()
+    {
+        const string display2Name = @"\\.\DISPLAY2";
+        var currentPosition = new PixelPoint(160, 240);
+        var targetPosition = new PixelPoint(240, 320);
+
+        // 两块显示器刻意重叠：
+        // 初次读取按列表顺序分配到 DISPLAY2，回滚验证时按新顺序分配到 DISPLAY1。
+        // 坐标完全相同，仅显示器归属错误，精确复现原漏判。
+        var display1 = MakeDisplay();
+        var display2 = new DisplayDescriptor(
+            display2Name,
+            new PixelRect(0, 0, 1920, 1080),
+            WA,
+            96, 96,
+            false);
+
+        var snapshot = new DesktopLayoutSnapshot(
+            Guid.NewGuid(),
+            DateTimeOffset.UtcNow,
+            TD,
+            ConnectionMethod.FindWindowSW,
+            1,
+            new[] { Snap("a", targetPosition) });
+
+        var originalLive = new DesktopIconDescriptor(
+            "a", "N_a", null, ItemKind.File,
+            currentPosition, display2Name, false, true);
+
+        var plan = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            snapshot,
+            new DesktopIconReadResult(
+                new[] { originalLive }, 0,
+                ConnectionMethod.FindWindowSW, TimeSpan.Zero, null),
+            new[] { display2, display1 },
+            MakeCaps(),
+            TD);
+
+        Assert.Equal(
+            display2Name,
+            Assert.Single(plan.Items).CurrentMonitorDeviceName);
+
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptInexactResult(
+            "a", currentPosition, targetPosition, new PixelPoint(250, 330));
+        writer.ScriptExactResult(
+            "a", new PixelPoint(250, 330), currentPosition);
+
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue(new[] { originalLive });
+        reader.Enqueue(new[] { originalLive });
+
+        var topology = new ScriptedDisplayTopologyReader(
+            new[] { display2, display1 },
+            new[] { display1, display2 });
+
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            topology, reader, writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore());
+
+        var result = await coordinator.ExecuteAsync(plan);
+
+        Assert.Equal(
+            TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete,
+            result.Status);
+        Assert.NotNull(result.VerificationResult);
+        Assert.Equal(
+            ExecutionVerificationStatus.Failed,
+            result.VerificationResult!.Status);
+        Assert.Contains(
+            "Rollback 验证显示器",
+            string.Join("; ", result.VerificationResult.Issues));
     }
 
     // ═══════════════════════════════════════════════════

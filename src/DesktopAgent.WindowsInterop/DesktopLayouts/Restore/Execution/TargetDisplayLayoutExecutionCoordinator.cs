@@ -424,6 +424,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
         catch (Exception ex)
         {
+            var issue =
+                $"Forward 验证抛出异常：{ex.GetType().Name}: {ex.Message}";
+            var uncertainVerification =
+                TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
+                    0, new[] { issue }, DateTimeOffset.UtcNow);
             var veSession = BuildSession(session, forwardOnly,
                 Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
                 null, true, true, "PositionUncertain");
@@ -433,8 +438,9 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
                 null, true, true,
                 "ForwardVerificationException",
-                $"Forward 验证抛出异常：{ex.GetType().Name}: {ex.Message}",
-                null, null);
+                issue,
+                null, null,
+                uncertainVerification);
         }
 
         // 非 Passed 验证 → 同时设置 RequiresManualRecovery=true, IsPositionUncertain=true
@@ -647,6 +653,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
         catch (Exception ex)
         {
+            var issue =
+                $"回滚后验证抛出异常：{ex.GetType().Name}: {ex.Message}";
+            var uncertainVerification =
+                TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                    0, new[] { issue }, DateTimeOffset.UtcNow);
             var rbeSession = BuildSession(session, allForward, allRollback,
                 failedStepIndex, true, true, "PositionUncertain");
             return new TargetDisplayLayoutExecutionRunResult(
@@ -656,8 +667,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 failedStepIndex, true, true,
                 forwardFailureType, forwardFailureMessage,
                 "RollbackVerificationException",
-                $"回滚后验证抛出异常：{ex.GetType().Name}: {ex.Message}",
-                null);
+                issue,
+                uncertainVerification);
         }
 
         switch (rbVerification.Status)
@@ -982,13 +993,29 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
     {
         var verifiedAt = DateTimeOffset.UtcNow;
 
-        // 收集所有被回滚步骤的原始 FromPosition（即回滚恢复目标）
-        var rollbackTargets = new Dictionary<string, PixelPoint>(StringComparer.Ordinal);
+        // 以冻结的 SourceRestorePlan 原始状态作为唯一恢复证据。
+        // 不能只依赖 ExecutionStep.FromPosition，因为回滚还必须证明原显示器归属。
+        var rollbackTargets =
+            new Dictionary<string, TargetDisplayLayoutRestorePlanItem>(StringComparer.Ordinal);
         foreach (var step in executionPlan.Steps)
         {
-            var fromPos = step.FromPosition;
-            if (!rollbackTargets.ContainsKey(step.StableId))
-                rollbackTargets[step.StableId] = fromPos;
+            var matches = session.SourceRestorePlan.Items
+                .Where(item => string.Equals(
+                    item.StableId, step.StableId, StringComparison.Ordinal))
+                .ToList();
+
+            if (matches.Count != 1 || matches[0].CurrentPosition is null)
+            {
+                return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                    0,
+                    new[]
+                    {
+                        $"StableId \"{step.StableId}\" 无法唯一映射到含原始位置的 SourceRestorePlan 项。"
+                    },
+                    verifiedAt);
+            }
+
+            rollbackTargets.TryAdd(step.StableId, matches[0]);
         }
 
         DesktopIconReadResult currentRead;
@@ -1035,7 +1062,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
         // 验证每个被回滚的图标
         var notRestored = 0;
-        foreach (var (sid, expectedPos) in rollbackTargets)
+        foreach (var (sid, sourceItem) in rollbackTargets)
         {
             if (!currentBySid.TryGetValue(sid, out var currentIcon))
             {
@@ -1044,31 +1071,32 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     0, issues, verifiedAt);
             }
 
+            var expectedPos = sourceItem.CurrentPosition!.Value;
+            var itemNotRestored = false;
+
             if (currentIcon.PixelPosition != expectedPos)
             {
                 issues.Add($"\"{sid}\" Rollback 验证位置 " +
                     $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
-                    $"原始 FromPosition ({expectedPos.X},{expectedPos.Y})。");
-                notRestored++;
+                    $"原始 CurrentPosition ({expectedPos.X},{expectedPos.Y})。");
+                itemNotRestored = true;
             }
 
-            // 验证回滚后显示器归属与原始状态一致
-            var targetDeviceName = session.TargetDeviceName;
-            if (!string.Equals(currentIcon.MonitorDeviceName ?? "", targetDeviceName, StringComparison.Ordinal))
+            // 无条件与原始显示器比较，使用 Ordinal，并保留 null 的直接比较语义。
+            // 特别覆盖：原显示器 != 目标显示器，但回滚后错误地仍停留在目标显示器。
+            if (!string.Equals(
+                    currentIcon.MonitorDeviceName,
+                    sourceItem.CurrentMonitorDeviceName,
+                    StringComparison.Ordinal))
             {
-                // 回滚后图标可能在其他显示器上 — 记录但不算位置错误
-                // 除非原始图标就在目标显示器上且有明确的 CurrentMonitorDeviceName
-                foreach (var item in session.SourceRestorePlan.Items)
-                {
-                    if (string.Equals(item.StableId, sid, StringComparison.Ordinal)
-                        && item.CurrentMonitorDeviceName is not null
-                        && !string.Equals(currentIcon.MonitorDeviceName ?? "", item.CurrentMonitorDeviceName, StringComparison.Ordinal))
-                    {
-                        issues.Add($"\"{sid}\" Rollback 验证显示器 \"{currentIcon.MonitorDeviceName}\" ≠ " +
-                            $"原始 \"{item.CurrentMonitorDeviceName}\"。");
-                    }
-                }
+                issues.Add($"\"{sid}\" Rollback 验证显示器 " +
+                    $"\"{currentIcon.MonitorDeviceName ?? "<null>"}\" ≠ " +
+                    $"原始 \"{sourceItem.CurrentMonitorDeviceName ?? "<null>"}\"。");
+                itemNotRestored = true;
             }
+
+            if (itemNotRestored)
+                notRestored++;
         }
 
         if (notRestored > 0)
