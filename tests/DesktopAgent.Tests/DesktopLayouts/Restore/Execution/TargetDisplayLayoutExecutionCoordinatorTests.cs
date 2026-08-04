@@ -39,17 +39,26 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             new[] { MakeDisplay() }, MakeCaps(), TD);
     }
 
+    private static readonly Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
+        CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>> _verifyPassed =
+        (_, _, _) => Task.FromResult(TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(
+            DateTimeOffset.UtcNow));
+
     private static TargetDisplayLayoutExecutionCoordinator MakeCoordinator(
         FakeDisplayTopologyReader topology, FakeDesktopIconReader reader,
         ScriptedDesktopIconPositionWriter writer, IDesktopLayoutSnapshotStore store) =>
         new(topology, reader, writer, new StaThreadExecutor(),
-            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store,
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            _verifyPassed, _verifyPassed);
 
     private static TargetDisplayLayoutExecutionCoordinator MakeCoordinator(
         FakeDisplayTopologyReader topology, FakeDesktopIconReader reader,
         ScriptedDesktopIconPositionWriter writer, IDesktopLayoutSnapshotStore store,
         IDesktopLayoutSafetySnapshotFactory factory) =>
-        new(topology, reader, writer, new StaThreadExecutor(), factory, store);
+        new(topology, reader, writer, new StaThreadExecutor(), factory, store,
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            _verifyPassed, _verifyPassed);
 
     private static TargetDisplayLayoutRestorePlanItem PlanItem(
         string sid, PixelPoint target, TargetDisplayLayoutRestoreItemState state,
@@ -742,7 +751,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => throw new InvalidOperationException("planner BOMB"));
+            (_, _, _, _) => throw new InvalidOperationException("planner BOMB"),
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
@@ -776,7 +786,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => emptyPlan);
+            (_, _, _, _) => emptyPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
@@ -930,7 +941,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => multiStepPlan);
+            (_, _, _, _) => multiStepPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteWithScopeGateAsync(
             plan, TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove);
@@ -972,7 +984,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => singleStepPlan);
+            (_, _, _, _) => singleStepPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteWithScopeGateAsync(
             plan, TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove);
@@ -1006,7 +1019,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => singleStepPlan);
+            (_, _, _, _) => singleStepPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteWithScopeGateAsync(
             plan,

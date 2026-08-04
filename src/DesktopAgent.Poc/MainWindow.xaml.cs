@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private readonly StaThreadExecutor _staExecutor;
     private readonly DesktopLayoutSnapshotFactory _snapshotFactory;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
+    private readonly IDesktopLayoutSafetySnapshotFactory _safetySnapshotFactory;
     private readonly TargetDisplayLayoutExecutionCoordinator _layoutExecutionCoordinator;
     private readonly IDesktopLayoutTemplateStore _templateStore;
     private readonly IDesktopLayoutIconRuleStore _ruleStore;
@@ -68,6 +69,7 @@ public partial class MainWindow : Window
         StaThreadExecutor staExecutor,
         DesktopLayoutSnapshotFactory snapshotFactory,
         IDesktopLayoutSnapshotStore snapshotStore,
+        IDesktopLayoutSafetySnapshotFactory safetySnapshotFactory,
         TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator,
         IDesktopLayoutTemplateStore templateStore,
         IDesktopLayoutIconRuleStore ruleStore)
@@ -80,6 +82,7 @@ public partial class MainWindow : Window
         _staExecutor = staExecutor;
         _snapshotFactory = snapshotFactory;
         _snapshotStore = snapshotStore;
+        _safetySnapshotFactory = safetySnapshotFactory;
         _layoutExecutionCoordinator = layoutExecutionCoordinator;
         _templateStore = templateStore;
         _ruleStore = ruleStore;
@@ -792,11 +795,30 @@ public partial class MainWindow : Window
             _desktopIconReader,
             _desktopIconPositionWriter,
             _staExecutor,
-            _snapshotFactory)
+            _snapshotFactory,
+            _layoutExecutionCoordinator,
+            _snapshotStore,
+            _safetySnapshotFactory)
         {
             Owner = this
         };
         window.ShowDialog();
+
+        // ═══ M2-04B: 接收子窗口的人工处理锁状态 ═══
+        if (window.RequiresManualRecovery)
+        {
+            _layoutRestoreRequiresAttention = true;
+            if (window.LastExecutionResult is not null)
+                _lastLayoutExecutionResult = window.LastExecutionResult;
+            if (window.EscapedException is not null)
+                _layoutRestoreEscapedException = window.EscapedException;
+            else
+                _layoutRestoreEscapedException = null;
+
+            StatusText.Text = "[MainWindow] 布局预览窗口返回人工处理锁：所有旧写入入口已禁用。";
+            LayoutRestorePreviewText.Text = "布局恢复已禁用（来自布局预览的批量执行人工处理锁）。";
+            UpdateInteractiveState();
+        }
     }
 
     // ═══════════════════════════════════════════════════

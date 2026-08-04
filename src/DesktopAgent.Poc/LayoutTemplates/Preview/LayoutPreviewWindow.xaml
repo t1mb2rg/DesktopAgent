@@ -1,8 +1,8 @@
 <Window x:Class="DesktopAgent.Poc.LayoutTemplates.Preview.LayoutPreviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="布局预览 — M2-03C-C-B"
-        Width="1280" Height="850" MinWidth="1000" MinHeight="700"
+        Title="布局预览与执行 — M2-04B"
+        Width="1280" Height="900" MinWidth="1100" MinHeight="800"
         WindowStartupLocation="CenterOwner"
         Closing="OnClosing">
     <Grid Margin="12">
@@ -51,7 +51,7 @@
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="400" />
+                <ColumnDefinition Width="420" />
             </Grid.ColumnDefinitions>
 
             <!-- ── 左: Canvas ── -->
@@ -65,7 +65,8 @@
             <!-- ── 右: 信息面板 ── -->
             <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
-                    <GroupBox Header="汇总" Padding="4" Margin="0,0,0,6">
+                    <!-- ── 预览汇总 ── -->
+                    <GroupBox Header="预览汇总" Padding="4" Margin="0,0,0,6">
                         <StackPanel>
                             <TextBlock x:Name="SummaryText" FontSize="12" FontFamily="Consolas"
                                        TextWrapping="Wrap" Text="无有效预览。" />
@@ -75,35 +76,69 @@
                         </StackPanel>
                     </GroupBox>
 
+                    <!-- ── 执行候选 ── -->
+                    <GroupBox Header="执行候选摘要" Padding="4" Margin="0,0,0,6">
+                        <StackPanel>
+                            <TextBlock x:Name="CandidateSummaryText" FontSize="11" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Text="尚未生成执行候选。点击 生成预览 后自动生成。" />
+                            <TextBlock x:Name="CandidateIssuesText" FontSize="11" FontFamily="Consolas"
+                                       Foreground="Red" TextWrapping="Wrap" Visibility="Collapsed" />
+                            <TextBlock x:Name="StagingWarningText" FontSize="11" FontWeight="Bold"
+                                       Foreground="#E81123" TextWrapping="Wrap"
+                                       Text="该计划需要临时中转，将在 M2-04C 开放真实执行。"
+                                       Visibility="Collapsed" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- ── 执行步骤 ── -->
+                    <GroupBox Header="执行步骤" Padding="4" Margin="0,0,0,6">
+                        <DataGrid x:Name="ExecStepsGrid" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="160">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="#" Width="25" Binding="{Binding StepIndex}" />
+                                <DataGridTextColumn Header="Kind" Width="70" Binding="{Binding KindText}" />
+                                <DataGridTextColumn Header="StableId" Width="55" Binding="{Binding StableIdTruncated}" />
+                                <DataGridTextColumn Header="名称" Width="70" Binding="{Binding DisplayName}" />
+                                <DataGridTextColumn Header="FromX" Width="40" Binding="{Binding FromX}" />
+                                <DataGridTextColumn Header="FromY" Width="40" Binding="{Binding FromY}" />
+                                <DataGridTextColumn Header="ToX" Width="40" Binding="{Binding ToX}" />
+                                <DataGridTextColumn Header="ToY" Width="40" Binding="{Binding ToY}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <!-- ── 读取诊断 ── -->
                     <GroupBox Header="读取诊断" Padding="4" Margin="0,0,0,6">
                         <TextBlock x:Name="DiagnosticsText" FontSize="11" FontFamily="Consolas"
                                    TextWrapping="Wrap" Text="—" />
                     </GroupBox>
 
+                    <!-- ── 目标显示器图标 ── -->
                     <GroupBox Header="目标显示器图标" Padding="4" Margin="0,0,0,6">
                         <DataGrid x:Name="ItemsGrid" AutoGenerateColumns="False"
-                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="220">
+                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="200">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="#" Width="30" Binding="{Binding Ordinal}" />
-                                <DataGridTextColumn Header="类别" Width="70" Binding="{Binding DispositionText}" />
-                                <DataGridTextColumn Header="放置" Width="65" Binding="{Binding PlacementStateText}" />
-                                <DataGridTextColumn Header="名称" Width="80" Binding="{Binding DisplayName}" />
-                                <DataGridTextColumn Header="StableId" Width="60" Binding="{Binding StableIdTruncated}" />
-                                <DataGridTextColumn Header="规则" Width="50" Binding="{Binding RuleKindText}" />
-                                <DataGridTextColumn Header="状态" Width="55" Binding="{Binding StateText}" />
-                                <DataGridTextColumn Header="CurX" Width="40" Binding="{Binding CurrentX}" />
-                                <DataGridTextColumn Header="CurY" Width="40" Binding="{Binding CurrentY}" />
-                                <DataGridTextColumn Header="TgtX" Width="40" Binding="{Binding TargetX}" />
-                                <DataGridTextColumn Header="TgtY" Width="40" Binding="{Binding TargetY}" />
-                                <DataGridTextColumn Header="Zone" Width="60" Binding="{Binding ZoneName}" />
+                                <DataGridTextColumn Header="类别" Width="65" Binding="{Binding DispositionText}" />
+                                <DataGridTextColumn Header="放置" Width="60" Binding="{Binding PlacementStateText}" />
+                                <DataGridTextColumn Header="名称" Width="75" Binding="{Binding DisplayName}" />
+                                <DataGridTextColumn Header="StableId" Width="55" Binding="{Binding StableIdTruncated}" />
+                                <DataGridTextColumn Header="规则" Width="45" Binding="{Binding RuleKindText}" />
+                                <DataGridTextColumn Header="状态" Width="50" Binding="{Binding StateText}" />
+                                <DataGridTextColumn Header="CurX" Width="38" Binding="{Binding CurrentX}" />
+                                <DataGridTextColumn Header="CurY" Width="38" Binding="{Binding CurrentY}" />
+                                <DataGridTextColumn Header="TgtX" Width="38" Binding="{Binding TargetX}" />
+                                <DataGridTextColumn Header="TgtY" Width="38" Binding="{Binding TargetY}" />
+                                <DataGridTextColumn Header="Zone" Width="55" Binding="{Binding ZoneName}" />
                                 <DataGridTextColumn Header="Slot" Width="30" Binding="{Binding SlotIndex}" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </GroupBox>
 
+                    <!-- ── 非目标显示器图标 ── -->
                     <GroupBox Header="非目标显示器图标" Padding="4" Margin="0,0,0,6">
                         <DataGrid x:Name="OutOfScopeGrid" AutoGenerateColumns="False"
-                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="140">
+                                  CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="120">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="#" Width="30" Binding="{Binding Ordinal}" />
                                 <DataGridTextColumn Header="名称" Width="100" Binding="{Binding DisplayName}" />
@@ -115,7 +150,8 @@
                         </DataGrid>
                     </GroupBox>
 
-                    <GroupBox Header="图例" Padding="4">
+                    <!-- ── 图例 ── -->
+                    <GroupBox Header="图例" Padding="4" Margin="0,0,0,6">
                         <StackPanel Orientation="Horizontal">
                             <Ellipse Width="12" Height="12" Fill="#0078D4" Margin="0,0,4,0" />
                             <TextBlock Text="当前位置" Margin="0,0,12,0" FontSize="11" />
@@ -123,6 +159,35 @@
                             <TextBlock Text="目标位置" Margin="0,0,12,0" FontSize="11" />
                             <Path Stroke="#107C10" StrokeThickness="2" Data="M0,6 L20,6" Margin="0,0,4,0" />
                             <TextBlock Text="移动" FontSize="11" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- ── 执行控制 ── -->
+                    <GroupBox Header="执行控制" Padding="4" Margin="0,0,0,6">
+                        <StackPanel>
+                            <CheckBox x:Name="ExecutionConsentCheckBox" Margin="0,0,0,6"
+                                      Checked="ExecutionConsent_Changed" Unchecked="ExecutionConsent_Changed">
+                                <TextBlock Text="我理解该操作会真实移动桌面图标" FontSize="12"
+                                           TextWrapping="Wrap" />
+                            </CheckBox>
+                            <Button x:Name="ExecuteButton" Content="执行无中转批量整理"
+                                    Height="32" FontWeight="SemiBold" Click="Execute_Click" />
+                            <TextBlock x:Name="ExecuteHintText" FontSize="11" Foreground="#888"
+                                       TextWrapping="Wrap" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <!-- ── 执行结果 ── -->
+                    <GroupBox Header="执行结果" Padding="4" Margin="0,0,0,6">
+                        <StackPanel>
+                            <TextBlock x:Name="ExecutionResultText" FontSize="11" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Text="暂无。" />
+                            <TextBlock x:Name="VerificationResultText" FontSize="11" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Visibility="Collapsed" Margin="0,4,0,0" />
+                            <TextBlock x:Name="ManualRecoveryText" FontSize="11" FontWeight="Bold"
+                                       Foreground="Red" TextWrapping="Wrap" Visibility="Collapsed"
+                                       Text="⚠ 需要人工处理。请勿关闭此窗口，保留完整诊断信息。"
+                                       Margin="0,4,0,0" />
                         </StackPanel>
                     </GroupBox>
                 </StackPanel>

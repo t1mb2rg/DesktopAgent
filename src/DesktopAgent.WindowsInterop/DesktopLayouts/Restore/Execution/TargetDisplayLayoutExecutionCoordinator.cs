@@ -3,6 +3,7 @@ using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Core.Displays;
+using DesktopAgent.Core.Geometry;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 
 namespace DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
@@ -18,6 +19,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
     private readonly Func<TargetDisplayLayoutRestorePlan, DesktopIconReadResult,
         IReadOnlyList<DisplayDescriptor>, DesktopIconPositioningCapabilities,
         TargetDisplayLayoutExecutionPlan> _createPlan;
+    private readonly Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
+        CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>> _verifyForward;
+    private readonly Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
+        CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>> _verifyRollback;
 
     public TargetDisplayLayoutExecutionCoordinator(
         IDisplayTopologyReader topologyReader,
@@ -28,7 +33,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         IDesktopLayoutSnapshotStore snapshotStore)
         : this(topologyReader, iconReader, positionWriter, staExecutor,
               snapshotFactory, snapshotStore,
-              TargetDisplayLayoutExecutionPlanner.CreatePlan)
+              TargetDisplayLayoutExecutionPlanner.CreatePlan,
+              null, null) // verification delegates set below
     {
     }
 
@@ -41,7 +47,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         IDesktopLayoutSnapshotStore snapshotStore,
         Func<TargetDisplayLayoutRestorePlan, DesktopIconReadResult,
             IReadOnlyList<DisplayDescriptor>, DesktopIconPositioningCapabilities,
-            TargetDisplayLayoutExecutionPlan> createPlan)
+            TargetDisplayLayoutExecutionPlan> createPlan,
+        Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
+            CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>>? verifyForward = null,
+        Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
+            CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>>? verifyRollback = null)
     {
         _topologyReader = topologyReader ?? throw new ArgumentNullException(nameof(topologyReader));
         _iconReader = iconReader ?? throw new ArgumentNullException(nameof(iconReader));
@@ -50,6 +60,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         _snapshotFactory = snapshotFactory ?? throw new ArgumentNullException(nameof(snapshotFactory));
         _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
         _createPlan = createPlan ?? throw new ArgumentNullException(nameof(createPlan));
+        _verifyForward = verifyForward ?? VerifyForwardAsync;
+        _verifyRollback = verifyRollback ?? VerifyRollbackAsync;
     }
 
     /// <summary>
@@ -380,27 +392,51 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
         }
 
-        // ═══ 全部成功 ═══
+        // ═══ 全部成功 → 独立最终验证 ═══
         var forwardOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var completedFwd = forwardOnly
             .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
             .Select(a => a.SourceStepIndex).ToList();
 
+        var verificationResult = await _verifyForward(
+            executionPlan, session, cancellationToken);
+
         var successSession = BuildSession(session, forwardOnly,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null, false, false, "Completed");
-        // Use completed indices explicitly
+            null, false, false, verificationResult.Status == ExecutionVerificationStatus.Passed
+                ? "Completed" : "PositionUncertain");
         successSession = new TargetDisplayLayoutRecoverySession(
             successSession.SessionId, successSession.SafetySnapshotId, successSession.TargetDeviceName,
             successSession.StartedAtUtc, successSession.SourceRestorePlan, successSession.ExecutionPlan,
             completedFwd, Array.Empty<int>(),
-            null, false, false, "Completed");
+            null,
+            verificationResult.Status != ExecutionVerificationStatus.Passed,
+            verificationResult.Status == ExecutionVerificationStatus.Uncertain,
+            verificationResult.Status == ExecutionVerificationStatus.Passed
+                ? "Completed" : "PositionUncertain");
 
-        return new TargetDisplayLayoutExecutionRunResult(
-            TargetDisplayLayoutExecutionRunStatus.Completed, true, false,
-            successSession, safetySnapshotId,
-            forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null, false, false, null, null, null, null);
+        if (verificationResult.Status == ExecutionVerificationStatus.Passed)
+        {
+            return new TargetDisplayLayoutExecutionRunResult(
+                TargetDisplayLayoutExecutionRunStatus.Completed, true, false,
+                successSession, safetySnapshotId,
+                forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                null, false, false, null, null, null, null,
+                verificationResult);
+        }
+        else
+        {
+            return new TargetDisplayLayoutExecutionRunResult(
+                TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                false, false, successSession, safetySnapshotId,
+                forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                null, true, true,
+                "ForwardVerificationFailed",
+                $"Forward 独立验证失败 ({verificationResult.Status})：" +
+                    string.Join("; ", verificationResult.Issues),
+                null, null,
+                verificationResult);
+        }
     }
 
     // ═══════════════════════════════════════════════
@@ -558,31 +594,71 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             attemptIndex++;
         }
 
-        // 全部精确回滚
+        // 全部精确回滚 → 独立回滚验证（使用 CancellationToken.None，不可取消）
         var allForward = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var allRollback = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
-        // 回滚的源步骤索引
         var rollbackSourceIndexes = allRollback
             .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
             .Select(a => a.SourceStepIndex).ToList();
 
-        var rbSession = BuildSession(session, allForward, allRollback,
-            failedStepIndex, false, false, "FailedAndRolledBack");
-        rbSession = new TargetDisplayLayoutRecoverySession(
-            rbSession.SessionId, rbSession.SafetySnapshotId, rbSession.TargetDeviceName,
-            rbSession.StartedAtUtc, rbSession.SourceRestorePlan, rbSession.ExecutionPlan,
-            allForward.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
-                .Select(a => a.SourceStepIndex).ToList(),
-            rollbackSourceIndexes,
-            failedStepIndex, false, false, "FailedAndRolledBack");
+        // 回滚后验证使用不可取消 token
+        var rbVerification = await _verifyRollback(
+            executionPlan, session, CancellationToken.None);
 
-        return new TargetDisplayLayoutExecutionRunResult(
-            TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack,
-            false, false, rbSession, safetySnapshotId,
-            allForward, allRollback,
-            failedStepIndex, false, false,
-            forwardFailureType, forwardFailureMessage,
-            recoveryFailureType, recoveryFailureMessage);
+        switch (rbVerification.Status)
+        {
+            case ExecutionVerificationStatus.Passed:
+            {
+                var passedSession = BuildSession(session, allForward, allRollback,
+                    failedStepIndex, false, false, "FailedAndRolledBack");
+                passedSession = new TargetDisplayLayoutRecoverySession(
+                    passedSession.SessionId, passedSession.SafetySnapshotId, passedSession.TargetDeviceName,
+                    passedSession.StartedAtUtc, passedSession.SourceRestorePlan, passedSession.ExecutionPlan,
+                    allForward.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                        .Select(a => a.SourceStepIndex).ToList(),
+                    rollbackSourceIndexes,
+                    failedStepIndex, false, false, "FailedAndRolledBack");
+
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack,
+                    false, false, passedSession, safetySnapshotId,
+                    allForward, allRollback,
+                    failedStepIndex, false, false,
+                    forwardFailureType, forwardFailureMessage,
+                    recoveryFailureType, recoveryFailureMessage,
+                    rbVerification);
+            }
+
+            case ExecutionVerificationStatus.Uncertain:
+            {
+                var uncertainSession = BuildSession(session, allForward, allRollback,
+                    failedStepIndex, true, true, "PositionUncertain");
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                    false, false, uncertainSession, safetySnapshotId,
+                    allForward, allRollback,
+                    failedStepIndex, true, true,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackVerificationUncertain",
+                    $"回滚后独立验证不确定：" + string.Join("; ", rbVerification.Issues),
+                    rbVerification);
+            }
+
+            default: // Failed
+            {
+                var failedSession = BuildSession(session, allForward, allRollback,
+                    failedStepIndex, true, false, "FailedRollbackIncomplete");
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete,
+                    false, false, failedSession, safetySnapshotId,
+                    allForward, allRollback,
+                    failedStepIndex, true, false,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackVerificationFailed",
+                    $"回滚后独立验证失败：" + string.Join("; ", rbVerification.Issues),
+                    rbVerification);
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════
@@ -711,4 +787,204 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             rollback.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                 .Select(a => a.SourceStepIndex).ToList(),
             failedStepIndex, requiresManual, isPositionUncertain, status);
+
+    // ═══════════════════════════════════════════════
+    //  独立最终验证（Forward / Rollback）
+    // ═══════════════════════════════════════════════
+
+    private async Task<TargetDisplayLayoutExecutionVerificationResult> VerifyForwardAsync(
+        TargetDisplayLayoutExecutionPlan executionPlan,
+        TargetDisplayLayoutRecoverySession session,
+        CancellationToken cancellationToken)
+    {
+        var verifiedAt = DateTimeOffset.UtcNow;
+        var targetDeviceName = executionPlan.TargetDeviceName;
+
+        // 执行完整桌面重读
+        DesktopIconReadResult currentRead;
+        IReadOnlyList<DisplayDescriptor> currentDisplays;
+        try
+        {
+            currentDisplays = _topologyReader.GetDisplays();
+            var rawRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
+            // 不使用 WaitAsync(token) — Writer 已发生，必须完成验证
+            var assignedIcons = rawRead.Icons.Select(icon =>
+            {
+                var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, currentDisplays);
+                return icon with { MonitorDeviceName = monitor?.DeviceName };
+            }).ToList();
+            currentRead = new DesktopIconReadResult(
+                assignedIcons, rawRead.FailedItemCount,
+                rawRead.ConnectionMethod, rawRead.ReadTime,
+                rawRead.PrimaryPathException);
+        }
+        catch (Exception ex)
+        {
+            return TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
+                0, new[] { $"Forward 验证读取异常：{ex.GetType().Name}: {ex.Message}" }, verifiedAt);
+        }
+
+        var issues = new List<string>();
+
+        // FailedItemCount 检查
+        if (currentRead.FailedItemCount != 0)
+        {
+            issues.Add($"FailedItemCount = {currentRead.FailedItemCount}，读取不完整。");
+            return TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
+                currentRead.FailedItemCount, issues, verifiedAt);
+        }
+
+        // StableId 唯一性
+        var sidSet = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var icon in currentRead.Icons)
+        {
+            if (!sidSet.Add(icon.StableId))
+                issues.Add($"StableId \"{icon.StableId}\" 重复。");
+        }
+        if (issues.Count > 0)
+            return TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
+                0, issues, verifiedAt);
+
+        // 建立当前 StableId → 图标 映射
+        var currentBySid = new Dictionary<string, DesktopIconDescriptor>(StringComparer.Ordinal);
+        foreach (var icon in currentRead.Icons)
+            currentBySid[icon.StableId] = icon;
+
+        // 验证 RestorePlan 中应在目标显示器的所有目标项
+        var missingCount = 0;
+        foreach (var item in session.SourceRestorePlan.Items)
+        {
+            if (item.State is TargetDisplayLayoutRestoreItemState.MissingFromCurrent)
+                continue;
+
+            if (!currentBySid.TryGetValue(item.StableId, out var currentIcon))
+            {
+                issues.Add($"StableId \"{item.StableId}\" 在 Forward 验证读取中缺失。");
+                missingCount++;
+                continue;
+            }
+
+            // 只验证目标显示器上的项
+            if (!string.Equals(currentIcon.MonitorDeviceName ?? "", targetDeviceName, StringComparison.Ordinal))
+            {
+                // 如果该项应在目标显示器但不在，报告
+                if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired
+                    || item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
+                {
+                    issues.Add($"\"{item.StableId}\" 当前显示器 \"{currentIcon.MonitorDeviceName}\" ≠ 目标 \"{targetDeviceName}\"。");
+                }
+                continue;
+            }
+
+            // 验证位置
+            if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
+            {
+                if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
+                {
+                    issues.Add($"\"{item.StableId}\" Forward 验证位置 " +
+                        $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
+                        $"目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
+                }
+            }
+        }
+
+        if (missingCount > 0)
+            return TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
+                missingCount, issues, verifiedAt);
+
+        if (issues.Count > 0)
+            return TargetDisplayLayoutExecutionVerificationResult.ForwardFailed(
+                0, issues, verifiedAt);
+
+        return TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(verifiedAt);
+    }
+
+    private async Task<TargetDisplayLayoutExecutionVerificationResult> VerifyRollbackAsync(
+        TargetDisplayLayoutExecutionPlan executionPlan,
+        TargetDisplayLayoutRecoverySession session,
+        CancellationToken cancellationToken)
+    {
+        var verifiedAt = DateTimeOffset.UtcNow;
+
+        // 收集所有被回滚步骤的原始 FromPosition（即回滚恢复目标）
+        var rollbackTargets = new Dictionary<string, PixelPoint>(StringComparer.Ordinal);
+        foreach (var step in executionPlan.Steps)
+        {
+            var fromPos = step.FromPosition;
+            if (!rollbackTargets.ContainsKey(step.StableId))
+                rollbackTargets[step.StableId] = fromPos;
+        }
+
+        DesktopIconReadResult currentRead;
+        try
+        {
+            var currentDisplays = _topologyReader.GetDisplays();
+            var rawRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
+            var assignedIcons = rawRead.Icons.Select(icon =>
+            {
+                var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, currentDisplays);
+                return icon with { MonitorDeviceName = monitor?.DeviceName };
+            }).ToList();
+            currentRead = new DesktopIconReadResult(
+                assignedIcons, rawRead.FailedItemCount,
+                rawRead.ConnectionMethod, rawRead.ReadTime,
+                rawRead.PrimaryPathException);
+        }
+        catch (Exception ex)
+        {
+            return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                0, new[] { $"Rollback 验证读取异常：{ex.GetType().Name}: {ex.Message}" }, verifiedAt);
+        }
+
+        var issues = new List<string>();
+
+        if (currentRead.FailedItemCount != 0)
+        {
+            issues.Add($"FailedItemCount = {currentRead.FailedItemCount}，读取不完整。");
+            return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                currentRead.FailedItemCount, issues, verifiedAt);
+        }
+
+        var sidSet = new HashSet<string>(StringComparer.Ordinal);
+        var currentBySid = new Dictionary<string, DesktopIconDescriptor>(StringComparer.Ordinal);
+        foreach (var icon in currentRead.Icons)
+        {
+            if (!sidSet.Add(icon.StableId))
+                issues.Add($"StableId \"{icon.StableId}\" 重复。");
+            currentBySid[icon.StableId] = icon;
+        }
+        if (issues.Count > 0)
+            return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                0, issues, verifiedAt);
+
+        // 验证每个被回滚的图标
+        var notRestored = 0;
+        foreach (var (sid, expectedPos) in rollbackTargets)
+        {
+            if (!currentBySid.TryGetValue(sid, out var currentIcon))
+            {
+                issues.Add($"StableId \"{sid}\" 在 Rollback 验证读取中缺失。");
+                return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                    0, issues, verifiedAt);
+            }
+
+            if (currentIcon.PixelPosition != expectedPos)
+            {
+                issues.Add($"\"{sid}\" Rollback 验证位置 " +
+                    $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
+                    $"原始 FromPosition ({expectedPos.X},{expectedPos.Y})。");
+                notRestored++;
+            }
+        }
+
+        if (notRestored > 0)
+            return TargetDisplayLayoutExecutionVerificationResult.RollbackFailed(
+                notRestored, issues, verifiedAt);
+
+        if (issues.Count > 0)
+            return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                0, issues, verifiedAt);
+
+        return TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(verifiedAt);
+    }
 }
