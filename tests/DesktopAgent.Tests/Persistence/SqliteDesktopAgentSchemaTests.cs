@@ -70,20 +70,20 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         return (long)cmd.ExecuteScalar()! > 0;
     }
 
-    // ═══ Fresh v0 → v3 ═══
+    // ═══ Fresh v0 → v4 ═══
 
     [Fact]
-    public void FreshV0_InitViaSnapshotStore_SetsUserVersion3()
+    public void FreshV0_InitViaSnapshotStore_SetsUserVersion4()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
-    public void FreshV0_InitViaTemplateStore_SetsUserVersion3()
+    public void FreshV0_InitViaTemplateStore_SetsUserVersion4()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
@@ -112,48 +112,48 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     {
         var s = new SqliteDesktopLayoutSnapshotStore(_dbPath);
         InitS(s); InitS(s); InitS(s);
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     // ═══ Init order ═══
 
     [Fact]
-    public void SnapshotThenTemplate_Version3()
+    public void SnapshotThenTemplate_Version4()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
-    public void TemplateThenSnapshot_Version3()
+    public void TemplateThenSnapshot_Version4()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
-    // ═══ Single-store init reaches full v3 ═══
+    // ═══ Single-store init reaches full v4 ═══
 
     [Fact]
-    public void SnapshotOnly_ReachesV3()
+    public void SnapshotOnly_ReachesV4()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
     }
 
     [Fact]
-    public void TemplateOnly_ReachesV3()
+    public void TemplateOnly_ReachesV4()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_snapshots"));
         Assert.True(TableExists("desktop_layout_snapshot_items"));
     }
 
-    // ═══ v1 → v3 upgrade preserves snapshots ═══
+    // ═══ v1 → v4 upgrade preserves snapshots ═══
 
     [Fact]
     public void V1Upgrade_PreservesSnapshotParent()
@@ -255,7 +255,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.True(item.IsFileSystemItem);
     }
 
-    // ═══ v3 repairs missing tables ═══
+    // ═══ v4 repairs missing tables ═══
 
     [Fact]
     public void V2WithMissingTables_RepairsSchema()
@@ -275,7 +275,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
@@ -323,7 +323,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() =>
             InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath)));
         Assert.Contains("99", ex.Message);
-        Assert.Contains("3", ex.Message);
+        Assert.Contains("4", ex.Message);
         Assert.Equal(99, ReadUserVersion());
     }
 
@@ -379,20 +379,20 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.False(File.Exists(_dbPath));
     }
 
-    // ═══════════════════════════ Schema v3 ═══════════════════════════
+    // ═══════════════════════════ Schema v4 ═══════════════════════════
 
     [Fact]
-    public void FreshV0_InitViaRuleStore_SetsUserVersion3()
+    public void FreshV0_InitViaRuleStore_SetsUserVersion4()
     {
         var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
     [Fact]
-    public void V1ToV3_PreservesSnapshotData()
+    public void V1ToV4_PreservesSnapshotData()
     {
         using (var c = OpenRawConnection())
         {
@@ -420,7 +420,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
 
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
 
         using var c2 = OpenRawConnection();
@@ -430,7 +430,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public void V2ToV3_PreservesTemplateData()
+    public void V2ToV4_PreservesTemplateData()
     {
         using (var c = OpenRawConnection())
         {
@@ -475,7 +475,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
 
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
 
         using var c2 = OpenRawConnection();
@@ -488,7 +488,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public void V0ToV3_CreatesAllTables()
+    public void V0ToV4_CreatesAllTables()
     {
         using var c = OpenRawConnection();
         using var cmd = c.CreateCommand();
@@ -499,21 +499,21 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
 
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_snapshots"));
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
     [Fact]
-    public void V3RepeatedInit_Idempotent()
+    public void V4RepeatedInit_Idempotent()
     {
         var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
         store.InitializeAsync().GetAwaiter().GetResult();
         store.InitializeAsync().GetAwaiter().GetResult();
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
