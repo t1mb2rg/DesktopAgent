@@ -302,7 +302,34 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorVerificationTests
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
     }
 
-    // ═══════════ 12. Verification not skippable by UI cancel ═══════════
+    // ═══════════ 12. AlreadyAtTarget position mismatch on target display → failed ═══════════
+    [Fact] public async Task AlreadyAtTarget_PositionMismatch_Failed()
+    {
+        var plan = MakeRestorePlan(
+            [Snap("a", new(160, 240)), Snap("b", new(400, 480))],
+            [Live("a", new(160, 240)), Live("b", new(320, 400))]); // 'a' is AlreadyAtTarget, 'b' is MoveRequired
+
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("b", new(320, 400), new(400, 480));
+
+        // Verification: 'b' is at target but 'a' (AlreadyAtTarget) has wrong position
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240)), Live("b", new(320, 400))]); // initial
+        reader.Enqueue([Live("a", new(999, 999)), Live("b", new(400, 480))]); // 'a' moved!
+
+        var store = new InMemoryDesktopLayoutSnapshotStore();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader,
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.NotNull(result.VerificationResult);
+        Assert.Equal(ExecutionVerificationStatus.Failed, result.VerificationResult!.Status);
+    }
+
+    // ═══════════ 13. Verification not skippable by UI cancel ═══════════
     [Fact]
     public async Task VerificationNotSkippableByUICancel()
     {

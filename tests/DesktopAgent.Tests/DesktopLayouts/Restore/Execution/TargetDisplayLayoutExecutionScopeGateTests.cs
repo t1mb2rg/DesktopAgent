@@ -549,4 +549,49 @@ public sealed class TargetDisplayLayoutExecutionScopeGateTests
         Assert.False(result.IsAllowed);
         Assert.Contains(result.RejectionReasons, r => r.Contains("TargetDeviceName"));
     }
+
+    [Fact] public void Batch_StepToPositionOverlapsAlreadyAtTarget_IsRejected()
+    {
+        var items = new[]
+        {
+            new TargetDisplayLayoutRestorePlanItem("a", "N_a", new(240, 320), new(160, 240), TD,
+                TargetDisplayLayoutRestoreItemState.MoveRequired, true, false),
+            new TargetDisplayLayoutRestorePlanItem("b", "N_b", new(240, 320), new(240, 320), TD,
+                TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, true, false),
+        };
+        var rp = new TargetDisplayLayoutRestorePlan(TD, 2, 1, 1, 0, 0, false, false, false,
+            items, Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            Array.Empty<TargetDisplayLayoutRestorePlanIssue>(), new[] { "a" });
+        var ep = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            new[] { new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(160, 240), new(240, 320),
+                TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD) },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var result = TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch(rp, ep);
+        Assert.False(result.IsAllowed);
+        Assert.Contains(result.RejectionReasons, r => r.Contains("AlreadyAtTarget"));
+    }
+
+    [Fact] public void Batch_StepReferencesAlreadyAtTargetStableId_IsRejected()
+    {
+        var items = new[]
+        {
+            new TargetDisplayLayoutRestorePlanItem("a", "N_a", new(240, 320), new(240, 320), TD,
+                TargetDisplayLayoutRestoreItemState.AlreadyAtTarget, true, false),
+        };
+        var rp = new TargetDisplayLayoutRestorePlan(TD, 1, 1, 0, 0, 0, false, false, true, // IsNoOp=true because MoveRequiredCount=0
+            items, Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            Array.Empty<TargetDisplayLayoutRestorePlanIssue>(), null);
+        var ep = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            new[] { new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new(160, 240), new(240, 320),
+                TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD) },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var result = TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch(rp, ep);
+        Assert.False(result.IsAllowed);
+        // Should be rejected because "a" references an AlreadyAtTarget item, not a MoveRequired one
+        Assert.Contains(result.RejectionReasons, r => r.Contains("非 MoveRequired"));
+    }
 }

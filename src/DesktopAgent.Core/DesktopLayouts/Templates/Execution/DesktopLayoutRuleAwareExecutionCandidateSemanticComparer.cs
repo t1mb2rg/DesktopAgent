@@ -209,6 +209,8 @@ public static class DesktopLayoutRuleAwareExecutionCandidateSemanticComparer
             diffs.Add($"RestorePlan.MissingCount: {ra.MissingCount} → {rb.MissingCount}。");
         if (ra.AlreadyAtTargetCount != rb.AlreadyAtTargetCount)
             diffs.Add($"RestorePlan.AlreadyAtTargetCount: {ra.AlreadyAtTargetCount} → {rb.AlreadyAtTargetCount}。");
+        if (ra.SnapshotTargetIconCount != rb.SnapshotTargetIconCount)
+            diffs.Add($"RestorePlan.SnapshotTargetIconCount: {ra.SnapshotTargetIconCount} → {rb.SnapshotTargetIconCount}。");
 
         if (ra.Items.Count != rb.Items.Count)
         {

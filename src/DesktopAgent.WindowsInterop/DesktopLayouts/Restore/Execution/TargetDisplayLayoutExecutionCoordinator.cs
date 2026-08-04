@@ -865,37 +865,47 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 continue;
             }
 
-            // 只验证目标显示器上的项
-            if (!string.Equals(currentIcon.MonitorDeviceName ?? "", targetDeviceName, StringComparison.Ordinal))
+            // 已在目标显示器上 — 验证位置
+            if (string.Equals(currentIcon.MonitorDeviceName ?? "", targetDeviceName, StringComparison.Ordinal))
             {
-                // 如果该项应在目标显示器但不在，报告
+                if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
+                {
+                    if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
+                    {
+                        issues.Add($"\"{item.StableId}\" Forward 验证位置 " +
+                            $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
+                            $"目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
+                    }
+                }
+
+                if (item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
+                {
+                    if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
+                    {
+                        issues.Add($"\"{item.StableId}\" (AlreadyAtTarget) Forward 验证位置 " +
+                            $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
+                            $"快照目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
+                    }
+                }
+            }
+            else
+            {
+                // 不在目标显示器上 — 报告显示器不一致
                 if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired
                     || item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
                 {
-                    issues.Add($"\"{item.StableId}\" 当前显示器 \"{currentIcon.MonitorDeviceName}\" ≠ 目标 \"{targetDeviceName}\"。");
+                    issues.Add($"\"{item.StableId}\" Forward 验证显示器 " +
+                        $"\"{currentIcon.MonitorDeviceName}\" ≠ 目标 \"{targetDeviceName}\"。");
                 }
-                continue;
-            }
-
-            // 验证位置
-            if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
-            {
-                if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
+                // AlreadyAtTarget 不在目标显示器上时仍验证位置（应与快照目标一致）
+                if (item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
                 {
-                    issues.Add($"\"{item.StableId}\" Forward 验证位置 " +
-                        $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
-                        $"目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
-                }
-            }
-
-            // 验证 AlreadyAtTarget 项也在正确位置
-            if (item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
-            {
-                if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
-                {
-                    issues.Add($"\"{item.StableId}\" (AlreadyAtTarget) Forward 验证位置 " +
-                        $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
-                        $"快照目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
+                    if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
+                    {
+                        issues.Add($"\"{item.StableId}\" (AlreadyAtTarget) Forward 验证位置 " +
+                            $"({currentIcon.PixelPosition.X},{currentIcon.PixelPosition.Y}) ≠ " +
+                            $"快照目标 ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
+                    }
                 }
             }
         }

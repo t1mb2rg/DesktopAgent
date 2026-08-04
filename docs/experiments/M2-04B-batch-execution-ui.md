@@ -129,11 +129,11 @@ MainWindow 同步禁用旧的单图标移动和快照恢复入口。
 
 ## 测试结果
 
-- 新增：40 个（Batch ScopeGate 19 + 语义比较器 12 + Coordinator 验证 12 - 3 重复覆盖）
-- 全量：1216/1216 通过
+- 新增：44 个（Batch ScopeGate 21 + 语义比较器 13 + Coordinator 验证 13）
+- 全量：1220/1220 通过
 - 0 失败
 
-### A. 无中转批量 Gate 测试（19 个）
+### A. 无中转批量 Gate 测试（21 个）
 1. 单图标直接移动允许
 2. 多个互不依赖 MoveToTarget 允许
 3. 无中转 DAG 依赖链允许
@@ -153,8 +153,10 @@ MainWindow 同步禁用旧的单图标移动和快照恢复入口。
 17. From/To 不一致拒绝
 18. 目标显示器不一致拒绝
 19. 现有 EvaluateSingleDirectMove 测试全部保持通过
+20. Step ToPosition 与 AlreadyAtTarget 重叠拒绝
+21. Step 引用 AlreadyAtTarget 的 StableId 拒绝
 
-### B. Candidate 语义比较测试（12 个）
+### B. Candidate 语义比较测试（13 个）
 1. 同语义不同对象实例等价
 2. SnapshotId / CreatedAtUtc 变化仍等价
 3. 当前位置变化不等价
@@ -167,7 +169,7 @@ MainWindow 同步禁用旧的单图标移动和快照恢复入口。
 10. 中转状态变化不等价
 11. Differences 有可读信息
 
-### C. Coordinator 验证测试（12 个）
+### C. Coordinator 验证测试（13 个）
 1. 多步骤全部 Exact + 独立读回完全匹配 → Completed
 2. 最终读取不完整 → PositionUncertain
 3. 读取异常 → PositionUncertain
@@ -179,7 +181,8 @@ MainWindow 同步禁用旧的单图标移动和快照恢复入口。
 9. 回滚后未恢复 → FailedRollbackIncomplete
 10. 回滚后读取不完整 → PositionUncertain
 11. Writer 边界不使用 WaitAsync
-12. 验证不被 UI 取消跳过
+12. AlreadyAtTarget 位置不匹配 → Failed
+13. 验证不被 UI 取消跳过（含真正取消）
 
 ## Writer 安全扫描
 

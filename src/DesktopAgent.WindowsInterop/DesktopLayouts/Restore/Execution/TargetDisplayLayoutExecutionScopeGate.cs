@@ -1,5 +1,6 @@
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+using DesktopAgent.Core.Geometry;
 
 namespace DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 
@@ -242,6 +243,23 @@ internal static class TargetDisplayLayoutExecutionScopeGate
                         $"({step.ToPosition.X},{step.ToPosition.Y}) ≠ " +
                         $"item.SnapshotTargetPosition ({item.SnapshotTargetPosition.X},{item.SnapshotTargetPosition.Y})。");
             }
+        }
+
+        // ── Step ToPosition 不与 AlreadyAtTarget 位置重叠 ──
+        var alreadyAtTargetPositions = new HashSet<PixelPoint>();
+        foreach (var item in restorePlan.Items)
+        {
+            if (item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget
+                && item.CurrentPosition.HasValue)
+            {
+                alreadyAtTargetPositions.Add(item.CurrentPosition.Value);
+            }
+        }
+        foreach (var step in executionPlan.Steps)
+        {
+            if (alreadyAtTargetPositions.Contains(step.ToPosition))
+                reasons.Add($"Step \"{step.StableId}\" ToPosition ({step.ToPosition.X},{step.ToPosition.Y}) " +
+                    "与 AlreadyAtTarget 图标位置重叠。");
         }
 
         // ── 目标显示器一致 ──

@@ -263,6 +263,19 @@ public sealed class DesktopLayoutRuleAwareExecutionCandidateSemanticComparerTest
         Assert.False(result.IsEquivalent);
     }
 
+    [Fact] public void SnapshotTargetIconCountChanged_IsNotEquivalent()
+    {
+        // Two icons on target vs one on target — different SnapshotTargetIconCount
+        var (c1, _, _, _) = BuildCandidate(
+            icons: I(0, "a", pos: new PixelPoint(80, 0)));
+        var (c2, _, _, _) = BuildCandidate(
+            icons: new[] { I(0, "a", pos: new PixelPoint(80, 0)), I(1, "b", pos: new PixelPoint(160, 0)) });
+
+        var result = DesktopLayoutRuleAwareExecutionCandidateSemanticComparer.Compare(c1, c2);
+        Assert.False(result.IsEquivalent);
+        Assert.Contains(result.Differences, d => d.Contains("Count"));
+    }
+
     [Fact] public void Differences_HaveReadableInfo()
     {
         var (c1, _, _, _) = BuildCandidate(

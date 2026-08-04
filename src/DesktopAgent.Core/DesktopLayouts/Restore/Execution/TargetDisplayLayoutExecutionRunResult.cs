@@ -74,20 +74,24 @@ public sealed record TargetDisplayLayoutExecutionRunResult
     }
 
     public static TargetDisplayLayoutExecutionRunResult FailedBeforeWrite(
-        string? exceptionType, string? errorMessage) =>
+        string? exceptionType, string? errorMessage,
+        TargetDisplayLayoutExecutionVerificationResult? verificationResult = null) =>
         new(
             TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite,
             false, false, null, null,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             null, false, false,
-            exceptionType, errorMessage, null, null);
+            exceptionType, errorMessage, null, null,
+            verificationResult);
 
-    public static TargetDisplayLayoutExecutionRunResult NoOp() =>
+    public static TargetDisplayLayoutExecutionRunResult NoOp(
+        TargetDisplayLayoutExecutionVerificationResult? verificationResult = null) =>
         new(
             TargetDisplayLayoutExecutionRunStatus.CompletedNoOp,
             true, true, null, null,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null, false, false, null, null, null, null);
+            null, false, false, null, null, null, null,
+            verificationResult);
 }
