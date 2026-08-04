@@ -19,7 +19,7 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
             throw new ArgumentException("PreviewPlan 不完整，不能创建目标快照。");
 
         // Unassigned 拒绝
-        if (previewPlan.DefaultUnassignedCount > 0)
+        if (previewPlan.DefaultUnassignedCount > 0 || previewPlan.OverrideUnassignedCount > 0)
             throw new ArgumentException("PreviewPlan 包含 Unassigned 图标，不能创建目标快照。");
 
         var targetDeviceName = previewPlan.TargetDisplay.DeviceName;
@@ -82,8 +82,12 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
 
         descriptors.Sort((a, b) =>
         {
-            var ai = itemBySid[a.StableId];
-            var bi = itemBySid[b.StableId];
+            if (!itemBySid.TryGetValue(a.StableId, out var ai))
+                throw new InvalidOperationException(
+                    $"目标快照 StableId \"{a.StableId}\" 不在 PreviewPlan.InputIcons 中。");
+            if (!itemBySid.TryGetValue(b.StableId, out var bi))
+                throw new InvalidOperationException(
+                    $"目标快照 StableId \"{b.StableId}\" 不在 PreviewPlan.InputIcons 中。");
             return ai.CompareTo(bi);
         });
 

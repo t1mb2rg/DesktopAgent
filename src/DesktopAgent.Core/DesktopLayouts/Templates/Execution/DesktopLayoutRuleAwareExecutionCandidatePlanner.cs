@@ -92,19 +92,33 @@ public static class DesktopLayoutRuleAwareExecutionCandidatePlanner
             return DesktopLayoutRuleAwareExecutionCandidateBuildResult.Rejected(issues);
         }
 
-        // ═══ 逐项精确对比 ═══
-        for (var i = 0; i < previewPlan.InputIcons.Count; i++)
+        // ═══ 逐项精确对比（按 StableId 排序后比较，不依赖位置索引） ═══
+        // 构建当前 StableId → 图标索引
+        var currentBySid = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < currentReadResult.Icons.Count; i++)
         {
-            var current = currentReadResult.Icons[i];
-            var preview = previewPlan.InputIcons[i];
-
-            if (!StringComparer.Ordinal.Equals(current.StableId, preview.StableId))
+            var sid = currentReadResult.Icons[i].StableId;
+            if (currentBySid.ContainsKey(sid))
             {
                 issues.Add(new(CurrentIconIdentityChanged,
-                    $"当前图标[{i}] StableId \"{current.StableId}\" != Preview \"{preview.StableId}\"。",
-                    current.StableId));
+                    $"当前图标 StableId \"{sid}\" 重复。", sid));
                 return DesktopLayoutRuleAwareExecutionCandidateBuildResult.Rejected(issues);
             }
+            currentBySid[sid] = i;
+        }
+
+        for (var i = 0; i < previewPlan.InputIcons.Count; i++)
+        {
+            var preview = previewPlan.InputIcons[i];
+            if (!currentBySid.TryGetValue(preview.StableId, out var ci))
+            {
+                issues.Add(new(CurrentIconIdentityChanged,
+                    $"当前桌面中未找到 StableId \"{preview.StableId}\"（索引 {i}）。",
+                    preview.StableId));
+                return DesktopLayoutRuleAwareExecutionCandidateBuildResult.Rejected(issues);
+            }
+
+            var current = currentReadResult.Icons[ci];
 
             if (current.DisplayName != preview.DisplayName
                 || current.ParsingName != preview.ParsingName
@@ -113,7 +127,7 @@ public static class DesktopLayoutRuleAwareExecutionCandidatePlanner
                 || current.IsFileSystemItem != preview.IsFileSystemItem)
             {
                 issues.Add(new(CurrentIconMetadataChanged,
-                    $"当前图标[{i}] (\"{current.StableId}\") 元数据已变化。",
+                    $"当前图标 (\"{current.StableId}\") 元数据已变化。",
                     current.StableId));
                 return DesktopLayoutRuleAwareExecutionCandidateBuildResult.Rejected(issues);
             }
@@ -121,7 +135,7 @@ public static class DesktopLayoutRuleAwareExecutionCandidatePlanner
             if (current.PixelPosition != preview.PixelPosition)
             {
                 issues.Add(new(CurrentIconPositionChanged,
-                    $"当前图标[{i}] (\"{current.StableId}\") 位置已变化: " +
+                    $"当前图标 (\"{current.StableId}\") 位置已变化: " +
                     $"({preview.PixelPosition.X},{preview.PixelPosition.Y}) → ({current.PixelPosition.X},{current.PixelPosition.Y})。",
                     current.StableId));
                 return DesktopLayoutRuleAwareExecutionCandidateBuildResult.Rejected(issues);
@@ -131,7 +145,7 @@ public static class DesktopLayoutRuleAwareExecutionCandidatePlanner
                     StringComparison.Ordinal))
             {
                 issues.Add(new(CurrentIconMetadataChanged,
-                    $"当前图标[{i}] (\"{current.StableId}\") MonitorDeviceName 已变化。",
+                    $"当前图标 (\"{current.StableId}\") MonitorDeviceName 已变化。",
                     current.StableId));
                 return DesktopLayoutRuleAwareExecutionCandidateBuildResult.Rejected(issues);
             }

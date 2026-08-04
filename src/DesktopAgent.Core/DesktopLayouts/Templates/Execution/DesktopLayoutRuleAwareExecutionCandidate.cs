@@ -44,6 +44,11 @@ public sealed class DesktopLayoutRuleAwareExecutionCandidate
         // 引用链验证
         if (!ReferenceEquals(sourcePreviewPlan.TargetDisplay, targetDisplay))
             throw new ArgumentException("TargetDisplay 与 SourcePreviewPlan.TargetDisplay 不是同一实例。");
+        if (!string.Equals(targetSnapshot.TargetMonitorDeviceName,
+                sourcePreviewPlan.TargetDisplay.DeviceName, StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"TargetSnapshot.TargetMonitorDeviceName ({targetSnapshot.TargetMonitorDeviceName}) " +
+                $"与 Preview TargetDisplay ({sourcePreviewPlan.TargetDisplay.DeviceName}) 不一致。");
         if (!string.Equals(restorePlan.TargetDeviceName, sourcePreviewPlan.TargetDisplay.DeviceName, StringComparison.Ordinal))
             throw new ArgumentException("RestorePlan.TargetDeviceName 不一致。");
         if (!string.Equals(executionPlan.TargetDeviceName, sourcePreviewPlan.TargetDisplay.DeviceName, StringComparison.Ordinal))
