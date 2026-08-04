@@ -33,6 +33,9 @@ public sealed record TargetDisplayLayoutExecutionRunResult
     /// <summary>回滚/恢复失败异常消息（无失败时为 null）。</summary>
     public string? RecoveryFailureMessage { get; }
 
+    /// <summary>执行后独立完整重读验证结果（无验证时为 null）。</summary>
+    public TargetDisplayLayoutExecutionVerificationResult? VerificationResult { get; }
+
     public TargetDisplayLayoutExecutionRunResult(
         TargetDisplayLayoutExecutionRunStatus status,
         bool isSuccess,
@@ -47,7 +50,8 @@ public sealed record TargetDisplayLayoutExecutionRunResult
         string? forwardFailureType,
         string? forwardFailureMessage,
         string? recoveryFailureType,
-        string? recoveryFailureMessage)
+        string? recoveryFailureMessage,
+        TargetDisplayLayoutExecutionVerificationResult? verificationResult = null)
     {
         ArgumentNullException.ThrowIfNull(forwardAttempts);
         ArgumentNullException.ThrowIfNull(rollbackAttempts);
@@ -66,23 +70,28 @@ public sealed record TargetDisplayLayoutExecutionRunResult
         ForwardFailureMessage = forwardFailureMessage;
         RecoveryFailureType = recoveryFailureType;
         RecoveryFailureMessage = recoveryFailureMessage;
+        VerificationResult = verificationResult;
     }
 
     public static TargetDisplayLayoutExecutionRunResult FailedBeforeWrite(
-        string? exceptionType, string? errorMessage) =>
+        string? exceptionType, string? errorMessage,
+        TargetDisplayLayoutExecutionVerificationResult? verificationResult = null) =>
         new(
             TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite,
             false, false, null, null,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             null, false, false,
-            exceptionType, errorMessage, null, null);
+            exceptionType, errorMessage, null, null,
+            verificationResult);
 
-    public static TargetDisplayLayoutExecutionRunResult NoOp() =>
+    public static TargetDisplayLayoutExecutionRunResult NoOp(
+        TargetDisplayLayoutExecutionVerificationResult? verificationResult = null) =>
         new(
             TargetDisplayLayoutExecutionRunStatus.CompletedNoOp,
             true, true, null, null,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null, false, false, null, null, null, null);
+            null, false, false, null, null, null, null,
+            verificationResult);
 }

@@ -39,17 +39,26 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             new[] { MakeDisplay() }, MakeCaps(), TD);
     }
 
+    private static readonly Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
+        CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>> _verifyPassed =
+        (_, _, _) => Task.FromResult(TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(
+            DateTimeOffset.UtcNow));
+
     private static TargetDisplayLayoutExecutionCoordinator MakeCoordinator(
         FakeDisplayTopologyReader topology, FakeDesktopIconReader reader,
         ScriptedDesktopIconPositionWriter writer, IDesktopLayoutSnapshotStore store) =>
         new(topology, reader, writer, new StaThreadExecutor(),
-            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store);
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()), store,
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            _verifyPassed, _verifyPassed);
 
     private static TargetDisplayLayoutExecutionCoordinator MakeCoordinator(
         FakeDisplayTopologyReader topology, FakeDesktopIconReader reader,
         ScriptedDesktopIconPositionWriter writer, IDesktopLayoutSnapshotStore store,
         IDesktopLayoutSafetySnapshotFactory factory) =>
-        new(topology, reader, writer, new StaThreadExecutor(), factory, store);
+        new(topology, reader, writer, new StaThreadExecutor(), factory, store,
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            _verifyPassed, _verifyPassed);
 
     private static TargetDisplayLayoutRestorePlanItem PlanItem(
         string sid, PixelPoint target, TargetDisplayLayoutRestoreItemState state,
@@ -439,9 +448,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             ((IList<TargetDisplayLayoutExecutionAttemptResult>)result.RollbackAttempts).Clear());
     }
 
-    // ═══════════ 20. Cancellation before Writer ═══════════
-    [Fact] public async Task CancellationBeforeWriter_NoWriteOccurs()
+    // ═══════════ 20. Cancellation before Writer → FailedBeforeWrite (Blocker 1) ═══════════
+    [Fact] public async Task CancellationBeforeWriter_ReturnsFailedBeforeWrite_NoThrow()
     {
+        // OCE before Writer 不得逃逸 Coordinator → 返回 FailedBeforeWrite，不进入人工处理锁
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
         var writer = new ScriptedDesktopIconPositionWriter();
         writer.ScriptExactResult("a", new(160, 240), new(240, 320));
@@ -450,8 +460,38 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new InMemoryDesktopLayoutSnapshotStore());
         using var cts = new CancellationTokenSource();
         cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => coordinator.ExecuteAsync(plan, cts.Token));
+        // 不抛异常 → 返回结构化 FailedBeforeWrite
+        var result = await coordinator.ExecuteAsync(plan, cts.Token);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Equal("OperationCanceledBeforeWrite", result.ForwardFailureType);
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
+        Assert.Equal(0, writer.AttemptCount);
+    }
+
+    // ═══════════ Blocker 2: ExecuteStepsAsync pre-Writer OCE → FailedBeforeWrite ═══════════
+    [Fact]
+    public async Task CancellationBeforeFirstWriter_ReturnsFailedBeforeWrite_NotEscaped()
+    {
+        // 步骤间取消且无先前精确成功 → 返回 FailedBeforeWrite（不抛 OCE）
+        // 使用内部构造函数 + 预取消 token 通过 ExecuteCoreAsync 的 OCE 外层捕获
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore());
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var result = await coordinator.ExecuteAsync(plan, cts.Token);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Equal("OperationCanceledBeforeWrite", result.ForwardFailureType);
+        Assert.Contains("Writer 未启动即取消", result.ForwardFailureMessage);
+        Assert.False(result.RequiresManualRecovery);
+        Assert.False(result.IsPositionUncertain);
         Assert.Equal(0, writer.AttemptCount);
     }
 
@@ -742,7 +782,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => throw new InvalidOperationException("planner BOMB"));
+            (_, _, _, _) => throw new InvalidOperationException("planner BOMB"),
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
@@ -776,7 +817,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => emptyPlan);
+            (_, _, _, _) => emptyPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
@@ -930,7 +972,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => multiStepPlan);
+            (_, _, _, _) => multiStepPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteWithScopeGateAsync(
             plan, TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove);
@@ -972,7 +1015,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => singleStepPlan);
+            (_, _, _, _) => singleStepPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteWithScopeGateAsync(
             plan, TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove);
@@ -1006,7 +1050,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
             writer, new StaThreadExecutor(),
             new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
             store,
-            (_, _, _, _) => singleStepPlan);
+            (_, _, _, _) => singleStepPlan,
+            _verifyPassed, _verifyPassed);
 
         var result = await coordinator.ExecuteWithScopeGateAsync(
             plan,
@@ -1019,5 +1064,31 @@ public sealed class TargetDisplayLayoutExecutionCoordinatorTests
         Assert.Null(result.Session);
         Assert.Equal(0, writer.AttemptCount);
         Assert.Equal(0, store.SaveCount);
+    }
+
+    // ═══════════ Invariant 1: Verifier OCE → PositionUncertain ═══════════
+    [Fact]
+    public async Task ForwardVerifierThrowsOCE_ReturnsPositionUncertain()
+    {
+        // Verifier 的 OperationCanceledException 也必须被捕获，不能逃出 Coordinator
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA),
+            new FakeDesktopIconReader([Live("a", new(160, 240))]),
+            writer, new StaThreadExecutor(),
+            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(),
+            TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            verifyForward: (_, _, _) => throw new OperationCanceledException("verifier cancelled"),
+            verifyRollback: null);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("ForwardVerificationException", result.ForwardFailureType);
+        Assert.Contains("verifier cancelled", result.ForwardFailureMessage);
     }
 }
