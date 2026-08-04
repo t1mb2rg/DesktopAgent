@@ -96,6 +96,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             TargetDisplayLayoutExecutionScopeGate.GateResult>? scopeGate,
         CancellationToken cancellationToken)
     {
+        TargetDisplayLayoutExecutionPlan executionPlan;
+        DesktopLayoutSnapshot safetySnapshot;
+
+        // ═══ Pre-Writer: OCE → FailedBeforeWrite ═══
         try
         {
         // ═══ 1. 重新读取 + 分配显示器 ═══
@@ -131,7 +135,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
 
         // ═══ 2. 重新生成执行计划 ═══
-        TargetDisplayLayoutExecutionPlan executionPlan;
         try
         {
             executionPlan = _createPlan(
@@ -194,7 +197,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
 
         // ═══ 3-6. 安全快照 ═══
-        DesktopLayoutSnapshot safetySnapshot;
         try
         {
             safetySnapshot = _snapshotFactory.Create(
@@ -251,8 +253,16 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Writer 未启动前取消 → FailedBeforeWrite，不进入人工处理锁
+            return FailedBeforeWriteS("OperationCanceledBeforeWrite",
+                $"Writer 未启动即取消：{ex.GetType().Name}: {ex.Message}");
+        }
 
         // ═══ 7. 创建恢复会话 (含深度冻结) ═══
+        // 在 try-catch 外 — 仅使用已校验的非 null 变量，无取消风险
         var session = new TargetDisplayLayoutRecoverySession(
             sessionId: Guid.NewGuid(),
             safetySnapshotId: safetySnapshot.SnapshotId,
@@ -268,15 +278,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             status: "Ready");
 
         // ═══ 8. 逐步执行 ═══
+        // 在 try-catch 外 — ExecuteStepsAsync 保证不抛 OCE；
+        // OCE 从此处逃逸不会被转为 FailedBeforeWrite
         return await ExecuteStepsAsync(
             session, executionPlan, safetySnapshot.SnapshotId, cancellationToken);
-        }
-        catch (OperationCanceledException ex)
-        {
-            // Writer 未启动前取消 → FailedBeforeWrite，不进入人工处理锁
-            return FailedBeforeWriteS("OperationCanceledBeforeWrite",
-                $"Writer 未启动即取消：{ex.GetType().Name}: {ex.Message}");
-        }
     }
 
     // ═══════════════════════════════════════════════
