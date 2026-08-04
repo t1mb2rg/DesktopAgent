@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Editor;
 
@@ -13,6 +14,16 @@ public sealed record LayoutTemplateDraftBuildResult
 {
     public bool IsValid { get; init; }
     public DesktopLayoutTemplate? Template { get; init; }
+    public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
+}
+
+/// <summary>
+/// RuleSet TryBuild 的结果。
+/// </summary>
+public sealed record LayoutRuleSetDraftBuildResult
+{
+    public bool IsValid { get; init; }
+    public DesktopLayoutIconRuleSet? RuleSet { get; init; }
     public IReadOnlyList<string> Errors { get; init; } = Array.Empty<string>();
 }
 
@@ -56,6 +67,13 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
 
     public ObservableCollection<LayoutZoneEditorDraft> Zones { get; } = [];
 
+    public ObservableCollection<LayoutIconRuleEditorDraft> Rules { get; } = [];
+
+    public int RuleCount => Rules.Count;
+    public int ExcludeRuleCount => Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.Exclude);
+    public int PinRuleCount => Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.Pin);
+    public int ZoneOverrideRuleCount => Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.ZoneOverride);
+
     private bool _isDirty;
     public bool IsDirty
     {
@@ -88,6 +106,7 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
         }
 
         Zones.CollectionChanged += OnZonesCollectionChanged;
+        Rules.CollectionChanged += OnRulesCollectionChanged;
     }
 
     public static LayoutTemplateEditorDraft CreateNew()
@@ -122,6 +141,23 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
         var draft = new LayoutTemplateEditorDraft(
             template.TemplateId, template.Name, template.Version,
             bindingKind, deviceName, zones);
+        draft.IsDirty = false;
+        draft.IsPersisted = true;
+        return draft;
+    }
+
+    public static LayoutTemplateEditorDraft FromTemplateAndRuleSet(
+        DesktopLayoutTemplate template, DesktopLayoutIconRuleSet ruleSet)
+    {
+        if (template is null) throw new ArgumentNullException(nameof(template));
+        if (ruleSet is null) throw new ArgumentNullException(nameof(ruleSet));
+        if (template.TemplateId != ruleSet.TemplateId)
+            throw new ArgumentException(
+                $"TemplateId 不一致：Template={template.TemplateId:D}，RuleSet={ruleSet.TemplateId:D}。");
+
+        var draft = FromTemplate(template);
+        foreach (var rule in ruleSet.Rules)
+            draft.Rules.Add(LayoutIconRuleEditorDraft.FromRule(rule));
         draft.IsDirty = false;
         draft.IsPersisted = true;
         return draft;
@@ -221,6 +257,71 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
         }
     }
 
+    public LayoutRuleSetDraftBuildResult TryBuildRuleSet()
+    {
+        var errors = new List<string>();
+        var rules = new List<DesktopLayoutIconRule>();
+        var seenStableIds = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = 0; i < Rules.Count; i++)
+        {
+            var rd = Rules[i];
+            var rule = rd.TryBuild(out var error);
+            if (rule is null)
+            {
+                errors.Add($"Rule[{i}] (StableId=\"{rd.StableId}\") 构建失败：{error}");
+                continue;
+            }
+
+            if (!seenStableIds.Add(rule.StableId))
+            {
+                errors.Add($"Rule[{i}] StableId \"{rd.StableId}\" 重复。");
+                continue;
+            }
+
+            // ZoneOverride 验证 TargetZoneId 存在于当前草稿 Zones
+            if (rule.Kind == DesktopLayoutIconRuleKind.ZoneOverride)
+            {
+                var zid = rule.TargetZoneId!.Value;
+                var found = false;
+                foreach (var z in Zones)
+                {
+                    if (z.ZoneId == zid) { found = true; break; }
+                }
+                if (!found)
+                {
+                    errors.Add($"Rule[{i}] ZoneOverride TargetZoneId={zid:D} 不在当前 Zones 中。");
+                    continue;
+                }
+            }
+
+            rules.Add(rule);
+        }
+
+        if (errors.Count > 0)
+            return new LayoutRuleSetDraftBuildResult
+            {
+                IsValid = false, RuleSet = null, Errors = errors.AsReadOnly()
+            };
+
+        try
+        {
+            var ruleSet = new DesktopLayoutIconRuleSet(TemplateId, rules);
+            return new LayoutRuleSetDraftBuildResult
+            {
+                IsValid = true, RuleSet = ruleSet, Errors = Array.Empty<string>()
+            };
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"DesktopLayoutIconRuleSet 构造失败：{ex.Message}");
+            return new LayoutRuleSetDraftBuildResult
+            {
+                IsValid = false, RuleSet = null, Errors = errors.AsReadOnly()
+            };
+        }
+    }
+
     public void MarkSaved()
     {
         IsDirty = false;
@@ -277,6 +378,63 @@ public sealed class LayoutTemplateEditorDraft : INotifyPropertyChanged
     {
         SyncZoneSubscriptions();
         SetDirty();
+    }
+
+    // ═══ Rule Dirty tracking ═══
+
+    private readonly HashSet<LayoutIconRuleEditorDraft> _subscribedRules =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void SubscribeRule(LayoutIconRuleEditorDraft rule)
+    {
+        if (_subscribedRules.Add(rule))
+            rule.PropertyChanged += OnRulePropertyChanged;
+    }
+
+    private void UnsubscribeRule(LayoutIconRuleEditorDraft rule)
+    {
+        if (_subscribedRules.Remove(rule))
+            rule.PropertyChanged -= OnRulePropertyChanged;
+    }
+
+    private void SyncRuleSubscriptions()
+    {
+        var toRemove = new List<LayoutIconRuleEditorDraft>();
+        foreach (var existing in _subscribedRules)
+        {
+            var found = false;
+            foreach (var r in Rules)
+                if (ReferenceEquals(r, existing)) { found = true; break; }
+            if (!found) toRemove.Add(existing);
+        }
+        foreach (var item in toRemove)
+            UnsubscribeRule(item);
+
+        foreach (var rule in Rules)
+            if (!_subscribedRules.Contains(rule))
+                SubscribeRule(rule);
+    }
+
+    private void OnRulePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        SetDirty();
+        if (e.PropertyName is null || e.PropertyName == nameof(LayoutIconRuleEditorDraft.Kind))
+            NotifyRuleStatsChanged();
+    }
+
+    private void OnRulesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        SyncRuleSubscriptions();
+        SetDirty();
+        NotifyRuleStatsChanged();
+    }
+
+    private void NotifyRuleStatsChanged()
+    {
+        OnPropertyChanged(nameof(RuleCount));
+        OnPropertyChanged(nameof(ExcludeRuleCount));
+        OnPropertyChanged(nameof(PinRuleCount));
+        OnPropertyChanged(nameof(ZoneOverrideRuleCount));
     }
 
     // ═══ INotifyPropertyChanged ═══

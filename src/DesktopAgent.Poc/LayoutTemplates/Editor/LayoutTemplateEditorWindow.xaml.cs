@@ -9,16 +9,20 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
+using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Editor;
 
 public partial class LayoutTemplateEditorWindow : Window
 {
     private readonly IDesktopLayoutTemplateStore _templateStore;
+    private readonly IDesktopLayoutIconRuleStore _ruleStore;
     private readonly string[] _knownDeviceNames;
     private bool _operationInProgress;
     private bool _templateStoreReady;
+    private bool _ruleStoreReady;
     private LayoutTemplateEditorDraft _draft;
     private readonly ObservableCollection<TemplateListEntry> _templateList = [];
     private bool _suppressTemplateSelectionChanged;
@@ -39,11 +43,13 @@ public partial class LayoutTemplateEditorWindow : Window
 
     public LayoutTemplateEditorWindow(
         IDesktopLayoutTemplateStore templateStore,
+        IDesktopLayoutIconRuleStore ruleStore,
         string[] knownDeviceNames)
     {
         InitializeComponent();
 
         _templateStore = templateStore;
+        _ruleStore = ruleStore;
         _knownDeviceNames = knownDeviceNames;
 
         ExactDeviceNameCombo.ItemsSource = _knownDeviceNames;
@@ -53,6 +59,23 @@ public partial class LayoutTemplateEditorWindow : Window
         BindDraft();
 
         Loaded += OnLoaded;
+
+        // 初始化 Kind 下拉框选项
+        RuleKindCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "Exclude",
+            Tag = DesktopLayoutIconRuleKind.Exclude
+        });
+        RuleKindCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "Pin",
+            Tag = DesktopLayoutIconRuleKind.Pin
+        });
+        RuleKindCombo.Items.Add(new ComboBoxItem
+        {
+            Content = "ZoneOverride",
+            Tag = DesktopLayoutIconRuleKind.ZoneOverride
+        });
     }
 
     // ═══ 初始化 ═══
@@ -72,6 +95,21 @@ public partial class LayoutTemplateEditorWindow : Window
         {
             _templateStoreReady = false;
             StatusBarText.Text = $"持久化初始化失败：{ex.Message}。可继续编辑草稿，但保存/加载/删除不可用。";
+            _operationInProgress = false;
+            UpdateButtons();
+            return;
+        }
+
+        // 阶段 A2：初始化规则 Store
+        try
+        {
+            await _ruleStore.InitializeAsync();
+            _ruleStoreReady = true;
+        }
+        catch (Exception ex)
+        {
+            _ruleStoreReady = false;
+            StatusBarText.Text = $"规则 Store 初始化失败：{ex.Message}。可编辑未持久化草稿，但 SAVE / RELOAD / DELETE / LOAD 已禁用。";
             _operationInProgress = false;
             UpdateButtons();
             return;
@@ -146,6 +184,22 @@ public partial class LayoutTemplateEditorWindow : Window
         ZoneListBox.ItemsSource = null;
         _zoneVisuals.Clear();
         ZoneCanvas.Children.Clear();
+    }
+
+    private void AddRule_Click(object sender, RoutedEventArgs e)
+    {
+        _draft.Rules.Add(LayoutIconRuleEditorDraft.CreateNew());
+    }
+
+    private void RemoveRule_Click(object sender, RoutedEventArgs e)
+    {
+        if (RulesGrid.SelectedItem is LayoutIconRuleEditorDraft selected)
+            _draft.Rules.Remove(selected);
+    }
+
+    private void RulesGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        SelectedRulePanel.IsEnabled = RulesGrid.SelectedItem is LayoutIconRuleEditorDraft;
     }
 
     private void OnDraftPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -237,11 +291,12 @@ public partial class LayoutTemplateEditorWindow : Window
 
     private async Task<bool> LoadTemplateAsync(Guid templateId)
     {
-        if (!_templateStoreReady) return false;
+        if (!_templateStoreReady || !_ruleStoreReady) return false;
         _operationInProgress = true;
         UpdateButtons();
         try
         {
+            // 先读入局部变量
             var template = await _templateStore.GetAsync(templateId);
             if (template is null)
             {
@@ -250,11 +305,24 @@ public partial class LayoutTemplateEditorWindow : Window
                 return false;
             }
 
+            var ruleSet = await _ruleStore.GetAsync(templateId);
+            if (ruleSet is null)
+            {
+                StatusBarText.Text = $"模板 {templateId:D} 的规则集不存在（数据不一致）。";
+                return false;
+            }
+            if (ruleSet.TemplateId != template.TemplateId)
+            {
+                StatusBarText.Text = $"模板 {templateId:D} 的规则集 TemplateId 不一致。";
+                return false;
+            }
+
+            // 全部成功后才替换 Draft
             UnbindDraft();
-            _draft = LayoutTemplateEditorDraft.FromTemplate(template);
+            _draft = LayoutTemplateEditorDraft.FromTemplateAndRuleSet(template, ruleSet);
             BindDraft();
             SelectTemplateInList(templateId);
-            StatusBarText.Text = $"已加载：{template.Name} (v{template.Version})";
+            StatusBarText.Text = $"已加载：{template.Name} (v{template.Version})，{_draft.Rules.Count} 条规则";
             return true;
         }
         catch (Exception ex)
@@ -305,7 +373,7 @@ public partial class LayoutTemplateEditorWindow : Window
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (_operationInProgress || !_templateStoreReady) return;
+        if (_operationInProgress || !_templateStoreReady || !_ruleStoreReady) return;
 
         var element = Keyboard.FocusedElement as UIElement;
         if (element is TextBox tb)
@@ -331,23 +399,15 @@ public partial class LayoutTemplateEditorWindow : Window
                 StatusBarText.Text = $"保存失败：{string.Join("；", buildResult.Errors)}";
                 return;
             }
-
             var template = buildResult.Template!;
-            await _templateStore.SaveAsync(template);
 
-            var readBack = await _templateStore.GetAsync(template.TemplateId);
-            if (readBack is null)
+            var ruleBuildResult = _draft.TryBuildRuleSet();
+            if (!ruleBuildResult.IsValid)
             {
-                StatusBarText.Text = "保存失败：回读返回 null。";
+                StatusBarText.Text = $"规则保存失败：{string.Join("；", ruleBuildResult.Errors)}";
                 return;
             }
-
-            var diff = CompareTemplates(template, readBack);
-            if (diff is not null)
-            {
-                StatusBarText.Text = $"保存验证失败：回读数据不一致 — {diff}。请重试。";
-                return;
-            }
+            var ruleSet = ruleBuildResult.RuleSet!;
 
             // 门禁：保存期间 Draft 未被修改
             if (_draft.TemplateId != template.TemplateId)
@@ -356,8 +416,14 @@ public partial class LayoutTemplateEditorWindow : Window
                 return;
             }
 
+            // 使用协调器保存
+            var coordResult = await LayoutTemplateAndRulesSaveCoordinator.SaveAsync(
+                _templateStore, _ruleStore, template, ruleSet);
+            StatusBarText.Text = coordResult.Message!;
+            if (!coordResult.IsSuccess) return;
+
             _draft.MarkSaved();
-            StatusBarText.Text = $"保存成功：{template.Name} (v{template.Version})。";
+            StatusBarText.Text = $"保存成功：{template.Name} (v{template.Version})，{ruleSet.RuleCount} 条规则。";
 
             try
             {
@@ -396,7 +462,7 @@ public partial class LayoutTemplateEditorWindow : Window
 
     private async void Delete_Click(object sender, RoutedEventArgs e)
     {
-        if (_operationInProgress || !_templateStoreReady || !_draft.IsPersisted) return;
+        if (_operationInProgress || !_templateStoreReady || !_ruleStoreReady || !_draft.IsPersisted) return;
 
         var templateId = _draft.TemplateId;
         var dr = MessageBox.Show(
@@ -410,10 +476,11 @@ public partial class LayoutTemplateEditorWindow : Window
         {
             var deleted = await _templateStore.DeleteAsync(templateId);
             var check = await _templateStore.GetAsync(templateId);
+            var ruleCheck = await _ruleStore.GetAsync(templateId);
 
-            if (check is not null)
+            if (check is not null || ruleCheck is not null)
             {
-                StatusBarText.Text = "删除验证失败：GetAsync 仍返回非 null。未切换草稿。";
+                StatusBarText.Text = $"删除验证失败：Template={check is not null}，Rules={ruleCheck is not null}。未切换草稿。";
                 return;
             }
 

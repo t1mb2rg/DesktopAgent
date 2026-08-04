@@ -8,6 +8,7 @@ using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
@@ -20,6 +21,7 @@ namespace DesktopAgent.Poc.LayoutTemplates.Preview;
 public partial class LayoutPreviewWindow : Window
 {
     private readonly IDesktopLayoutTemplateStore _templateStore;
+    private readonly IDesktopLayoutIconRuleStore _ruleStore;
     private readonly IDisplayTopologyReader _displayTopologyReader;
     private readonly IDesktopIconReader _desktopIconReader;
     private readonly IDesktopIconPositionWriter _positioningCapabilitiesProvider;
@@ -38,14 +40,16 @@ public partial class LayoutPreviewWindow : Window
     private bool _suppressTemplateSelectionChanged;
     private CancellationTokenSource? _windowCts;
     private DesktopLayoutTemplate? _loadedTemplate;
+    private DesktopLayoutIconRuleSet? _loadedRuleSet;
     private IReadOnlyList<DisplayDescriptor> _currentDisplays = Array.Empty<DisplayDescriptor>();
-    private DesktopLayoutPreviewPlan? _previewPlan;
+    private DesktopLayoutRuleAwarePreviewPlan? _ruleAwarePreviewPlan;
     private LayoutPreviewScene? _scene;
     private long _generation;
     private string? _selectedTargetDeviceName;
 
     public LayoutPreviewWindow(
         IDesktopLayoutTemplateStore templateStore,
+        IDesktopLayoutIconRuleStore ruleStore,
         IDisplayTopologyReader displayTopologyReader,
         IDesktopIconReader desktopIconReader,
         IDesktopIconPositionWriter positioningCapabilitiesProvider,
@@ -55,6 +59,7 @@ public partial class LayoutPreviewWindow : Window
         InitializeComponent();
 
         _templateStore = templateStore;
+        _ruleStore = ruleStore;
         _displayTopologyReader = displayTopologyReader;
         _desktopIconReader = desktopIconReader;
         _positioningCapabilitiesProvider = positioningCapabilitiesProvider;
@@ -78,6 +83,8 @@ public partial class LayoutPreviewWindow : Window
         try
         {
             await _templateStore.InitializeAsync(_windowCts?.Token ?? default);
+            if (_isClosing) return;
+            await _ruleStore.InitializeAsync(_windowCts?.Token ?? default);
             if (_isClosing) return;
             _storeReady = true;
             await RefreshTemplatesAsync();
@@ -103,7 +110,7 @@ public partial class LayoutPreviewWindow : Window
     private void InvalidatePreview()
     {
         BumpGeneration();
-        _previewPlan = null;
+        _ruleAwarePreviewPlan = null;
         _scene = null;
         PreviewCanvas.Children.Clear();
         _itemRows.Clear();
@@ -176,20 +183,42 @@ public partial class LayoutPreviewWindow : Window
     /// <summary>加载完整模板并更新 UI 状态。可用于 SelectionChanged 和刷新恢复。</summary>
     private async Task LoadTemplateAsync(Guid templateId, long gen, CancellationToken ct)
     {
+        // 读入局部变量
         var template = await _templateStore.GetAsync(templateId, ct);
         if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
         if (template is null)
         {
-            if (!_isClosing)
-                StatusText.Text = $"模板 {templateId:D} 不存在。";
-            _loadedTemplate = null;
+            _loadedTemplate = null; _loadedRuleSet = null; InvalidatePreview();
+            if (!_isClosing) StatusText.Text = $"模板 {templateId:D} 不存在。";
             return;
         }
+
+        DesktopLayoutIconRuleSet? ruleSet;
+        try { ruleSet = await _ruleStore.GetAsync(templateId, ct); }
+        catch
+        {
+            _loadedTemplate = null; _loadedRuleSet = null; InvalidatePreview();
+            if (!_isClosing) StatusText.Text = "加载规则失败。";
+            return;
+        }
+        if (_isClosing || Interlocked.Read(ref _generation) != gen) return;
+
+        if (ruleSet is null || ruleSet.TemplateId != template.TemplateId)
+        {
+            _loadedTemplate = null; _loadedRuleSet = null; InvalidatePreview();
+            if (!_isClosing) StatusText.Text = $"模板 {templateId:D} 的规则集不存在或 TemplateId 不一致。";
+            return;
+        }
+
+        // 全部成功 → 一次性赋值
         _loadedTemplate = template;
+        _loadedRuleSet = ruleSet;
+
         if (!_isClosing)
         {
             UpdateDisplayComboState();
-            StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})。点击 生成预览。";
+            StatusText.Text = $"已加载模板：{template.Name} (v{template.Version})，" +
+                $"{ruleSet.RuleCount} 条规则。点击 生成预览。";
         }
     }
 
@@ -300,13 +329,22 @@ public partial class LayoutPreviewWindow : Window
 
         try
         {
-            // 1. Fresh re-read 完整模板
+            // 1. Fresh re-read 完整模板和规则集（相同 generation）
             var template = await _templateStore.GetAsync(selectedTemplateId, ct);
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
             if (template is null)
             {
                 if (!_isClosing)
                     StatusText.Text = $"模板 {selectedTemplateId:D} 不存在。";
+                return;
+            }
+
+            var ruleSet = await _ruleStore.GetAsync(selectedTemplateId, ct);
+            if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
+            if (ruleSet is null || ruleSet.TemplateId != template.TemplateId)
+            {
+                if (!_isClosing)
+                    StatusText.Text = $"模板 {selectedTemplateId:D} 的规则集不存在或 TemplateId 不一致。";
                 return;
             }
 
@@ -366,12 +404,12 @@ public partial class LayoutPreviewWindow : Window
                 return icon with { MonitorDeviceName = monitor?.DeviceName };
             }).ToList();
 
-            // 7. 创建快照 + 调用 PreviewPlanner
+            // 7. 创建快照 + 调用规则感知 PreviewPlanner
             var snapshot = _snapshotFactory.Create(
                 assignedIcons, targetDisplay.DeviceName, shellRead.IconRead.ConnectionMethod);
 
-            var plan = DesktopLayoutPreviewPlanner.Plan(
-                template, displays2, localSelectedTarget,
+            var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+                template, ruleSet, displays2, localSelectedTarget,
                 shellRead.Capabilities.Spacing, snapshot.Icons);
 
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
@@ -383,7 +421,7 @@ public partial class LayoutPreviewWindow : Window
                 PreviewCanvas.ActualHeight > 0 ? PreviewCanvas.ActualHeight : 600,
                 20);
 
-            _previewPlan = plan;
+            _ruleAwarePreviewPlan = plan;
             _scene = LayoutPreviewSceneBuilder.Build(plan, transform);
 
             if (Interlocked.Read(ref _generation) != gen || _isClosing) return;
@@ -395,8 +433,8 @@ public partial class LayoutPreviewWindow : Window
             _oosRows.Clear();
             foreach (var r in _scene.OutOfScopeRows) _oosRows.Add(r);
 
-            SummaryText.Text = FormatSummary(plan, shellRead);
-            DiagnosticsText.Text = FormatDiagnostics(shellRead);
+            SummaryText.Text = FormatRuleAwareSummary(plan, shellRead);
+            DiagnosticsText.Text = FormatRuleAwareDiagnostics(shellRead, ruleSet);
             StatusText.Text = plan.IsComplete
                 ? (plan.HasChanges ? "预览完成：有图标需要移动。" : "预览完成：所有图标已就位。")
                 : "预览完成：容量不足，部分图标未分配。";
@@ -415,12 +453,12 @@ public partial class LayoutPreviewWindow : Window
     private void RenderScene()
     {
         PreviewCanvas.Children.Clear();
-        if (_scene is null || _previewPlan is null) return;
+        if (_scene is null || _ruleAwarePreviewPlan is null) return;
 
         var t = _scene.Transform;
 
         // WorkArea 外框
-        var (waLeft, waTop, waW, waH) = t.Map(_previewPlan.TargetDisplay.WorkArea);
+        var (waLeft, waTop, waW, waH) = t.Map(_ruleAwarePreviewPlan.TargetDisplay.WorkArea);
         var waRect = new Rectangle
         {
             Stroke = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x33)),
@@ -499,13 +537,13 @@ public partial class LayoutPreviewWindow : Window
 
     private void Canvas_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (_previewPlan is null || _scene is null) return;
+        if (_ruleAwarePreviewPlan is null || _scene is null) return;
         if (PreviewCanvas.ActualWidth <= 0 || PreviewCanvas.ActualHeight <= 0) return;
 
         var transform = new LayoutPreviewCanvasTransform(
-            _previewPlan.TargetDisplay.WorkArea,
+            _ruleAwarePreviewPlan.TargetDisplay.WorkArea,
             PreviewCanvas.ActualWidth, PreviewCanvas.ActualHeight, 20);
-        _scene = LayoutPreviewSceneBuilder.Build(_previewPlan, transform);
+        _scene = LayoutPreviewSceneBuilder.Build(_ruleAwarePreviewPlan, transform);
         RenderScene();
     }
 
@@ -596,6 +634,35 @@ public partial class LayoutPreviewWindow : Window
             $"Capabilities.PrimaryPathException: {read.Capabilities.PrimaryPathException?.Message ?? "无"}\n" +
             $"IconRead.ConnectionMethod: {read.IconRead.ConnectionMethod}\n" +
             $"IconRead.PrimaryPathException: {read.IconRead.PrimaryPathException?.Message ?? "无"}";
+    }
+
+    private static string FormatRuleAwareSummary(
+        DesktopLayoutRuleAwarePreviewPlan plan, LayoutPreviewShellRead read)
+    {
+        var wa = plan.TargetDisplay.WorkArea;
+        return $"模板: {plan.Template.Name} v{plan.Template.Version}\n" +
+            $"目标显示器: {plan.TargetDisplay.DeviceName}\n" +
+            $"WorkArea: ({wa.Left},{wa.Top}) {wa.Width}x{wa.Height}\n" +
+            $"间距: {read.Capabilities.Spacing.X}x{read.Capabilities.Spacing.Y}\n" +
+            $"图标总数: {plan.InputIconCount}  |  目标: {plan.TargetDisplayIconCount}  |  OOS: {plan.OutOfScopeIconCount}\n" +
+            $"Excluded: {plan.ExcludedCount}  Pinned: {plan.PinnedCount}\n" +
+            $"Override已分配: {plan.OverrideAssignedCount}  |  Override未分配: {plan.OverrideUnassignedCount}\n" +
+            $"Default已分配: {plan.DefaultAssignedCount}  |  Default未分配: {plan.DefaultUnassignedCount}\n" +
+            $"已就位: {plan.AlreadyAtTargetCount}  |  需移动: {plan.MoveRequiredCount}\n" +
+            $"IsComplete: {plan.IsComplete}  HasChanges: {plan.HasChanges}\n" +
+            $"ConnectionMethod: {read.IconRead.ConnectionMethod}";
+    }
+
+    private static string FormatRuleAwareDiagnostics(
+        LayoutPreviewShellRead read, DesktopLayoutIconRuleSet ruleSet)
+    {
+        var rulesBreakdown = $"Exclude={ruleSet.Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.Exclude)} " +
+            $"Pin={ruleSet.Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.Pin)} " +
+            $"Override={ruleSet.Rules.Count(r => r.Kind == DesktopLayoutIconRuleKind.ZoneOverride)}";
+        return $"Capabilities.间距: {read.Capabilities.Spacing.X}x{read.Capabilities.Spacing.Y}\n" +
+            $"ConnectionMethod: {read.Capabilities.ConnectionMethod}\n" +
+            $"TemplateId: {ruleSet.TemplateId:D}\n" +
+            $"RuleCount: {ruleSet.RuleCount}  ({rulesBreakdown})";
     }
 
     private static bool TopologyConsistent(IReadOnlyList<DisplayDescriptor> a, IReadOnlyList<DisplayDescriptor> b)

@@ -1,7 +1,7 @@
 <Window x:Class="DesktopAgent.Poc.LayoutTemplates.Preview.LayoutPreviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="布局预览 — M2-03B-B"
+        Title="布局预览 — M2-03C-C-B"
         Width="1280" Height="850" MinWidth="1000" MinHeight="700"
         WindowStartupLocation="CenterOwner"
         Closing="OnClosing">
@@ -66,8 +66,13 @@
             <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <GroupBox Header="汇总" Padding="4" Margin="0,0,0,6">
-                        <TextBlock x:Name="SummaryText" FontSize="12" FontFamily="Consolas"
-                                   TextWrapping="Wrap" Text="无有效预览。" />
+                        <StackPanel>
+                            <TextBlock x:Name="SummaryText" FontSize="12" FontFamily="Consolas"
+                                       TextWrapping="Wrap" Text="无有效预览。" />
+                            <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="#555"
+                                Text="图例 — Excluded: 固定 | Pinned: 占位障碍 | ZoneOverride: 优先进入指定Zone | Default: 剩余槽位"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
                     </GroupBox>
 
                     <GroupBox Header="读取诊断" Padding="4" Margin="0,0,0,6">
@@ -80,19 +85,18 @@
                                   CanUserAddRows="False" IsReadOnly="True" RowHeight="22" MaxHeight="220">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="#" Width="30" Binding="{Binding Ordinal}" />
-                                <DataGridTextColumn Header="名称" Width="90" Binding="{Binding DisplayName}" />
-                                <DataGridTextColumn Header="StableId" Width="70" Binding="{Binding StableIdTruncated}" />
-                                <DataGridTextColumn Header="状态" Width="65" Binding="{Binding StateText}" />
-                                <DataGridTextColumn Header="CurX" Width="45" Binding="{Binding CurrentX}" />
-                                <DataGridTextColumn Header="CurY" Width="45" Binding="{Binding CurrentY}" />
-                                <DataGridTextColumn Header="TgtX" Width="45" Binding="{Binding TargetX}" />
-                                <DataGridTextColumn Header="TgtY" Width="45" Binding="{Binding TargetY}" />
-                                <DataGridTextColumn Header="DX" Width="45" Binding="{Binding DeltaX}" />
-                                <DataGridTextColumn Header="DY" Width="45" Binding="{Binding DeltaY}" />
-                                <DataGridTextColumn Header="Zone" Width="65" Binding="{Binding ZoneName}" />
-                                <DataGridTextColumn Header="Slot" Width="35" Binding="{Binding SlotIndex}" />
-                                <DataGridTextColumn Header="Row" Width="35" Binding="{Binding RowIndex}" />
-                                <DataGridTextColumn Header="Col" Width="35" Binding="{Binding ColumnIndex}" />
+                                <DataGridTextColumn Header="类别" Width="70" Binding="{Binding DispositionText}" />
+                                <DataGridTextColumn Header="放置" Width="65" Binding="{Binding PlacementStateText}" />
+                                <DataGridTextColumn Header="名称" Width="80" Binding="{Binding DisplayName}" />
+                                <DataGridTextColumn Header="StableId" Width="60" Binding="{Binding StableIdTruncated}" />
+                                <DataGridTextColumn Header="规则" Width="50" Binding="{Binding RuleKindText}" />
+                                <DataGridTextColumn Header="状态" Width="55" Binding="{Binding StateText}" />
+                                <DataGridTextColumn Header="CurX" Width="40" Binding="{Binding CurrentX}" />
+                                <DataGridTextColumn Header="CurY" Width="40" Binding="{Binding CurrentY}" />
+                                <DataGridTextColumn Header="TgtX" Width="40" Binding="{Binding TargetX}" />
+                                <DataGridTextColumn Header="TgtY" Width="40" Binding="{Binding TargetY}" />
+                                <DataGridTextColumn Header="Zone" Width="60" Binding="{Binding ZoneName}" />
+                                <DataGridTextColumn Header="Slot" Width="30" Binding="{Binding SlotIndex}" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </GroupBox>

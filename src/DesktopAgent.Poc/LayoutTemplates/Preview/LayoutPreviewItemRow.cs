@@ -1,5 +1,6 @@
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Preview;
 
@@ -25,6 +26,9 @@ public sealed class LayoutPreviewItemRow
     public string RowIndex { get; }
     public string ColumnIndex { get; }
     public DesktopLayoutPreviewItemState State { get; }
+    public string DispositionText { get; }
+    public string PlacementStateText { get; }
+    public string RuleKindText { get; }
 
     private LayoutPreviewItemRow(
         DesktopIconSnapshotItem icon,
@@ -32,7 +36,9 @@ public sealed class LayoutPreviewItemRow
         string stateText, int currentX, int currentY,
         string targetX, string targetY, string deltaX, string deltaY,
         string zoneName, string slotIndex, string rowIndex, string columnIndex,
-        DesktopLayoutPreviewItemState state)
+        DesktopLayoutPreviewItemState state,
+        string dispositionText = "—", string placementStateText = "—",
+        string ruleKindText = "—")
     {
         Icon = icon ?? throw new ArgumentNullException(nameof(icon));
         Ordinal = ordinal;
@@ -50,6 +56,9 @@ public sealed class LayoutPreviewItemRow
         RowIndex = rowIndex;
         ColumnIndex = columnIndex;
         State = state;
+        DispositionText = dispositionText;
+        PlacementStateText = placementStateText;
+        RuleKindText = ruleKindText;
     }
 
     public static LayoutPreviewItemRow From(DesktopLayoutPreviewItem item)
@@ -90,6 +99,73 @@ public sealed class LayoutPreviewItemRow
         DesktopLayoutPreviewItemState.Unassigned => "未分配",
         _ => state.ToString()
     };
+
+    /// <summary>从规则感知预览项创建行。</summary>
+    public static LayoutPreviewItemRow FromRuleAware(DesktopLayoutRuleAwarePreviewItem item)
+    {
+        if (item is null) throw new ArgumentNullException(nameof(item));
+
+        string tx = "—", ty = "—", dx = "—", dy = "—";
+        string zn = "—", si = "—", ri = "—", ci = "—";
+
+        if (item.IsAssigned && item.TargetPosition.HasValue)
+        {
+            tx = item.TargetPosition.Value.X.ToString();
+            ty = item.TargetPosition.Value.Y.ToString();
+            dx = ((long)item.TargetPosition.Value.X - item.CurrentPosition.X).ToString();
+            dy = ((long)item.TargetPosition.Value.Y - item.CurrentPosition.Y).ToString();
+            zn = item.TargetZone?.Name ?? "—";
+            si = item.SlotIndex?.ToString() ?? "—";
+        }
+
+        var state = item.PlacementState switch
+        {
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed =>
+                DesktopLayoutPreviewItemState.AlreadyAtTarget, // canvas: no trajectory
+            DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget =>
+                DesktopLayoutPreviewItemState.AlreadyAtTarget,
+            DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired =>
+                DesktopLayoutPreviewItemState.MoveRequired,
+            _ => DesktopLayoutPreviewItemState.Unassigned,
+        };
+
+        // PlacementStateText: the canonical user-visible placement text
+        var placementText = item.PlacementState switch
+        {
+            DesktopLayoutRuleAwarePreviewPlacementState.Fixed => "Fixed",
+            DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget => "已就位",
+            DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired => "需移动",
+            DesktopLayoutRuleAwarePreviewPlacementState.Unassigned => "未分配",
+            _ => item.PlacementState.ToString()
+        };
+
+        var dispositionText = item.Disposition switch
+        {
+            DesktopLayoutRuleAwarePreviewItemDisposition.Excluded => "Excluded",
+            DesktopLayoutRuleAwarePreviewItemDisposition.Pinned => "Pinned",
+            DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride => "Override",
+            DesktopLayoutRuleAwarePreviewItemDisposition.Default => "Default",
+            _ => item.Disposition.ToString()
+        };
+
+        var ruleText = item.Rule?.Kind switch
+        {
+            DesktopLayoutIconRuleKind.Exclude => "Exclude",
+            DesktopLayoutIconRuleKind.Pin => "Pin",
+            DesktopLayoutIconRuleKind.ZoneOverride => "Override",
+            _ => "—"
+        };
+
+        return new LayoutPreviewItemRow(
+            item.Icon, item.Icon.Ordinal,
+            item.Icon.DisplayName,
+            Truncate(item.Icon.StableId, 60),
+            placementText, // StateText shows canonical placement (Fixed/已就位/需移动/未分配)
+            item.CurrentPosition.X, item.CurrentPosition.Y,
+            tx, ty, dx, dy, zn, si, ri, ci,
+            state,
+            dispositionText, placementText, ruleText);
+    }
 
     private static string Truncate(string v, int max) => v.Length <= max ? v : v[..(max - 3)] + "...";
 }
