@@ -70,20 +70,20 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         return (long)cmd.ExecuteScalar()! > 0;
     }
 
-    // ═══ Fresh v0 → v3 ═══
+    // ═══ Fresh v0 → v4 ═══
 
     [Fact]
-    public void FreshV0_InitViaSnapshotStore_SetsUserVersion3()
+    public void FreshV0_InitViaSnapshotStore_SetsUserVersion4()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
-    public void FreshV0_InitViaTemplateStore_SetsUserVersion3()
+    public void FreshV0_InitViaTemplateStore_SetsUserVersion4()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
@@ -112,48 +112,48 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     {
         var s = new SqliteDesktopLayoutSnapshotStore(_dbPath);
         InitS(s); InitS(s); InitS(s);
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     // ═══ Init order ═══
 
     [Fact]
-    public void SnapshotThenTemplate_Version3()
+    public void SnapshotThenTemplate_Version4()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
-    public void TemplateThenSnapshot_Version3()
+    public void TemplateThenSnapshot_Version4()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
-    // ═══ Single-store init reaches full v3 ═══
+    // ═══ Single-store init reaches full v4 ═══
 
     [Fact]
-    public void SnapshotOnly_ReachesV3()
+    public void SnapshotOnly_ReachesV4()
     {
         InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
     }
 
     [Fact]
-    public void TemplateOnly_ReachesV3()
+    public void TemplateOnly_ReachesV4()
     {
         InitT(new SqliteDesktopLayoutTemplateStore(_dbPath));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_snapshots"));
         Assert.True(TableExists("desktop_layout_snapshot_items"));
     }
 
-    // ═══ v1 → v3 upgrade preserves snapshots ═══
+    // ═══ v1 → v4 upgrade preserves snapshots ═══
 
     [Fact]
     public void V1Upgrade_PreservesSnapshotParent()
@@ -255,7 +255,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.True(item.IsFileSystemItem);
     }
 
-    // ═══ v3 repairs missing tables ═══
+    // ═══ v4 repairs missing tables ═══
 
     [Fact]
     public void V2WithMissingTables_RepairsSchema()
@@ -275,7 +275,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_zones"));
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
     }
 
     [Fact]
@@ -323,7 +323,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         var ex = Assert.Throws<InvalidOperationException>(() =>
             InitS(new SqliteDesktopLayoutSnapshotStore(_dbPath)));
         Assert.Contains("99", ex.Message);
-        Assert.Contains("3", ex.Message);
+        Assert.Contains("4", ex.Message);
         Assert.Equal(99, ReadUserVersion());
     }
 
@@ -379,20 +379,20 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.False(File.Exists(_dbPath));
     }
 
-    // ═══════════════════════════ Schema v3 ═══════════════════════════
+    // ═══════════════════════════ Schema v4 ═══════════════════════════
 
     [Fact]
-    public void FreshV0_InitViaRuleStore_SetsUserVersion3()
+    public void FreshV0_InitViaRuleStore_SetsUserVersion4()
     {
         var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
     [Fact]
-    public void V1ToV3_PreservesSnapshotData()
+    public void V1ToV4_PreservesSnapshotData()
     {
         using (var c = OpenRawConnection())
         {
@@ -420,7 +420,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
 
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
 
         using var c2 = OpenRawConnection();
@@ -430,7 +430,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public void V2ToV3_PreservesTemplateData()
+    public void V2ToV4_PreservesTemplateData()
     {
         using (var c = OpenRawConnection())
         {
@@ -475,7 +475,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
 
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
 
         using var c2 = OpenRawConnection();
@@ -488,7 +488,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public void V0ToV3_CreatesAllTables()
+    public void V0ToV4_CreatesAllTables()
     {
         using var c = OpenRawConnection();
         using var cmd = c.CreateCommand();
@@ -499,21 +499,21 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
 
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_snapshots"));
         Assert.True(TableExists("desktop_layout_templates"));
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
     [Fact]
-    public void V3RepeatedInit_Idempotent()
+    public void V4RepeatedInit_Idempotent()
     {
         var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
             .SqliteDesktopLayoutIconRuleStore(_dbPath);
         store.InitializeAsync().GetAwaiter().GetResult();
         store.InitializeAsync().GetAwaiter().GetResult();
         store.InitializeAsync().GetAwaiter().GetResult();
-        Assert.Equal(3, ReadUserVersion());
+        Assert.Equal(4, ReadUserVersion());
         Assert.True(TableExists("desktop_layout_template_icon_rules"));
     }
 
@@ -712,5 +712,103 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         Assert.Single(rStore.GetAsync(tid1).GetAwaiter().GetResult()!.Rules);
         Assert.Single(rStore.GetAsync(tid2).GetAwaiter().GetResult()!.Rules);
+    }
+
+    // ═══════════════════════════ V3ToV4 Icon Rule Migration ═══════════════════════════
+
+    [Fact]
+    public void V3ToV4_PreservesIconRuleData()
+    {
+        // 构造 v3 数据库：snapshots + templates + zones + icon_rules
+        using (var c = OpenRawConnection())
+        {
+            using var tx = c.BeginTransaction();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = @"
+                PRAGMA user_version = 3;
+                CREATE TABLE IF NOT EXISTS desktop_layout_snapshots (
+                    snapshot_id TEXT PRIMARY KEY NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    target_monitor_device_name TEXT NULL,
+                    connection_method INTEGER NOT NULL,
+                    format_version INTEGER NOT NULL,
+                    icon_count INTEGER NOT NULL
+                );
+                INSERT INTO desktop_layout_snapshots VALUES
+                    ('00000000-0000-0000-0000-000000000099',
+                     '2026-08-01T12:00:00.0000000+00:00', 'DISPLAY1', 1, 1, 2);
+                CREATE TABLE IF NOT EXISTS desktop_layout_templates (
+                    template_id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL, version INTEGER NOT NULL,
+                    target_display_binding_kind INTEGER NOT NULL,
+                    target_display_device_name TEXT NULL,
+                    zone_count INTEGER NOT NULL
+                );
+                INSERT INTO desktop_layout_templates VALUES
+                    ('00000000-0000-0000-0000-000000000088',
+                     'Mig-Template', 1, 1, NULL, 1);
+                CREATE TABLE IF NOT EXISTS desktop_layout_template_zones (
+                    template_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+                    zone_id TEXT NOT NULL, name TEXT NOT NULL,
+                    left_value INTEGER NOT NULL, top_value INTEGER NOT NULL,
+                    right_value INTEGER NOT NULL, bottom_value INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL, placement_flow INTEGER NOT NULL,
+                    max_item_count INTEGER NULL,
+                    PRIMARY KEY (template_id, ordinal),
+                    FOREIGN KEY (template_id) REFERENCES desktop_layout_templates(template_id) ON DELETE CASCADE
+                );
+                INSERT INTO desktop_layout_template_zones VALUES
+                    ('00000000-0000-0000-0000-000000000088', 0,
+                     '00000000-0000-0000-0000-000000000077', 'Z',
+                     0, 0, 10000, 10000, 0, 0, NULL);
+                CREATE TABLE IF NOT EXISTS desktop_layout_template_icon_rules (
+                    template_id TEXT NOT NULL, stable_id TEXT NOT NULL,
+                    rule_kind INTEGER NOT NULL, target_zone_id TEXT NULL,
+                    PRIMARY KEY (template_id, stable_id),
+                    FOREIGN KEY (template_id) REFERENCES desktop_layout_templates(template_id) ON DELETE CASCADE
+                );
+                INSERT INTO desktop_layout_template_icon_rules VALUES
+                    ('00000000-0000-0000-0000-000000000088', 'my-icon', 2,
+                     '00000000-0000-0000-0000-000000000077');
+            ";
+            cmd.ExecuteNonQuery();
+            tx.Commit();
+        }
+
+        Assert.Equal(3, ReadUserVersion());
+
+        // 升级到 v4
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(4, ReadUserVersion());
+
+        // 原版 snapshot/template 数据保留
+        using var c2 = OpenRawConnection();
+        using var selSnap = c2.CreateCommand();
+        selSnap.CommandText = "SELECT icon_count FROM desktop_layout_snapshots WHERE snapshot_id = '00000000-0000-0000-0000-000000000099'";
+        Assert.Equal(2L, (long)selSnap.ExecuteScalar()!);
+
+        using var selTpl = c2.CreateCommand();
+        selTpl.CommandText = "SELECT name FROM desktop_layout_templates WHERE template_id = '00000000-0000-0000-0000-000000000088'";
+        Assert.Equal("Mig-Template", (string)selTpl.ExecuteScalar()!);
+
+        // 规则数据逐字段保留
+        using var selRule = c2.CreateCommand();
+        selRule.CommandText = @"
+            SELECT stable_id, rule_kind, target_zone_id
+            FROM desktop_layout_template_icon_rules
+            WHERE template_id = '00000000-0000-0000-0000-000000000088'
+        ";
+        using var r = selRule.ExecuteReader();
+        Assert.True(r.Read());
+        Assert.Equal("my-icon", r.GetString(0));
+        Assert.Equal(2, r.GetInt32(1)); // ZoneOverride
+        Assert.Equal("00000000-0000-0000-0000-000000000077", r.GetString(2));
+
+        // v4 recovery tables 已创建
+        Assert.True(TableExists("desktop_layout_recovery_sessions"));
+        Assert.True(TableExists("desktop_layout_recovery_attempts"));
     }
 }

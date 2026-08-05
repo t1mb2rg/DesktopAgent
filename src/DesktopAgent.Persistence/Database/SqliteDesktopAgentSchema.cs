@@ -8,7 +8,7 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 3;
+    internal const int CurrentVersion = 4;
 
     /// <summary>
     /// 初始化或升级数据库。幂等。始终在事务内确保所有表和索引存在。
@@ -41,6 +41,9 @@ internal static class SqliteDesktopAgentSchema
 
             // 确保 v3 Schema
             EnsureV3Schema(connection, tx);
+
+            // 确保 v4 Schema
+            EnsureV4Schema(connection, tx);
 
             // 更新版本标记
             if (version < CurrentVersion)
@@ -179,6 +182,80 @@ internal static class SqliteDesktopAgentSchema
                 ),
                 CHECK(stable_id != '')
             );
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV4Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        // RecoverySessionLifecycle enum values:
+        //   Ready=0, Executing=1, Completed=2, FailedAndRolledBack=3,
+        //   FailedRollbackIncomplete=4, PositionUncertain=5
+        // AttemptPhase: Forward=0, Rollback=1
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS desktop_layout_recovery_sessions (
+                session_id                  TEXT PRIMARY KEY NOT NULL,
+                safety_snapshot_id          TEXT NOT NULL,
+                target_device_name          TEXT NOT NULL
+                    CHECK(TRIM(target_device_name) != ''),
+                started_at_utc              TEXT NOT NULL,
+                lifecycle                   INTEGER NOT NULL,
+                requires_manual_recovery    INTEGER NOT NULL,
+                is_position_uncertain       INTEGER NOT NULL,
+                last_failed_step_index      INTEGER NULL,
+                source_restore_plan_json    TEXT NOT NULL,
+                execution_plan_json         TEXT NOT NULL,
+                plan_payload_format_version INTEGER NOT NULL
+                    CHECK(plan_payload_format_version > 0),
+                completed_forward_step_indexes_json        TEXT NOT NULL,
+                completed_rollback_source_step_indexes_json TEXT NOT NULL,
+                forward_failure_type        TEXT NULL,
+                forward_failure_message     TEXT NULL,
+                recovery_failure_type       TEXT NULL,
+                recovery_failure_message    TEXT NULL,
+                verification_result_json    TEXT NULL,
+                revision                    INTEGER NOT NULL CHECK(revision > 0),
+                updated_at_utc              TEXT NOT NULL,
+                forward_attempt_count       INTEGER NOT NULL
+                    CHECK(forward_attempt_count >= 0),
+                rollback_attempt_count      INTEGER NOT NULL
+                    CHECK(rollback_attempt_count >= 0)
+            );
+
+            CREATE TABLE IF NOT EXISTS desktop_layout_recovery_attempts (
+                session_id                  TEXT NOT NULL,
+                attempt_index               INTEGER NOT NULL,
+                source_step_index           INTEGER NOT NULL,
+                phase                       INTEGER NOT NULL,
+                expected_stable_id          TEXT NOT NULL,
+                expected_previous_x         INTEGER NULL,
+                expected_previous_y         INTEGER NULL,
+                requested_x                 INTEGER NOT NULL,
+                requested_y                 INTEGER NOT NULL,
+                reported_stable_id          TEXT NULL,
+                reported_previous_x         INTEGER NULL,
+                reported_previous_y         INTEGER NULL,
+                actual_x                    INTEGER NULL,
+                actual_y                    INTEGER NULL,
+                has_trusted_actual_position INTEGER NOT NULL,
+                is_exact                    INTEGER NOT NULL,
+                outcome                     INTEGER NOT NULL,
+                connection_method           INTEGER NULL,
+                exception_type              TEXT NULL,
+                error_message               TEXT NULL,
+                primary_path_exception_type TEXT NULL,
+                primary_path_exception_msg  TEXT NULL,
+                PRIMARY KEY (session_id, attempt_index),
+                FOREIGN KEY (session_id)
+                    REFERENCES desktop_layout_recovery_sessions(session_id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recovery_sessions_lifecycle
+                ON desktop_layout_recovery_sessions
+                    (lifecycle, started_at_utc DESC);
         ";
         cmd.ExecuteNonQuery();
     }
