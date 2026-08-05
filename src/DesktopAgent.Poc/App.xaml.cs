@@ -48,6 +48,7 @@ public partial class App : Application
                     new DefaultSafetySnapshotFactory(
                         sp.GetRequiredService<DesktopLayoutSnapshotFactory>()));
                 services.AddSingleton<RecoveryOrchestrator>();
+                services.AddSingleton<PersistedRecoveryCoordinator>();
                 services.AddSingleton<TargetDisplayLayoutExecutionCoordinator>();
                 services.AddSingleton<IDesktopLayoutTemplateStore>(
                     new SqliteDesktopLayoutTemplateStore(

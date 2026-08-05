@@ -283,22 +283,22 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             status: "Ready");
 
         // ═══ 7.5. 初始持久化检查点（第一笔 Writer 前） ═══
+        RecoverySessionRecord? checkpoint = null;
         if (_recoveryStore is not null)
         {
-            var (ok, _) = await TrySaveInitialCheckpointAsync(
+            var (ok, record) = await TrySaveInitialCheckpointAsync(
                 session, executionPlan, safetySnapshot.SnapshotId);
             if (!ok)
             {
                 return FailedBeforeWriteS("InitialCheckpointFailed",
                     "初始恢复会话持久化失败：Save 或 readback 不通过。Writer 未启动。");
             }
+            checkpoint = record;
         }
 
         // ═══ 8. 逐步执行 ═══
-        // 在 try-catch 外 — ExecuteStepsAsync 保证不抛 OCE；
-        // OCE 从此处逃逸不会被转为 FailedBeforeWrite
         return await ExecuteStepsAsync(
-            session, executionPlan, safetySnapshot.SnapshotId, cancellationToken);
+            session, executionPlan, safetySnapshot.SnapshotId, cancellationToken, checkpoint);
     }
 
     // ═══════════════════════════════════════════════
@@ -309,7 +309,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         TargetDisplayLayoutRecoverySession session,
         TargetDisplayLayoutExecutionPlan executionPlan,
         Guid safetySnapshotId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RecoverySessionRecord? currentCheckpoint = null)
     {
         var allAttempts = new List<TargetDisplayLayoutExecutionAttemptResult>();
         var attemptIndex = 0;
@@ -343,21 +344,27 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
             catch (Exception ex)
             {
-                // Writer 异常 → 副作用未知，禁止回滚
+                // Writer 异常 → 副作用未知，禁止回滚 → 持久化 PositionUncertain
                 var excAttempt = TargetDisplayLayoutExecutionAttemptResult.FromWriterException(
                     attemptIndex, i, step, ex);
                 allAttempts.Add(excAttempt);
+                var fwdOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
+                var rbOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
 
-                var uncertainSession = BuildSession(session,
-                    allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
-                    allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
+                if (currentCheckpoint is not null)
+                {
+                    await TryUpdateAndGetVerifiedAsync(session, fwdOnly, rbOnly,
+                        Array.Empty<int>(), Array.Empty<int>(),
+                        RecoverySessionLifecycle.PositionUncertain, true, true, i,
+                        ex.GetType().Name, $"步骤 #{i} Writer 异常：{ex.Message}",
+                        null, null, null, currentCheckpoint);
+                }
+
+                var uncertainSession = BuildSession(session, fwdOnly, rbOnly,
                     i, true, true, "PositionUncertain");
-
                 return new TargetDisplayLayoutExecutionRunResult(
                     TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
-                    false, false, uncertainSession, safetySnapshotId,
-                    allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
-                    allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
+                    false, false, uncertainSession, safetySnapshotId, fwdOnly, rbOnly,
                     i, true, true,
                     ex.GetType().Name, $"步骤 #{i} Writer 异常：{ex.Message}",
                     null, null);
@@ -378,6 +385,19 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     attemptIndex - 1, i, step, moveResult);
                 allAttempts[allAttempts.Count - 1] = mismatchAttempt;
 
+                // 持久化 PositionUncertain 终态
+                if (currentCheckpoint is not null)
+                {
+                    await TryUpdateAndGetVerifiedAsync(session,
+                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
+                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
+                        Array.Empty<int>(), Array.Empty<int>(),
+                        RecoverySessionLifecycle.PositionUncertain, true, true, i,
+                        "StableIdMismatch",
+                        $"步骤 #{i} StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。",
+                        null, null, null, currentCheckpoint);
+                }
+
                 return PositionUncertainS(session, i, allAttempts, executionPlan, safetySnapshotId,
                     "StableIdMismatch",
                     $"步骤 #{i} StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。",
@@ -390,6 +410,18 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 var ppAttempt = TargetDisplayLayoutExecutionAttemptResult.FromPreviousPositionMismatch(
                     attemptIndex - 1, i, step, moveResult);
                 allAttempts[allAttempts.Count - 1] = ppAttempt;
+
+                if (currentCheckpoint is not null)
+                {
+                    await TryUpdateAndGetVerifiedAsync(session,
+                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
+                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
+                        Array.Empty<int>(), Array.Empty<int>(),
+                        RecoverySessionLifecycle.PositionUncertain, true, true, i,
+                        "PreviousPositionMismatch",
+                        $"步骤 #{i} PreviousPosition mismatch。",
+                        null, null, null, currentCheckpoint);
+                }
 
                 return PositionUncertainS(session, i, allAttempts, executionPlan, safetySnapshotId,
                     "PreviousPositionMismatch",
@@ -414,31 +446,30 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
 
             // ── 持久化 Forward checkpoint ──
-            if (_recoveryStore is not null)
+            if (currentCheckpoint is not null)
             {
                 var fwdOnly = allAttempts
                     .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
                 var exactFwdIndexes = fwdOnly
                     .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                     .Select(a => a.SourceStepIndex).OrderBy(x => x).ToList();
-                var persisted = await TryUpdateCheckpointAsync(
-                    session, fwdOnly,
-                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                (bool ok, RecoverySessionRecord? newCp) = await TryUpdateAndGetVerifiedAsync(
+                    session, fwdOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
                     exactFwdIndexes, Array.Empty<int>(),
                     RecoverySessionLifecycle.Executing,
                     false, false, null,
                     null, null, null, null, null,
-                    currentRevision: fwdOnly.Count); // 初始 Revision=1，第一次 Update 时 fwdOnly.Count=1
-                if (!persisted)
+                    currentCheckpoint);
+                if (!ok)
                 {
-                    // 持久化失败 → 停止继续 Forward，保守回滚已完成的步骤
                     return await RollbackKnownS(
                         session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
-                        "InexactPosition", // forwardFailureType: 使用与 inexact 相同的触发词
+                        "InexactPosition",
                         "持久化检查点失败 — Writer 已执行但无法可靠记录。",
                         "CheckpointPersistFailed", null,
-                        cancellationToken);
+                        cancellationToken, currentCheckpoint);
                 }
+                currentCheckpoint = newCp;
             }
 
             // 精确成功 — 检查后续步骤是否应继续
@@ -504,12 +535,13 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             nonPassed ? "PositionUncertain" : "Completed");
 
         // ── 持久化终态 ──
-        if (_recoveryStore is not null)
+        var terminalPersisted = true;
+        if (_recoveryStore is not null && currentCheckpoint is not null)
         {
             var finalLifecycle = verificationResult.Status == ExecutionVerificationStatus.Passed
                 ? RecoverySessionLifecycle.Completed
                 : RecoverySessionLifecycle.PositionUncertain;
-            await TryUpdateCheckpointAsync(
+            var (ok, _) = await TryUpdateAndGetVerifiedAsync(
                 session, forwardOnly,
                 Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
                 completedFwd, Array.Empty<int>(),
@@ -519,7 +551,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 nonPassed ? $"Forward 独立验证失败 ({verificationResult.Status})" : null,
                 null, null,
                 verificationResult,
-                currentRevision: 1 + allAttempts.Count);
+                currentCheckpoint);
+            terminalPersisted = ok;
         }
 
         if (verificationResult.Status == ExecutionVerificationStatus.Passed)
@@ -561,7 +594,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         string forwardFailureMessage,
         string? recoveryFailureType,
         string? recoveryFailureMessage,
-        CancellationToken _)
+        CancellationToken _,
+        RecoverySessionRecord? currentCheckpoint = null)
     {
         // Step 1: 回滚当前失败步骤
         var currentAttempt = allAttempts.Last(a =>
@@ -1178,6 +1212,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
     //  持久化检查点（仅在 _recoveryStore != null 时生效）
     // ═══════════════════════════════════════════════════
 
+    /// <summary>初始持久化：Save → Get → 完整 readback 验证。</summary>
     private async Task<(bool Ok, RecoverySessionRecord? Record)> TrySaveInitialCheckpointAsync(
         TargetDisplayLayoutRecoverySession session,
         TargetDisplayLayoutExecutionPlan executionPlan,
@@ -1208,18 +1243,29 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             record.Validate();
             await _recoveryStore.SaveAsync(record);
             var readback = await _recoveryStore.GetAsync(record.SessionId);
-            if (readback is null || readback.SessionId != record.SessionId
+            // 完整 readback 验证
+            if (readback is null
+                || readback.SessionId != record.SessionId
                 || readback.SafetySnapshotId != record.SafetySnapshotId
                 || readback.TargetDeviceName != record.TargetDeviceName
-                || readback.Lifecycle != record.Lifecycle
-                || readback.Revision != 1)
+                || readback.StartedAtUtc != record.StartedAtUtc
+                || readback.Lifecycle != RecoverySessionLifecycle.Executing
+                || readback.Revision != 1
+                || readback.RequiresManualRecovery || readback.IsPositionUncertain
+                || readback.ForwardAttempts.Count != 0 || readback.RollbackAttempts.Count != 0
+                || readback.CompletedForwardStepIndexes.Count != 0
+                || readback.CompletedRollbackSourceStepIndexes.Count != 0
+                || readback.SourceRestorePlan.TargetDeviceName != record.SourceRestorePlan.TargetDeviceName
+                || readback.SourceRestorePlan.Items.Count != record.SourceRestorePlan.Items.Count
+                || readback.ExecutionPlan.Steps.Count != record.ExecutionPlan.Steps.Count)
                 return (false, null);
             return (true, readback);
         }
         catch { return (false, null); }
     }
 
-    private async Task<bool> TryUpdateCheckpointAsync(
+    /// <summary>执行 UpdateAsync → GetAsync → 完整比较 → 返回新记录。</summary>
+    private async Task<(bool Ok, RecoverySessionRecord? Record)> TryUpdateAndGetVerifiedAsync(
         TargetDisplayLayoutRecoverySession session,
         IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> forwardAttempts,
         IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> rollbackAttempts,
@@ -1234,9 +1280,9 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         string? recoveryFailureType,
         string? recoveryFailureMessage,
         TargetDisplayLayoutExecutionVerificationResult? verificationResult,
-        int currentRevision)
+        RecoverySessionRecord currentCheckpoint)
     {
-        if (_recoveryStore is null) return true;
+        if (_recoveryStore is null) return (true, null);
         try
         {
             var record = new RecoverySessionRecord
@@ -1260,13 +1306,32 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 RecoveryFailureType = recoveryFailureType,
                 RecoveryFailureMessage = recoveryFailureMessage,
                 VerificationResult = verificationResult,
-                Revision = currentRevision,
+                Revision = currentCheckpoint.Revision,
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             record.Validate();
-            await _recoveryStore.UpdateAsync(record);
-            return true;
+            var updated = await _recoveryStore.UpdateAsync(record);
+            var fresh = await _recoveryStore.GetAsync(record.SessionId);
+            // 完整比较 Update 返回值与 fresh Get
+            if (fresh is null || !RecordsMatch(updated, fresh))
+                return (false, null);
+            return (true, fresh);
         }
-        catch { return false; }
+        catch { return (false, null); }
+    }
+
+    private static bool RecordsMatch(RecoverySessionRecord a, RecoverySessionRecord b)
+    {
+        return a.SessionId == b.SessionId
+            && a.SafetySnapshotId == b.SafetySnapshotId
+            && a.TargetDeviceName == b.TargetDeviceName
+            && a.StartedAtUtc == b.StartedAtUtc
+            && a.Lifecycle == b.Lifecycle
+            && a.RequiresManualRecovery == b.RequiresManualRecovery
+            && a.IsPositionUncertain == b.IsPositionUncertain
+            && a.LastFailedStepIndex == b.LastFailedStepIndex
+            && a.Revision == b.Revision
+            && a.ForwardAttempts.Count == b.ForwardAttempts.Count
+            && a.RollbackAttempts.Count == b.RollbackAttempts.Count;
     }
 }
