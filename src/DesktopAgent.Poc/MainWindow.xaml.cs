@@ -32,6 +32,7 @@ public partial class MainWindow : Window
     private readonly TargetDisplayLayoutExecutionCoordinator _layoutExecutionCoordinator;
     private readonly IDesktopLayoutTemplateStore _templateStore;
     private readonly IDesktopLayoutIconRuleStore _ruleStore;
+    private readonly IRecoverySessionStore _recoverySessionStore;
 
     private readonly ObservableCollection<DisplayRow> _displayRows = [];
     private IReadOnlyList<DisplayDescriptor> _cachedDisplays = Array.Empty<DisplayDescriptor>();
@@ -72,7 +73,8 @@ public partial class MainWindow : Window
         IDesktopLayoutSafetySnapshotFactory safetySnapshotFactory,
         TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator,
         IDesktopLayoutTemplateStore templateStore,
-        IDesktopLayoutIconRuleStore ruleStore)
+        IDesktopLayoutIconRuleStore ruleStore,
+        IRecoverySessionStore recoverySessionStore)
     {
         InitializeComponent();
 
@@ -86,6 +88,7 @@ public partial class MainWindow : Window
         _layoutExecutionCoordinator = layoutExecutionCoordinator;
         _templateStore = templateStore;
         _ruleStore = ruleStore;
+        _recoverySessionStore = recoverySessionStore;
 
         DisplaysGrid.ItemsSource = _displayRows;
         IconsGrid.ItemsSource = _iconRows;
@@ -197,6 +200,20 @@ public partial class MainWindow : Window
             SnapshotStatsText.Text = $"数据库初始化失败（路径：{dbPath}）";
             UpdateInteractiveState();
             return;
+        }
+
+        // 初始化 RecoverySession Store + 检测未解决会话
+        try
+        {
+            await _recoverySessionStore.InitializeAsync();
+            var unresolved = await _recoverySessionStore.ListUnresolvedAsync(limit: 1);
+            if (unresolved.Count > 0)
+                _layoutRestoreRequiresAttention = true;
+        }
+        catch
+        {
+            // 损坏或无法读取恢复数据 → 执行锁定
+            _layoutRestoreRequiresAttention = true;
         }
 
         try

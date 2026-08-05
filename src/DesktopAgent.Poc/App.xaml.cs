@@ -1,6 +1,7 @@
 using System.Windows;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
+using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
@@ -37,12 +38,16 @@ public partial class App : Application
                 services.AddSingleton<IDesktopIconPositionWriter, DesktopShellIconPositionWriter>();
                 services.AddSingleton<StaThreadExecutor>();
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
+                services.AddSingleton<IRecoverySessionStore>(
+                    new SqliteRecoverySessionStore(
+                        DesktopAgentDataPaths.DefaultDatabasePath));
                 services.AddSingleton<IDesktopLayoutSnapshotStore>(
                     new SqliteDesktopLayoutSnapshotStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
                 services.AddSingleton<IDesktopLayoutSafetySnapshotFactory>(sp =>
                     new DefaultSafetySnapshotFactory(
                         sp.GetRequiredService<DesktopLayoutSnapshotFactory>()));
+                services.AddSingleton<RecoveryOrchestrator>();
                 services.AddSingleton<TargetDisplayLayoutExecutionCoordinator>();
                 services.AddSingleton<IDesktopLayoutTemplateStore>(
                     new SqliteDesktopLayoutTemplateStore(

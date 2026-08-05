@@ -16,6 +16,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
     private readonly StaThreadExecutor _staExecutor;
     private readonly IDesktopLayoutSafetySnapshotFactory _snapshotFactory;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
+    private readonly IRecoverySessionStore? _recoveryStore;
     private readonly Func<TargetDisplayLayoutRestorePlan, DesktopIconReadResult,
         IReadOnlyList<DisplayDescriptor>, DesktopIconPositioningCapabilities,
         TargetDisplayLayoutExecutionPlan> _createPlan;
@@ -30,11 +31,13 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         IDesktopIconPositionWriter positionWriter,
         StaThreadExecutor staExecutor,
         IDesktopLayoutSafetySnapshotFactory snapshotFactory,
-        IDesktopLayoutSnapshotStore snapshotStore)
+        IDesktopLayoutSnapshotStore snapshotStore,
+        IRecoverySessionStore? recoveryStore = null)
         : this(topologyReader, iconReader, positionWriter, staExecutor,
               snapshotFactory, snapshotStore,
               TargetDisplayLayoutExecutionPlanner.CreatePlan,
-              null, null) // verification delegates set below
+              null, null,
+              recoveryStore)
     {
     }
 
@@ -51,7 +54,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
             CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>>? verifyForward = null,
         Func<TargetDisplayLayoutExecutionPlan, TargetDisplayLayoutRecoverySession,
-            CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>>? verifyRollback = null)
+            CancellationToken, Task<TargetDisplayLayoutExecutionVerificationResult>>? verifyRollback = null,
+        IRecoverySessionStore? recoveryStore = null)
     {
         _topologyReader = topologyReader ?? throw new ArgumentNullException(nameof(topologyReader));
         _iconReader = iconReader ?? throw new ArgumentNullException(nameof(iconReader));
@@ -62,6 +66,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         _createPlan = createPlan ?? throw new ArgumentNullException(nameof(createPlan));
         _verifyForward = verifyForward ?? VerifyForwardAsync;
         _verifyRollback = verifyRollback ?? VerifyRollbackAsync;
+        _recoveryStore = recoveryStore;
     }
 
     /// <summary>
@@ -277,6 +282,18 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             isPositionUncertain: false,
             status: "Ready");
 
+        // ═══ 7.5. 初始持久化检查点（第一笔 Writer 前） ═══
+        if (_recoveryStore is not null)
+        {
+            var (ok, _) = await TrySaveInitialCheckpointAsync(
+                session, executionPlan, safetySnapshot.SnapshotId);
+            if (!ok)
+            {
+                return FailedBeforeWriteS("InitialCheckpointFailed",
+                    "初始恢复会话持久化失败：Save 或 readback 不通过。Writer 未启动。");
+            }
+        }
+
         // ═══ 8. 逐步执行 ═══
         // 在 try-catch 外 — ExecuteStepsAsync 保证不抛 OCE；
         // OCE 从此处逃逸不会被转为 FailedBeforeWrite
@@ -396,6 +413,34 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     cancellationToken);
             }
 
+            // ── 持久化 Forward checkpoint ──
+            if (_recoveryStore is not null)
+            {
+                var fwdOnly = allAttempts
+                    .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
+                var exactFwdIndexes = fwdOnly
+                    .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                    .Select(a => a.SourceStepIndex).OrderBy(x => x).ToList();
+                var persisted = await TryUpdateCheckpointAsync(
+                    session, fwdOnly,
+                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    exactFwdIndexes, Array.Empty<int>(),
+                    RecoverySessionLifecycle.Executing,
+                    false, false, null,
+                    null, null, null, null, null,
+                    currentRevision: fwdOnly.Count); // 初始 Revision=1，第一次 Update 时 fwdOnly.Count=1
+                if (!persisted)
+                {
+                    // 持久化失败 → 停止继续 Forward，保守回滚已完成的步骤
+                    return await RollbackKnownS(
+                        session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
+                        "InexactPosition", // forwardFailureType: 使用与 inexact 相同的触发词
+                        "持久化检查点失败 — Writer 已执行但无法可靠记录。",
+                        "CheckpointPersistFailed", null,
+                        cancellationToken);
+                }
+            }
+
             // 精确成功 — 检查后续步骤是否应继续
             if (cancellationToken.IsCancellationRequested && i + 1 < executionPlan.Steps.Count)
             {
@@ -457,6 +502,25 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             null,
             nonPassed, nonPassed,
             nonPassed ? "PositionUncertain" : "Completed");
+
+        // ── 持久化终态 ──
+        if (_recoveryStore is not null)
+        {
+            var finalLifecycle = verificationResult.Status == ExecutionVerificationStatus.Passed
+                ? RecoverySessionLifecycle.Completed
+                : RecoverySessionLifecycle.PositionUncertain;
+            await TryUpdateCheckpointAsync(
+                session, forwardOnly,
+                Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                completedFwd, Array.Empty<int>(),
+                finalLifecycle,
+                nonPassed, nonPassed, null,
+                nonPassed ? "ForwardVerificationFailed" : null,
+                nonPassed ? $"Forward 独立验证失败 ({verificationResult.Status})" : null,
+                null, null,
+                verificationResult,
+                currentRevision: 1 + allAttempts.Count);
+        }
 
         if (verificationResult.Status == ExecutionVerificationStatus.Passed)
         {
@@ -1108,5 +1172,101 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 0, issues, verifiedAt);
 
         return TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(verifiedAt);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  持久化检查点（仅在 _recoveryStore != null 时生效）
+    // ═══════════════════════════════════════════════════
+
+    private async Task<(bool Ok, RecoverySessionRecord? Record)> TrySaveInitialCheckpointAsync(
+        TargetDisplayLayoutRecoverySession session,
+        TargetDisplayLayoutExecutionPlan executionPlan,
+        Guid safetySnapshotId)
+    {
+        if (_recoveryStore is null) return (true, null);
+        try
+        {
+            var record = new RecoverySessionRecord
+            {
+                SessionId = session.SessionId,
+                SafetySnapshotId = safetySnapshotId,
+                TargetDeviceName = session.TargetDeviceName,
+                StartedAtUtc = session.StartedAtUtc,
+                Lifecycle = RecoverySessionLifecycle.Executing,
+                RequiresManualRecovery = false,
+                IsPositionUncertain = false,
+                LastFailedStepIndex = null,
+                SourceRestorePlan = session.SourceRestorePlan,
+                ExecutionPlan = executionPlan,
+                ForwardAttempts = Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                RollbackAttempts = Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                CompletedForwardStepIndexes = Array.Empty<int>(),
+                CompletedRollbackSourceStepIndexes = Array.Empty<int>(),
+                Revision = 1,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            record.Validate();
+            await _recoveryStore.SaveAsync(record);
+            var readback = await _recoveryStore.GetAsync(record.SessionId);
+            if (readback is null || readback.SessionId != record.SessionId
+                || readback.SafetySnapshotId != record.SafetySnapshotId
+                || readback.TargetDeviceName != record.TargetDeviceName
+                || readback.Lifecycle != record.Lifecycle
+                || readback.Revision != 1)
+                return (false, null);
+            return (true, readback);
+        }
+        catch { return (false, null); }
+    }
+
+    private async Task<bool> TryUpdateCheckpointAsync(
+        TargetDisplayLayoutRecoverySession session,
+        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> forwardAttempts,
+        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> rollbackAttempts,
+        IReadOnlyList<int> completedFwd,
+        IReadOnlyList<int> completedRb,
+        RecoverySessionLifecycle lifecycle,
+        bool requiresManualRecovery,
+        bool isPositionUncertain,
+        int? lastFailedStepIndex,
+        string? forwardFailureType,
+        string? forwardFailureMessage,
+        string? recoveryFailureType,
+        string? recoveryFailureMessage,
+        TargetDisplayLayoutExecutionVerificationResult? verificationResult,
+        int currentRevision)
+    {
+        if (_recoveryStore is null) return true;
+        try
+        {
+            var record = new RecoverySessionRecord
+            {
+                SessionId = session.SessionId,
+                SafetySnapshotId = session.SafetySnapshotId,
+                TargetDeviceName = session.TargetDeviceName,
+                StartedAtUtc = session.StartedAtUtc,
+                SourceRestorePlan = session.SourceRestorePlan,
+                ExecutionPlan = session.ExecutionPlan,
+                Lifecycle = lifecycle,
+                RequiresManualRecovery = requiresManualRecovery,
+                IsPositionUncertain = isPositionUncertain,
+                LastFailedStepIndex = lastFailedStepIndex,
+                ForwardAttempts = forwardAttempts,
+                RollbackAttempts = rollbackAttempts,
+                CompletedForwardStepIndexes = completedFwd,
+                CompletedRollbackSourceStepIndexes = completedRb,
+                ForwardFailureType = forwardFailureType,
+                ForwardFailureMessage = forwardFailureMessage,
+                RecoveryFailureType = recoveryFailureType,
+                RecoveryFailureMessage = recoveryFailureMessage,
+                VerificationResult = verificationResult,
+                Revision = currentRevision,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            record.Validate();
+            await _recoveryStore.UpdateAsync(record);
+            return true;
+        }
+        catch { return false; }
     }
 }
