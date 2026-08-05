@@ -555,6 +555,20 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             terminalPersisted = ok;
         }
 
+        // 终态持久化硬门槛：失败时不得返回 Completed
+        if (verificationResult.Status == ExecutionVerificationStatus.Passed && !terminalPersisted)
+        {
+            return new TargetDisplayLayoutExecutionRunResult(
+                TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                false, false, successSession, safetySnapshotId,
+                forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                null, true, true,
+                "TerminalPersistFailed",
+                "Forward 验证通过但终态持久化失败。",
+                null, null,
+                verificationResult);
+        }
+
         if (verificationResult.Status == ExecutionVerificationStatus.Passed)
         {
             return new TargetDisplayLayoutExecutionRunResult(
@@ -1208,6 +1222,32 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         return TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(verifiedAt);
     }
 
+    /// <summary>Rollback 每步检查点：合并 Attempts → Update → Get → 完整比较。</summary>
+    private async Task<(bool Ok, RecoverySessionRecord? NewCp)> PersistRollbackCheckpointAsync(
+        TargetDisplayLayoutRecoverySession session,
+        List<TargetDisplayLayoutExecutionAttemptResult> allAttempts,
+        List<int> rbSourceIndexes,
+        RecoverySessionLifecycle lifecycle,
+        bool requiresManual, bool isPositionUncertain,
+        int? failedStepIndex,
+        string? fwdFailType, string? fwdFailMsg,
+        string? recFailType, string? recFailMsg,
+        RecoverySessionRecord currentCheckpoint)
+    {
+        if (_recoveryStore is null) return (true, null);
+        return await TryUpdateAndGetVerifiedAsync(
+            session,
+            allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
+            allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
+            allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
+                && a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList(),
+            rbSourceIndexes.Distinct().OrderBy(x => x).ToList(),
+            lifecycle, requiresManual, isPositionUncertain, failedStepIndex,
+            fwdFailType, fwdFailMsg, recFailType, recFailMsg, null,
+            currentCheckpoint);
+    }
+
     // ═══════════════════════════════════════════════════
     //  持久化检查点（仅在 _recoveryStore != null 时生效）
     // ═══════════════════════════════════════════════════
@@ -1313,25 +1353,157 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             var updated = await _recoveryStore.UpdateAsync(record);
             var fresh = await _recoveryStore.GetAsync(record.SessionId);
             // 完整比较 Update 返回值与 fresh Get
-            if (fresh is null || !RecordsMatch(updated, fresh))
+            if (fresh is null || !RecordsAreEquivalent(updated, fresh))
                 return (false, null);
             return (true, fresh);
         }
         catch { return (false, null); }
     }
 
-    private static bool RecordsMatch(RecoverySessionRecord a, RecoverySessionRecord b)
+    /// <summary>逐字段完整比较两个 RecoverySessionRecord。</summary>
+    internal static bool RecordsAreEquivalent(RecoverySessionRecord a, RecoverySessionRecord b)
     {
-        return a.SessionId == b.SessionId
-            && a.SafetySnapshotId == b.SafetySnapshotId
-            && a.TargetDeviceName == b.TargetDeviceName
-            && a.StartedAtUtc == b.StartedAtUtc
-            && a.Lifecycle == b.Lifecycle
-            && a.RequiresManualRecovery == b.RequiresManualRecovery
-            && a.IsPositionUncertain == b.IsPositionUncertain
-            && a.LastFailedStepIndex == b.LastFailedStepIndex
-            && a.Revision == b.Revision
-            && a.ForwardAttempts.Count == b.ForwardAttempts.Count
-            && a.RollbackAttempts.Count == b.RollbackAttempts.Count;
+        if (a is null || b is null) return false;
+        if (ReferenceEquals(a, b)) return true;
+
+        // Header
+        if (a.SessionId != b.SessionId) return false;
+        if (a.SafetySnapshotId != b.SafetySnapshotId) return false;
+        if (!string.Equals(a.TargetDeviceName, b.TargetDeviceName, StringComparison.Ordinal)) return false;
+        if (a.StartedAtUtc != b.StartedAtUtc) return false;
+        if (a.UpdatedAtUtc != b.UpdatedAtUtc) return false;
+
+        // Lifecycle & flags
+        if (a.Lifecycle != b.Lifecycle) return false;
+        if (a.RequiresManualRecovery != b.RequiresManualRecovery) return false;
+        if (a.IsPositionUncertain != b.IsPositionUncertain) return false;
+        if (a.LastFailedStepIndex != b.LastFailedStepIndex) return false;
+        if (a.Revision != b.Revision) return false;
+
+        // Failure evidence
+        if (!string.Equals(a.ForwardFailureType, b.ForwardFailureType, StringComparison.Ordinal)) return false;
+        if (!string.Equals(a.ForwardFailureMessage, b.ForwardFailureMessage, StringComparison.Ordinal)) return false;
+        if (!string.Equals(a.RecoveryFailureType, b.RecoveryFailureType, StringComparison.Ordinal)) return false;
+        if (!string.Equals(a.RecoveryFailureMessage, b.RecoveryFailureMessage, StringComparison.Ordinal)) return false;
+
+        // Completed indexes
+        if (!a.CompletedForwardStepIndexes.SequenceEqual(b.CompletedForwardStepIndexes)) return false;
+        if (!a.CompletedRollbackSourceStepIndexes.SequenceEqual(b.CompletedRollbackSourceStepIndexes)) return false;
+
+        // ForwardAttempts — 逐字段 + 顺序
+        if (!AttemptListsMatch(a.ForwardAttempts, b.ForwardAttempts)) return false;
+        if (!AttemptListsMatch(a.RollbackAttempts, b.RollbackAttempts)) return false;
+
+        // VerificationResult
+        if (a.VerificationResult is null != b.VerificationResult is null) return false;
+        if (a.VerificationResult is not null && b.VerificationResult is not null)
+        {
+            if (a.VerificationResult.Phase != b.VerificationResult.Phase) return false;
+            if (a.VerificationResult.Status != b.VerificationResult.Status) return false;
+            if (a.VerificationResult.FailedItemCount != b.VerificationResult.FailedItemCount) return false;
+            if (!a.VerificationResult.Issues.SequenceEqual(b.VerificationResult.Issues, StringComparer.Ordinal)) return false;
+        }
+
+        // SourceRestorePlan
+        if (!RestorePlansMatch(a.SourceRestorePlan, b.SourceRestorePlan)) return false;
+
+        // ExecutionPlan
+        if (!ExecPlansMatch(a.ExecutionPlan, b.ExecutionPlan)) return false;
+
+        return true;
+    }
+
+    private static bool AttemptListsMatch(
+        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> a,
+        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+        {
+            var x = a[i]; var y = b[i];
+            if (x.AttemptIndex != y.AttemptIndex) return false;
+            if (x.SourceStepIndex != y.SourceStepIndex) return false;
+            if (x.Phase != y.Phase) return false;
+            if (!string.Equals(x.ExpectedStableId, y.ExpectedStableId, StringComparison.Ordinal)) return false;
+            if (x.ExpectedPreviousPosition != y.ExpectedPreviousPosition) return false;
+            if (x.RequestedPosition != y.RequestedPosition) return false;
+            if (!string.Equals(x.ReportedStableId, y.ReportedStableId, StringComparison.Ordinal)) return false;
+            if (x.ReportedPreviousPosition != y.ReportedPreviousPosition) return false;
+            if (x.ActualPosition != y.ActualPosition) return false;
+            if (x.HasTrustedActualPosition != y.HasTrustedActualPosition) return false;
+            if (x.IsExact != y.IsExact) return false;
+            if (x.Outcome != y.Outcome) return false;
+            if (x.ConnectionMethod != y.ConnectionMethod) return false;
+            if (!string.Equals(x.ExceptionType, y.ExceptionType, StringComparison.Ordinal)) return false;
+            if (!string.Equals(x.ErrorMessage, y.ErrorMessage, StringComparison.Ordinal)) return false;
+            if (!string.Equals(x.PrimaryPathExceptionType, y.PrimaryPathExceptionType, StringComparison.Ordinal)) return false;
+            if (!string.Equals(x.PrimaryPathExceptionMessage, y.PrimaryPathExceptionMessage, StringComparison.Ordinal)) return false;
+        }
+        return true;
+    }
+
+    private static bool RestorePlansMatch(TargetDisplayLayoutRestorePlan a, TargetDisplayLayoutRestorePlan b)
+    {
+        if (!string.Equals(a.TargetDeviceName, b.TargetDeviceName, StringComparison.Ordinal)) return false;
+        if (a.SnapshotTargetIconCount != b.SnapshotTargetIconCount) return false;
+        if (a.AlreadyAtTargetCount != b.AlreadyAtTargetCount) return false;
+        if (a.MoveRequiredCount != b.MoveRequiredCount) return false;
+        if (a.MissingCount != b.MissingCount) return false;
+        if (a.BlockedCount != b.BlockedCount) return false;
+        if (a.HasBlockingErrors != b.HasBlockingErrors) return false;
+        if (a.RequiresTemporaryStaging != b.RequiresTemporaryStaging) return false;
+        if (a.IsNoOp != b.IsNoOp) return false;
+        if (a.Items.Count != b.Items.Count) return false;
+        for (int i = 0; i < a.Items.Count; i++)
+        {
+            var ai = a.Items[i]; var bi = b.Items[i];
+            if (!string.Equals(ai.StableId, bi.StableId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(ai.DisplayName, bi.DisplayName, StringComparison.Ordinal)) return false;
+            if (ai.SnapshotTargetPosition != bi.SnapshotTargetPosition) return false;
+            if (ai.CurrentPosition != bi.CurrentPosition) return false;
+            if (!string.Equals(ai.CurrentMonitorDeviceName, bi.CurrentMonitorDeviceName, StringComparison.Ordinal)) return false;
+            if (ai.State != bi.State) return false;
+            if (ai.IsFileSystemItem != bi.IsFileSystemItem) return false;
+            if (ai.IsSystemItem != bi.IsSystemItem) return false;
+            if (!string.Equals(ai.BlockReason, bi.BlockReason, StringComparison.Ordinal)) return false;
+        }
+        return true;
+    }
+
+    private static bool ExecPlansMatch(TargetDisplayLayoutExecutionPlan a, TargetDisplayLayoutExecutionPlan b)
+    {
+        if (!string.Equals(a.TargetDeviceName, b.TargetDeviceName, StringComparison.Ordinal)) return false;
+        if (a.IsExecutable != b.IsExecutable) return false;
+        if (a.IsNoOp != b.IsNoOp) return false;
+        if (a.Steps.Count != b.Steps.Count) return false;
+        for (int i = 0; i < a.Steps.Count; i++)
+        {
+            var sa = a.Steps[i]; var sb = b.Steps[i];
+            if (sa.StepIndex != sb.StepIndex) return false;
+            if (!string.Equals(sa.StableId, sb.StableId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(sa.DisplayName, sb.DisplayName, StringComparison.Ordinal)) return false;
+            if (sa.FromPosition != sb.FromPosition) return false;
+            if (sa.ToPosition != sb.ToPosition) return false;
+            if (sa.Kind != sb.Kind) return false;
+            if (!string.Equals(sa.ExpectedMonitorDeviceName, sb.ExpectedMonitorDeviceName, StringComparison.Ordinal)) return false;
+            if (sa.StagingSequence != sb.StagingSequence) return false;
+        }
+        if (a.StagingAssignments.Count != b.StagingAssignments.Count) return false;
+        for (int i = 0; i < a.StagingAssignments.Count; i++)
+        {
+            var sa = a.StagingAssignments[i]; var sb = b.StagingAssignments[i];
+            if (!string.Equals(sa.StableId, sb.StableId, StringComparison.Ordinal)) return false;
+            if (sa.StagingPosition != sb.StagingPosition) return false;
+            if (sa.EnterStepIndex != sb.EnterStepIndex) return false;
+            if (sa.ExitStepIndex != sb.ExitStepIndex) return false;
+        }
+        if (a.Issues.Count != b.Issues.Count) return false;
+        for (int i = 0; i < a.Issues.Count; i++)
+        {
+            if (a.Issues[i].Code != b.Issues[i].Code) return false;
+            if (!string.Equals(a.Issues[i].Message, b.Issues[i].Message, StringComparison.Ordinal)) return false;
+            if (!string.Equals(a.Issues[i].RelatedStableId, b.Issues[i].RelatedStableId, StringComparison.Ordinal)) return false;
+        }
+        return true;
     }
 }
