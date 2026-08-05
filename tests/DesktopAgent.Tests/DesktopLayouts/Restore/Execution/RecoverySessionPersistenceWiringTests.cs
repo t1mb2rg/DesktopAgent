@@ -89,19 +89,34 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
 
     private sealed class SpyWriter : IDesktopIconPositionWriter
     {
-        private readonly string _sid; private readonly PixelPoint _from, _to;
-        public List<string> Events = new();
+        private readonly Dictionary<string, (PixelPoint from, PixelPoint to)> _icons;
+        private int _moveCallCount;
+        public List<string> Events { get; }
         public bool FailMove; public string? WrongStableId; public PixelPoint? WrongPrevious;
         public DesktopIconPositioningCapabilities GetCapabilities() => new(false, Sp, ConnectionMethod.FindWindowSW, null);
-        public SpyWriter(string sid, PixelPoint from, PixelPoint to) { _sid = sid; _from = from; _to = to; }
 
-        private int _moveCallCount;
+        public SpyWriter(List<string> events, string sid, PixelPoint from, PixelPoint to)
+        {
+            Events = events;
+            _icons = new Dictionary<string, (PixelPoint, PixelPoint)>(StringComparer.Ordinal)
+            {
+                [sid] = (from, to)
+            };
+        }
+
+        public SpyWriter(List<string> events, Dictionary<string, (PixelPoint from, PixelPoint to)> icons)
+        {
+            Events = events;
+            _icons = icons;
+        }
+
         public DesktopIconMoveResult MoveDesktopIcon(string sid, PixelPoint target)
         {
             Events.Add($"Writer:{_moveCallCount++}");
             if (FailMove) throw new InvalidOperationException("Writer BOMB");
             var reportedSid = WrongStableId ?? sid;
-            var prevPos = WrongPrevious ?? _from;
+            var (from, _) = _icons.TryGetValue(sid, out var icon) ? icon : (target, target);
+            var prevPos = WrongPrevious ?? from;
             return new DesktopIconMoveResult(reportedSid, prevPos, target, target, ConnectionMethod.FindWindowSW, null);
         }
     }
@@ -111,12 +126,14 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
     {
         ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320));
+        var sharedEvents = new List<string>();
+        var writer = new SpyWriter(sharedEvents, "a", new(160, 240), new(240, 320));
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
         reader.Enqueue([Live("a", new(240, 320))]);
 
         var estore = new EventStore(_dbPath);
+        estore.Events = sharedEvents;
         await estore.InitializeAsync();
         // Tamper Get: 修改 SourceRestorePlan 的 Items（不一致）
         estore.TamperGet = r => r with { SourceRestorePlan = MakeRestorePlan(
@@ -130,9 +147,8 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
 
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
-        Assert.Contains("Save", estore.Events);
-        Assert.Contains("Get", estore.Events);
-        Assert.DoesNotContain(estore.Events, e => e.StartsWith("Writer"));
+        Assert.Equal(new[] { "Save", "Get" }, sharedEvents);
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer"));
     }
 
     // ═══════════ 2. InitialCheckpointPersistedBeforeFirstWriter ═══════════
@@ -140,13 +156,14 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
     {
         ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var combinedEvents = new List<string>();
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { Events = combinedEvents };
+        var sharedEvents = new List<string>();
+        var writer = new SpyWriter(sharedEvents, "a", new(160, 240), new(240, 320));
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
         reader.Enqueue([Live("a", new(240, 320))]);
 
         var estore = new EventStore(_dbPath);
+        estore.Events = sharedEvents;
         await estore.InitializeAsync();
         var coordinator = new TargetDisplayLayoutExecutionCoordinator(
             new FakeDisplayTopologyReader(TD, WA), reader, writer,
@@ -157,19 +174,9 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
 
-        // 合并 Store events 和 Writer events
-        var allEvents = new List<string>();
-        allEvents.AddRange(estore.Events);
-        allEvents.AddRange(combinedEvents);
-        Assert.Contains("Save", allEvents);
-        Assert.Contains("Get", allEvents);
-        Assert.Contains(allEvents, e => e.StartsWith("Writer:"));
-        // Save 和 Get 应出现在 Writer 之前
-        var saveIdx = allEvents.FindIndex(e => e == "Save");
-        var getIdx = allEvents.FindIndex(e => e == "Get");
-        var writeIdx = allEvents.FindIndex(e => e.StartsWith("Writer:"));
-        Assert.True(saveIdx < writeIdx);
-        Assert.True(getIdx < writeIdx);
+        Assert.Equal(
+            new[] { "Save", "Get", "Writer:0" },
+            sharedEvents.Take(3));
     }
 
     // ═══════════ 3. ForwardCheckpointBeforeNextWriter ═══════════
@@ -180,14 +187,19 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         var plan = MakeRestorePlan(
             [Snap("a", new(240, 80)), Snap("b", new(400, 80))],
             [Live("a", new(160, 80)), Live("b", new(320, 80))]);
-        var writer = new ScriptedDesktopIconPositionWriter();
-        writer.ScriptExactResult("a", new(160, 80), new(240, 80));
-        writer.ScriptExactResult("b", new(320, 80), new(400, 80));
+        var sharedEvents = new List<string>();
+        var icons = new Dictionary<string, (PixelPoint from, PixelPoint to)>
+        {
+            ["a"] = (new PixelPoint(160, 80), new PixelPoint(240, 80)),
+            ["b"] = (new PixelPoint(320, 80), new PixelPoint(400, 80)),
+        };
+        var writer = new SpyWriter(sharedEvents, icons);
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 80)), Live("b", new(320, 80))]);
         reader.Enqueue([Live("a", new(240, 80)), Live("b", new(400, 80))]); // verification
 
         var estore = new EventStore(_dbPath);
+        estore.Events = sharedEvents;
         await estore.InitializeAsync();
         var coordinator = new TargetDisplayLayoutExecutionCoordinator(
             new FakeDisplayTopologyReader(TD, WA), reader, writer,
@@ -198,17 +210,8 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
 
-        // 必须前缀: Save, Get, Writer:0, Update, Get, Writer:1
-        var expectedPrefix = new[] { "Save", "Get" };
-        // 前两个是 Save + Get
-        for (int i = 0; i < 2; i++) Assert.Equal(expectedPrefix[i], estore.Events[i]);
-        // Writer:0 必须在索引 2
-        // (Writer events come from ScriptedDesktopIconPositionWriter, not estore)
-        Assert.Single(result.ForwardAttempts.Where(a => a.SourceStepIndex == 0));
-        Assert.Single(result.ForwardAttempts.Where(a => a.SourceStepIndex == 1));
-        // 至少有 Save + Get
-        Assert.Contains("Save", estore.Events);
-        Assert.Contains("Get", estore.Events);
+        var expectedPrefix = new[] { "Save", "Get", "Writer:0", "Update:Executing", "Get", "Writer:1", "Update:Executing", "Get" };
+        Assert.Equal(expectedPrefix, sharedEvents.Take(expectedPrefix.Length));
     }
 
     // ═══════════ 4. ForwardCheckpointFailure_StopsNextWriter ═══════════
@@ -245,7 +248,7 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
     {
         ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { FailMove = true };
+        var writer = new SpyWriter(new List<string>(), "a", new(160, 240), new(240, 320)) { FailMove = true };
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
 
@@ -274,7 +277,7 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
     {
         ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { WrongStableId = "WRONG" };
+        var writer = new SpyWriter(new List<string>(), "a", new(160, 240), new(240, 320)) { WrongStableId = "WRONG" };
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
 
@@ -299,7 +302,7 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
     {
         ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { WrongPrevious = new(999, 999) };
+        var writer = new SpyWriter(new List<string>(), "a", new(160, 240), new(240, 320)) { WrongPrevious = new(999, 999) };
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
 
@@ -324,7 +327,7 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
     {
         ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320));
+        var writer = new SpyWriter(new List<string>(), "a", new(160, 240), new(240, 320));
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
         reader.Enqueue([Live("a", new(240, 320))]); // verification passes
@@ -343,6 +346,45 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         Assert.True(result.RequiresManualRecovery);
         Assert.True(result.IsPositionUncertain);
         Assert.NotEqual(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+    }
+
+    // ═══════════ 9. UncertainForwardTerminalPersistFails_ReturnsTerminalPersistFailed ═══════════
+    [Theory]
+    [InlineData("WriterException")]
+    [InlineData("StableIdMismatch")]
+    [InlineData("PreviousPositionMismatch")]
+    public async Task UncertainForwardTerminalPersistFails_ReturnsTerminalPersistFailed(string failureMode)
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+
+        var sharedEvents = new List<string>();
+        SpyWriter writer = failureMode switch
+        {
+            "WriterException" => new SpyWriter(sharedEvents, "a", new(160, 240), new(240, 320)) { FailMove = true },
+            "StableIdMismatch" => new SpyWriter(sharedEvents, "a", new(160, 240), new(240, 320)) { WrongStableId = "WRONG" },
+            "PreviousPositionMismatch" => new SpyWriter(sharedEvents, "a", new(160, 240), new(240, 320)) { WrongPrevious = new(999, 999) },
+            _ => throw new ArgumentException(failureMode)
+        };
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+
+        var estore = new EventStore(_dbPath) { FailUpdate = true };
+        estore.Events = sharedEvents;
+        await estore.InitializeAsync();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: estore);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("TerminalPersistFailed", result.ForwardFailureType);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        // 不执行后续 Writer（单步骤计划无 Writer:1）
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:1"));
     }
 
     private sealed class FailingTerminalStore : IRecoverySessionStore

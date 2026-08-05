@@ -353,11 +353,19 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
                 if (currentCheckpoint is not null)
                 {
-                    await TryUpdateAndGetVerifiedAsync(session, fwdOnly, rbOnly,
+                    var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session, fwdOnly, rbOnly,
                         Array.Empty<int>(), Array.Empty<int>(),
                         RecoverySessionLifecycle.PositionUncertain, true, true, i,
                         ex.GetType().Name, $"步骤 #{i} Writer 异常：{ex.Message}",
                         null, null, null, currentCheckpoint);
+                    if (!persisted)
+                    {
+                        return PositionUncertainS(session, i, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            "TerminalPersistFailed",
+                            "WriterException 发生后，PositionUncertain 终态持久化失败。",
+                            null, null);
+                    }
                 }
 
                 var uncertainSession = BuildSession(session, fwdOnly, rbOnly,
@@ -388,7 +396,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 // 持久化 PositionUncertain 终态
                 if (currentCheckpoint is not null)
                 {
-                    await TryUpdateAndGetVerifiedAsync(session,
+                    var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session,
                         allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
                         allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
                         Array.Empty<int>(), Array.Empty<int>(),
@@ -396,6 +404,14 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                         "StableIdMismatch",
                         $"步骤 #{i} StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。",
                         null, null, null, currentCheckpoint);
+                    if (!persisted)
+                    {
+                        return PositionUncertainS(session, i, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            "TerminalPersistFailed",
+                            "StableIdMismatch 发生后，PositionUncertain 终态持久化失败。",
+                            null, null);
+                    }
                 }
 
                 return PositionUncertainS(session, i, allAttempts, executionPlan, safetySnapshotId,
@@ -413,7 +429,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
                 if (currentCheckpoint is not null)
                 {
-                    await TryUpdateAndGetVerifiedAsync(session,
+                    var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session,
                         allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
                         allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
                         Array.Empty<int>(), Array.Empty<int>(),
@@ -421,6 +437,14 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                         "PreviousPositionMismatch",
                         $"步骤 #{i} PreviousPosition mismatch。",
                         null, null, null, currentCheckpoint);
+                    if (!persisted)
+                    {
+                        return PositionUncertainS(session, i, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            "TerminalPersistFailed",
+                            "PreviousPositionMismatch 发生后，PositionUncertain 终态持久化失败。",
+                            null, null);
+                    }
                 }
 
                 return PositionUncertainS(session, i, allAttempts, executionPlan, safetySnapshotId,
@@ -504,6 +528,38 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             var uncertainVerification =
                 TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
                     0, new[] { issue }, DateTimeOffset.UtcNow);
+
+            // 持久化 ForwardUncertain VerificationResult
+            var veCompletedFwd = forwardOnly
+                .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                .Select(a => a.SourceStepIndex).ToList();
+            var persistOk = true;
+            if (currentCheckpoint is not null)
+            {
+                (persistOk, _) = await TryUpdateAndGetVerifiedAsync(
+                    session, forwardOnly,
+                    Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    veCompletedFwd, Array.Empty<int>(),
+                    RecoverySessionLifecycle.PositionUncertain, true, true, null,
+                    "ForwardVerificationException", issue,
+                    null, null,
+                    uncertainVerification,
+                    currentCheckpoint);
+            }
+
+            if (!persistOk)
+            {
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                    false, false, null, safetySnapshotId,
+                    forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+                    null, true, true,
+                    "TerminalPersistFailed",
+                    "ForwardVerificationException 发生后，终态持久化失败。",
+                    null, null,
+                    uncertainVerification);
+            }
+
             var veSession = BuildSession(session, forwardOnly,
                 Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
                 null, true, true, "PositionUncertain");
@@ -554,8 +610,9 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             terminalPersisted = ok;
         }
 
-        // 终态持久化硬门槛：失败时不得返回 Completed
-        if (verificationResult.Status == ExecutionVerificationStatus.Passed && !terminalPersisted)
+        // 终态持久化硬门槛：只要存在 recoveryStore/currentCheckpoint 且 terminalPersisted == false，
+        // 无论验证状态如何都返回 PositionUncertain
+        if (_recoveryStore is not null && currentCheckpoint is not null && !terminalPersisted)
         {
             return new TargetDisplayLayoutExecutionRunResult(
                 TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
@@ -563,7 +620,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 forwardOnly, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
                 null, true, true,
                 "TerminalPersistFailed",
-                "Forward 验证通过但终态持久化失败。",
+                $"Forward 验证{(verificationResult.Status == ExecutionVerificationStatus.Passed ? "通过" : "未通过")}但终态持久化失败。",
                 null, null,
                 verificationResult);
         }
