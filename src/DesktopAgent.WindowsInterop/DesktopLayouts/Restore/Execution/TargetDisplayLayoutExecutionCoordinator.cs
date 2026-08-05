@@ -462,12 +462,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     currentCheckpoint);
                 if (!ok)
                 {
-                    return await RollbackKnownS(
-                        session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
-                        "InexactPosition",
+                    return PositionUncertainS(session, i, allAttempts,
+                        executionPlan, safetySnapshotId,
+                        "CheckpointPersistFailed",
                         "持久化检查点失败 — Writer 已执行但无法可靠记录。",
-                        "CheckpointPersistFailed", null,
-                        cancellationToken, currentCheckpoint);
+                        null, null);
                 }
                 currentCheckpoint = newCp;
             }
@@ -1284,21 +1283,17 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             await _recoveryStore.SaveAsync(record);
             var readback = await _recoveryStore.GetAsync(record.SessionId);
             // 完整 readback 验证
-            if (readback is null
-                || readback.SessionId != record.SessionId
-                || readback.SafetySnapshotId != record.SafetySnapshotId
-                || readback.TargetDeviceName != record.TargetDeviceName
-                || readback.StartedAtUtc != record.StartedAtUtc
-                || readback.Lifecycle != RecoverySessionLifecycle.Executing
-                || readback.Revision != 1
-                || readback.RequiresManualRecovery || readback.IsPositionUncertain
-                || readback.ForwardAttempts.Count != 0 || readback.RollbackAttempts.Count != 0
-                || readback.CompletedForwardStepIndexes.Count != 0
-                || readback.CompletedRollbackSourceStepIndexes.Count != 0
-                || readback.SourceRestorePlan.TargetDeviceName != record.SourceRestorePlan.TargetDeviceName
-                || readback.SourceRestorePlan.Items.Count != record.SourceRestorePlan.Items.Count
-                || readback.ExecutionPlan.Steps.Count != record.ExecutionPlan.Steps.Count)
-                return (false, null);
+            if (readback is null) return (false, null);
+            if (!RecordsAreEquivalent(record, readback)) return (false, null);
+            // 额外显式确认初始状态
+            if (readback.Lifecycle != RecoverySessionLifecycle.Executing) return (false, null);
+            if (readback.Revision != 1) return (false, null);
+            if (readback.ForwardAttempts.Count != 0) return (false, null);
+            if (readback.RollbackAttempts.Count != 0) return (false, null);
+            if (readback.CompletedForwardStepIndexes.Count != 0) return (false, null);
+            if (readback.CompletedRollbackSourceStepIndexes.Count != 0) return (false, null);
+            if (readback.RequiresManualRecovery) return (false, null);
+            if (readback.IsPositionUncertain) return (false, null);
             return (true, readback);
         }
         catch { return (false, null); }
@@ -1401,6 +1396,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (a.VerificationResult.Phase != b.VerificationResult.Phase) return false;
             if (a.VerificationResult.Status != b.VerificationResult.Status) return false;
             if (a.VerificationResult.FailedItemCount != b.VerificationResult.FailedItemCount) return false;
+            if (a.VerificationResult.VerifiedAtUtc != b.VerificationResult.VerifiedAtUtc) return false;
             if (!a.VerificationResult.Issues.SequenceEqual(b.VerificationResult.Issues, StringComparer.Ordinal)) return false;
         }
 
@@ -1453,6 +1449,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         if (a.HasBlockingErrors != b.HasBlockingErrors) return false;
         if (a.RequiresTemporaryStaging != b.RequiresTemporaryStaging) return false;
         if (a.IsNoOp != b.IsNoOp) return false;
+        // Items
         if (a.Items.Count != b.Items.Count) return false;
         for (int i = 0; i < a.Items.Count; i++)
         {
@@ -1467,6 +1464,33 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (ai.IsSystemItem != bi.IsSystemItem) return false;
             if (!string.Equals(ai.BlockReason, bi.BlockReason, StringComparison.Ordinal)) return false;
         }
+        // Dependencies
+        if (a.Dependencies.Count != b.Dependencies.Count) return false;
+        for (int i = 0; i < a.Dependencies.Count; i++)
+        {
+            if (!string.Equals(a.Dependencies[i].DependsOn, b.Dependencies[i].DependsOn, StringComparison.Ordinal)) return false;
+            if (!string.Equals(a.Dependencies[i].ActionItem, b.Dependencies[i].ActionItem, StringComparison.Ordinal)) return false;
+        }
+        // Cycles
+        if (a.Cycles.Count != b.Cycles.Count) return false;
+        for (int i = 0; i < a.Cycles.Count; i++)
+        {
+            if (!a.Cycles[i].StableIds.SequenceEqual(b.Cycles[i].StableIds, StringComparer.Ordinal)) return false;
+        }
+        // Issues
+        if (a.Issues.Count != b.Issues.Count) return false;
+        for (int i = 0; i < a.Issues.Count; i++)
+        {
+            if (a.Issues[i].Code != b.Issues[i].Code) return false;
+            if (!string.Equals(a.Issues[i].Message, b.Issues[i].Message, StringComparison.Ordinal)) return false;
+            if (!string.Equals(a.Issues[i].RelatedStableId, b.Issues[i].RelatedStableId, StringComparison.Ordinal)) return false;
+        }
+        // MoveExecutionOrder
+        if ((a.MoveExecutionOrder is null) != (b.MoveExecutionOrder is null)) return false;
+        if (a.MoveExecutionOrder is not null && b.MoveExecutionOrder is not null)
+        {
+            if (!a.MoveExecutionOrder.SequenceEqual(b.MoveExecutionOrder, StringComparer.Ordinal)) return false;
+        }
         return true;
     }
 
@@ -1475,6 +1499,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         if (!string.Equals(a.TargetDeviceName, b.TargetDeviceName, StringComparison.Ordinal)) return false;
         if (a.IsExecutable != b.IsExecutable) return false;
         if (a.IsNoOp != b.IsNoOp) return false;
+        if (a.UsesTemporaryStaging != b.UsesTemporaryStaging) return false;
+        if (a.DirectMoveStepCount != b.DirectMoveStepCount) return false;
+        if (a.StagingMoveStepCount != b.StagingMoveStepCount) return false;
+        if (a.TargetMoveStepCount != b.TargetMoveStepCount) return false;
+        // Steps
         if (a.Steps.Count != b.Steps.Count) return false;
         for (int i = 0; i < a.Steps.Count; i++)
         {
@@ -1488,6 +1517,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (!string.Equals(sa.ExpectedMonitorDeviceName, sb.ExpectedMonitorDeviceName, StringComparison.Ordinal)) return false;
             if (sa.StagingSequence != sb.StagingSequence) return false;
         }
+        // StagingAssignments
         if (a.StagingAssignments.Count != b.StagingAssignments.Count) return false;
         for (int i = 0; i < a.StagingAssignments.Count; i++)
         {
@@ -1497,6 +1527,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (sa.EnterStepIndex != sb.EnterStepIndex) return false;
             if (sa.ExitStepIndex != sb.ExitStepIndex) return false;
         }
+        // Issues
         if (a.Issues.Count != b.Issues.Count) return false;
         for (int i = 0; i < a.Issues.Count; i++)
         {

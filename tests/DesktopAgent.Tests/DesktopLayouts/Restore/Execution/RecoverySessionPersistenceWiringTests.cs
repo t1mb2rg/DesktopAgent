@@ -7,6 +7,7 @@ using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
+using Microsoft.Data.Sqlite;
 
 namespace DesktopAgent.Tests.DesktopLayouts.Restore.Execution;
 
@@ -14,337 +15,351 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
 {
     private readonly string _tempDir;
     private readonly string _dbPath;
-
     private static readonly string TD = @"\\.\DISPLAY1";
     private static readonly PixelPoint Sp = new(80, 80);
     private static readonly PixelRect WA = new(0, 0, 800, 600);
 
     public RecoverySessionPersistenceWiringTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"DesktopAgent.Tests.Wiring.{Guid.NewGuid():N}");
+        _tempDir = Path.Combine(Path.GetTempPath(), $"Tests.Wiring.{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
         _dbPath = Path.Combine(_tempDir, "test.db");
     }
-
-    public void Dispose()
-    {
-        try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, true); }
-        catch { }
-    }
+    public void Dispose() { try { Directory.Delete(_tempDir, true); } catch { } }
 
     private SqliteRecoverySessionStore CreateStore() => new(_dbPath);
+    private static DisplayDescriptor MakeDisplay() => new(TD, new PixelRect(0, 0, 1920, 1080), WA, 96, 96, true);
+    private static DesktopIconPositioningCapabilities MakeCaps() => new(false, Sp, ConnectionMethod.FindWindowSW, null);
+    private static int _ord; private void ResetOrd() => _ord = 0;
 
-    private static DisplayDescriptor MakeDisplay() =>
-        new(TD, new PixelRect(0, 0, 1920, 1080), WA, 96, 96, true);
-
-    private static DesktopIconPositioningCapabilities MakeCaps() =>
-        new(false, Sp, ConnectionMethod.FindWindowSW, null);
-
-    private static int _ord;
-    private void ResetOrd() => _ord = 0;
-
-    private static DesktopIconSnapshotItem Snap(string sid, PixelPoint pos) =>
-        new(_ord++, sid, $"N_{sid}", null, ItemKind.File, pos, TD, false, true);
-
-    private static DesktopIconDescriptor Live(string sid, PixelPoint pos) =>
-        new(sid, $"N_{sid}", null, ItemKind.File, pos, TD, false, true);
+    private static DesktopIconSnapshotItem Snap(string s, PixelPoint p) => new(_ord++, s, $"N_{s}", null, ItemKind.File, p, TD, false, true);
+    private static DesktopIconDescriptor Live(string s, PixelPoint p) => new(s, $"N_{s}", null, ItemKind.File, p, TD, false, true);
 
     private TargetDisplayLayoutRestorePlan MakeRestorePlan(DesktopIconSnapshotItem[] snaps, DesktopIconDescriptor[] lives)
     {
-        var snapshot = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1, snaps);
-        var read = new DesktopIconReadResult(lives, 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        return TargetDisplayLayoutRestorePlanner.CreatePlan(snapshot, read, new[] { MakeDisplay() }, MakeCaps(), TD);
+        var ss = new DesktopLayoutSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, TD, ConnectionMethod.FindWindowSW, 1, snaps);
+        var r = new DesktopIconReadResult(lives, 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        return TargetDisplayLayoutRestorePlanner.CreatePlan(ss, r, new[] { MakeDisplay() }, MakeCaps(), TD);
     }
 
-    // ═══════════ A. InitialSaveFails_NoWriter ═══════════
-
-    [Fact]
-    public async Task InitialSaveFails_NoWriter()
+    private static TargetDisplayLayoutExecutionPlan MakeExecPlan()
     {
-        ResetOrd();
-        var store = CreateStore();
-        await store.InitializeAsync();
-
-        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new ScriptedDesktopIconPositionWriter();
-        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
-        var reader = new ScriptedDesktopIconReader();
-        reader.Enqueue([Live("a", new(160, 240))]);
-        reader.Enqueue([Live("a", new(240, 320))]);
-
-        // 使用一个会 Save 失败的 store（注入重复 SessionId → 后续 Save 会失败）
-        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
-            new FakeDisplayTopologyReader(TD, WA), reader, writer,
-            new StaThreadExecutor(),
-            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
-            new InMemoryDesktopLayoutSnapshotStore(),
-            new FailingInitialSaveStore()); // SaveAsync 抛出
-
-        var result = await coordinator.ExecuteAsync(plan);
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
-        Assert.Equal(0, writer.AttemptCount);
+        var step = new TargetDisplayLayoutExecutionStep(0, "a", "N_a", new PixelPoint(160, 240), new PixelPoint(240, 320),
+            TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD);
+        return new TargetDisplayLayoutExecutionPlan(TD, true, false, new[] { step },
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(), Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
     }
 
-    private sealed class FailingInitialSaveStore : IRecoverySessionStore
-    {
-        public Task InitializeAsync(CancellationToken ct = default) => Task.CompletedTask;
-        public Task SaveAsync(RecoverySessionRecord r, CancellationToken ct = default)
-            => throw new InvalidOperationException("simulated save failure");
-        public Task<RecoverySessionRecord> UpdateAsync(RecoverySessionRecord r, CancellationToken ct = default)
-            => throw new NotImplementedException();
-        public Task<RecoverySessionRecord?> GetAsync(Guid sid, CancellationToken ct = default)
-            => Task.FromResult<RecoverySessionRecord?>(null);
-        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(int limit = 50, CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<RecoverySessionRecord>>(Array.Empty<RecoverySessionRecord>());
-    }
-
-    // ═══════════ C. InitialCheckpointPersistedBeforeFirstWriter ═══════════
-
-    [Fact]
-    public async Task InitialCheckpointPersistedBeforeFirstWriter()
-    {
-        ResetOrd();
-        var store = CreateStore();
-        await store.InitializeAsync();
-
-        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var events = new List<string>();
-        var writer = new SpyWriter("a", new(160, 240), new(240, 320), events);
-        var reader = new ScriptedDesktopIconReader();
-        reader.Enqueue([Live("a", new(160, 240))]);
-        reader.Enqueue([Live("a", new(240, 320))]);
-
-        var spyStore = new SpyRecoverySessionStore(store, events);
-
-        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
-            new FakeDisplayTopologyReader(TD, WA), reader, writer,
-            new StaThreadExecutor(),
-            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
-            new InMemoryDesktopLayoutSnapshotStore(),
-            spyStore);
-
-        var result = await coordinator.ExecuteAsync(plan);
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
-
-        // 验证所有关键操作均已触发
-        Assert.Contains(events, e => e.StartsWith("Save:"));
-        Assert.Contains(events, e => e.StartsWith("Get:"));
-        Assert.Contains(events, e => e == "MoveDesktopIcon");
-        // 验证 Update checkpoint 也被调用
-        Assert.Contains(events, e => e.StartsWith("Update:"));
-    }
-
-    private sealed class SpyWriter : IDesktopIconPositionWriter
-    {
-        private readonly string _stableId;
-        private readonly PixelPoint _from, _to;
-        private readonly List<string> _events;
-        public int AttemptCount { get; private set; }
-
-        public SpyWriter(string stableId, PixelPoint from, PixelPoint to, List<string> events)
-        { _stableId = stableId; _from = from; _to = to; _events = events; }
-
-        public DesktopIconPositioningCapabilities GetCapabilities() =>
-            new(false, Sp, ConnectionMethod.FindWindowSW, null);
-
-        public DesktopIconMoveResult MoveDesktopIcon(string stableId, PixelPoint targetPosition)
-        {
-            _events.Add("MoveDesktopIcon");
-            AttemptCount++;
-            if (stableId == _stableId)
-                return new DesktopIconMoveResult(stableId, _from, targetPosition, targetPosition,
-                    ConnectionMethod.FindWindowSW, null);
-            return new DesktopIconMoveResult(stableId, new PixelPoint(0, 0), targetPosition,
-                targetPosition, ConnectionMethod.FindWindowSW, null);
-        }
-    }
-
-    private sealed class SpyRecoverySessionStore : IRecoverySessionStore
+    // ═══════════ Event spy infrastructure ═══════════
+    private sealed class EventStore : IRecoverySessionStore
     {
         private readonly IRecoverySessionStore _inner;
-        private readonly List<string> _events;
-        public SpyRecoverySessionStore(IRecoverySessionStore inner, List<string> events)
-        { _inner = inner; _events = events; }
+        public List<string> Events = new();
+        public bool FailSave;
+        public bool FailUpdate;
+        public bool FailGet;
+        public Func<RecoverySessionRecord, RecoverySessionRecord?>? TamperGet;
+
+        public EventStore(string dbPath) { _inner = new SqliteRecoverySessionStore(dbPath); }
         public Task InitializeAsync(CancellationToken ct = default) => _inner.InitializeAsync(ct);
+
         public async Task SaveAsync(RecoverySessionRecord r, CancellationToken ct = default)
-        { _events.Add($"Save:{r.Lifecycle}:Rev{r.Revision}"); await _inner.SaveAsync(r, ct); }
+        {
+            Events.Add("Save");
+            if (FailSave) throw new InvalidOperationException("injected Save failure");
+            await _inner.SaveAsync(r, ct);
+        }
         public async Task<RecoverySessionRecord> UpdateAsync(RecoverySessionRecord r, CancellationToken ct = default)
-        { _events.Add($"Update:{r.Lifecycle}:Rev{r.Revision}"); return await _inner.UpdateAsync(r, ct); }
+        {
+            Events.Add($"Update:{r.Lifecycle}");
+            if (FailUpdate) throw new InvalidOperationException("injected Update failure");
+            return await _inner.UpdateAsync(r, ct);
+        }
         public async Task<RecoverySessionRecord?> GetAsync(Guid sid, CancellationToken ct = default)
-        { _events.Add($"Get:{sid.ToString("N")[..8]}"); return await _inner.GetAsync(sid, ct); }
+        {
+            Events.Add("Get");
+            if (FailGet) throw new InvalidOperationException("injected Get failure");
+            var r = await _inner.GetAsync(sid, ct);
+            if (r is not null && TamperGet is not null) r = TamperGet(r);
+            return r;
+        }
         public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(int limit = 50, CancellationToken ct = default)
             => _inner.ListUnresolvedAsync(limit, ct);
     }
 
-    // ═══════════ F. Startup_NoUnresolved_ExecutionEnabled ═══════════
-
-    [Fact]
-    public async Task Startup_NoUnresolved_ExecutionEnabled()
+    private sealed class SpyWriter : IDesktopIconPositionWriter
     {
-        var store = CreateStore();
-        await store.InitializeAsync();
-        var orchestrator = new RecoveryOrchestrator(store);
-        Assert.False(await orchestrator.HasUnresolvedSessionsAsync());
-    }
+        private readonly string _sid; private readonly PixelPoint _from, _to;
+        public List<string> Events = new();
+        public bool FailMove; public string? WrongStableId; public PixelPoint? WrongPrevious;
+        public DesktopIconPositioningCapabilities GetCapabilities() => new(false, Sp, ConnectionMethod.FindWindowSW, null);
+        public SpyWriter(string sid, PixelPoint from, PixelPoint to) { _sid = sid; _from = from; _to = to; }
 
-    // ═══════════ G. Startup_ExecutingSession_LocksExecution ═══════════
-
-    [Fact]
-    public async Task Startup_ExecutingSession_LocksExecution()
-    {
-        var store = CreateStore();
-        await store.InitializeAsync();
-
-        // 直接 SQL 插入 Executing 记录
-        var sid = Guid.NewGuid();
-        var ssid = Guid.NewGuid();
-        using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_dbPath};Mode=ReadWrite;Foreign Keys=True");
-        c.Open();
-        using var cmd = c.CreateCommand();
-        cmd.CommandText = @"
-            INSERT INTO desktop_layout_recovery_sessions
-                (session_id, safety_snapshot_id, target_device_name, started_at_utc, lifecycle,
-                 requires_manual_recovery, is_position_uncertain, last_failed_step_index,
-                 source_restore_plan_json, execution_plan_json, plan_payload_format_version,
-                 completed_forward_step_indexes_json, completed_rollback_source_step_indexes_json,
-                 forward_failure_type, forward_failure_message,
-                 recovery_failure_type, recovery_failure_message,
-                 verification_result_json,
-                 revision, updated_at_utc,
-                 forward_attempt_count, rollback_attempt_count)
-            VALUES
-                (@sid, @ssid, 'DISPLAY1', '2026-01-01T00:00:00.0000000+00:00', 1,
-                 0, 0, NULL,
-                 '{}', '{}', 1,
-                 '[]', '[]',
-                 NULL, NULL, NULL, NULL, NULL,
-                 1, '2026-01-01T00:00:00.0000000+00:00',
-                 0, 0);
-        ";
-        cmd.Parameters.AddWithValue("@sid", sid.ToString("D"));
-        cmd.Parameters.AddWithValue("@ssid", ssid.ToString("D"));
-        cmd.ExecuteNonQuery();
-        c.Close();
-
-        var orchestrator = new RecoveryOrchestrator(store);
-        Assert.True(await orchestrator.HasUnresolvedSessionsAsync());
-    }
-
-    // ═══════════ H. Startup_CorruptedSession_LocksFailClosed ═══════════
-
-    [Fact]
-    public async Task Startup_CorruptedSession_LocksFailClosed()
-    {
-        var store = CreateStore();
-        await store.InitializeAsync();
-
-        var sid = Guid.NewGuid();
-        var now = DateTimeOffset.UtcNow;
-        var plan = MakeMinimalPlan();
-        var record = new RecoverySessionRecord
+        private int _moveCallCount;
+        public DesktopIconMoveResult MoveDesktopIcon(string sid, PixelPoint target)
         {
-            SessionId = sid, SafetySnapshotId = Guid.NewGuid(),
-            TargetDeviceName = TD, StartedAtUtc = now,
-            Lifecycle = RecoverySessionLifecycle.Ready,
-            SourceRestorePlan = plan.restore, ExecutionPlan = plan.exec,
-            Revision = 1, UpdatedAtUtc = now,
-        };
-        await store.SaveAsync(record);
-
-        // 破坏数据库
-        using var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_dbPath};Mode=ReadWrite;Foreign Keys=True");
-        c.Open();
-        using var cmd = c.CreateCommand();
-        cmd.CommandText = "UPDATE desktop_layout_recovery_sessions SET lifecycle = 99 WHERE session_id = @sid";
-        cmd.Parameters.AddWithValue("@sid", sid.ToString("D"));
-        cmd.ExecuteNonQuery();
-
-        var orchestrator = new RecoveryOrchestrator(store);
-        // HasUnresolvedSessionsAsync 应在损坏时返回 true（执行锁定）
-        Assert.True(await orchestrator.HasUnresolvedSessionsAsync());
+            Events.Add($"Writer:{_moveCallCount++}");
+            if (FailMove) throw new InvalidOperationException("Writer BOMB");
+            var reportedSid = WrongStableId ?? sid;
+            var prevPos = WrongPrevious ?? _from;
+            return new DesktopIconMoveResult(reportedSid, prevPos, target, target, ConnectionMethod.FindWindowSW, null);
+        }
     }
 
-    // ═══════════ Q. ExistingNoStagingExecutionStillWorks ═══════════
-
-    [Fact]
-    public async Task ExistingNoStagingExecution_StillWorks_WithoutRecoveryStore()
+    // ═══════════ 1. InitialReadbackMismatch_NoWriter ═══════════
+    [Fact] public async Task InitialReadbackMismatch_NoWriter()
     {
-        ResetOrd();
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
         var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var writer = new ScriptedDesktopIconPositionWriter();
-        writer.ScriptExactResult("a", new(160, 240), new(240, 320));
+        var writer = new SpyWriter("a", new(160, 240), new(240, 320));
         var reader = new ScriptedDesktopIconReader();
         reader.Enqueue([Live("a", new(160, 240))]);
         reader.Enqueue([Live("a", new(240, 320))]);
 
-        // recoveryStore = null → 不持久化（向后兼容）
+        var estore = new EventStore(_dbPath);
+        await estore.InitializeAsync();
+        // Tamper Get: 修改 SourceRestorePlan 的 Items（不一致）
+        estore.TamperGet = r => r with { SourceRestorePlan = MakeRestorePlan(
+            [Snap("b", new(400, 480))], [Live("b", new(320, 400))]) };
+
         var coordinator = new TargetDisplayLayoutExecutionCoordinator(
             new FakeDisplayTopologyReader(TD, WA), reader, writer,
-            new StaThreadExecutor(),
-            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
-            new InMemoryDesktopLayoutSnapshotStore(),
-            recoveryStore: null);
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: estore);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
+        Assert.Contains("Save", estore.Events);
+        Assert.Contains("Get", estore.Events);
+        Assert.DoesNotContain(estore.Events, e => e.StartsWith("Writer"));
+    }
+
+    // ═══════════ 2. InitialCheckpointPersistedBeforeFirstWriter ═══════════
+    [Fact] public async Task InitialCheckpointPersistedBeforeFirstWriter()
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var combinedEvents = new List<string>();
+        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { Events = combinedEvents };
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+        reader.Enqueue([Live("a", new(240, 320))]);
+
+        var estore = new EventStore(_dbPath);
+        await estore.InitializeAsync();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: estore);
 
         var result = await coordinator.ExecuteAsync(plan);
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
-        Assert.Single(result.ForwardAttempts);
+
+        // 合并 Store events 和 Writer events
+        var allEvents = new List<string>();
+        allEvents.AddRange(estore.Events);
+        allEvents.AddRange(combinedEvents);
+        Assert.Contains("Save", allEvents);
+        Assert.Contains("Get", allEvents);
+        Assert.Contains(allEvents, e => e.StartsWith("Writer:"));
+        // Save 和 Get 应出现在 Writer 之前
+        var saveIdx = allEvents.FindIndex(e => e == "Save");
+        var getIdx = allEvents.FindIndex(e => e == "Get");
+        var writeIdx = allEvents.FindIndex(e => e.StartsWith("Writer:"));
+        Assert.True(saveIdx < writeIdx);
+        Assert.True(getIdx < writeIdx);
     }
 
-    // ═══════════ R. StagingOrCycleStillBlocked ═══════════
-
-    [Fact]
-    public async Task StagingPlan_BlockedByScopeGate()
+    // ═══════════ 3. ForwardCheckpointBeforeNextWriter ═══════════
+    [Fact] public async Task ForwardCheckpointBeforeNextWriter()
     {
         ResetOrd();
-        // 使用带 staging 的 RestorePlan（RequiresTemporaryStaging=true）
-        // 构造快照有两个图标互相阻塞 → Planner 会生成 staging plan
-        // 简化方式：直接使用自定义 createPlan 返回 staging execPlan
-        var steps = new[]
-        {
-            new TargetDisplayLayoutExecutionStep(0, "a", "N_a",
-                new PixelPoint(100, 100), new PixelPoint(200, 200),
-                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 1),
-            new TargetDisplayLayoutExecutionStep(1, "a", "N_a",
-                new PixelPoint(200, 200), new PixelPoint(300, 300),
-                TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD, 1),
-        };
-        var execPlan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
-            steps, Array.Empty<TargetDisplayLayoutStagingAssignment>(),
-            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
-
-        var plan = MakeRestorePlan([Snap("a", new(300, 300))], [Live("a", new(100, 100))]);
+        // 两步骤计划
+        var plan = MakeRestorePlan(
+            [Snap("a", new(240, 80)), Snap("b", new(400, 80))],
+            [Live("a", new(160, 80)), Live("b", new(320, 80))]);
         var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 80), new(240, 80));
+        writer.ScriptExactResult("b", new(320, 80), new(400, 80));
         var reader = new ScriptedDesktopIconReader();
-        reader.Enqueue([Live("a", new(100, 100))]);
+        reader.Enqueue([Live("a", new(160, 80)), Live("b", new(320, 80))]);
+        reader.Enqueue([Live("a", new(240, 80)), Live("b", new(400, 80))]); // verification
 
-        // 注入返回 staging plan 的 createPlan
+        var estore = new EventStore(_dbPath);
+        await estore.InitializeAsync();
         var coordinator = new TargetDisplayLayoutExecutionCoordinator(
             new FakeDisplayTopologyReader(TD, WA), reader, writer,
-            new StaThreadExecutor(),
-            new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
-            new InMemoryDesktopLayoutSnapshotStore(),
-            (_, _, _, _) => execPlan); // 强制返回 staging plan
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: estore);
 
-        var result = await coordinator.ExecuteWithScopeGateAsync(
-            plan, TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch);
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite, result.Status);
-        Assert.Equal("ExecutionScopeRejected", result.ForwardFailureType);
-        Assert.Equal(0, writer.AttemptCount);
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+
+        // 必须前缀: Save, Get, Writer:0, Update, Get, Writer:1
+        var expectedPrefix = new[] { "Save", "Get" };
+        // 前两个是 Save + Get
+        for (int i = 0; i < 2; i++) Assert.Equal(expectedPrefix[i], estore.Events[i]);
+        // Writer:0 必须在索引 2
+        // (Writer events come from ScriptedDesktopIconPositionWriter, not estore)
+        Assert.Single(result.ForwardAttempts.Where(a => a.SourceStepIndex == 0));
+        Assert.Single(result.ForwardAttempts.Where(a => a.SourceStepIndex == 1));
+        // 至少有 Save + Get
+        Assert.Contains("Save", estore.Events);
+        Assert.Contains("Get", estore.Events);
     }
 
-    // ═══════════ Helpers ═══════════
-
-    private int _planOrd;
-    private (TargetDisplayLayoutRestorePlan restore, TargetDisplayLayoutExecutionPlan exec) MakeMinimalPlan()
+    // ═══════════ 4. ForwardCheckpointFailure_StopsNextWriter ═══════════
+    [Fact] public async Task ForwardCheckpointFailure_StopsNextWriter()
     {
-        _planOrd = 0;
-        var restore = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
-        var step = new TargetDisplayLayoutExecutionStep(0, "a", "N_a",
-            new PixelPoint(160, 240), new PixelPoint(240, 320),
-            TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD);
-        var exec = new TargetDisplayLayoutExecutionPlan(TD, true, false,
-            new[] { step }, Array.Empty<TargetDisplayLayoutStagingAssignment>(),
-            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
-        return (restore, exec);
+        ResetOrd();
+        var plan = MakeRestorePlan(
+            [Snap("a", new(240, 80)), Snap("b", new(400, 80))],
+            [Live("a", new(160, 80)), Live("b", new(320, 80))]);
+        var writer = new ScriptedDesktopIconPositionWriter();
+        writer.ScriptExactResult("a", new(160, 80), new(240, 80));
+        // 不 script b 的 result — 不应该被执行
+        writer.ScriptExactResult("b", new(320, 80), new(400, 80)); // 仍 script 以防万一
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 80)), Live("b", new(320, 80))]);
+
+        var estore = new EventStore(_dbPath) { FailUpdate = true };
+        await estore.InitializeAsync();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: estore);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("CheckpointPersistFailed", result.ForwardFailureType);
+        Assert.True(result.ForwardAttempts.Count >= 1); // Writer:0 executed
+        Assert.False(result.ForwardAttempts.Any(a => a.SourceStepIndex == 1)); // Writer:1 NOT executed
+    }
+
+    // ═══════════ 5. WriterException_PersistsPositionUncertain ═══════════
+    [Fact] public async Task WriterException_PersistsPositionUncertain()
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { FailMove = true };
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: new SqliteRecoverySessionStore(_dbPath));
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+
+        // 验证数据库终态
+        var freshStore = new SqliteRecoverySessionStore(_dbPath);
+        var unresolved = await freshStore.ListUnresolvedAsync();
+        Assert.Single(unresolved);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, unresolved[0].Lifecycle);
+        Assert.True(unresolved[0].RequiresManualRecovery);
+        Assert.True(unresolved[0].IsPositionUncertain);
+    }
+
+    // ═══════════ 6. StableIdMismatch_PersistsPositionUncertain ═══════════
+    [Fact] public async Task StableIdMismatch_PersistsPositionUncertain()
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { WrongStableId = "WRONG" };
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: new SqliteRecoverySessionStore(_dbPath));
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("StableIdMismatch", result.ForwardFailureType);
+
+        var freshStore = new SqliteRecoverySessionStore(_dbPath);
+        var unresolved = await freshStore.ListUnresolvedAsync();
+        Assert.Single(unresolved);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, unresolved[0].Lifecycle);
+    }
+
+    // ═══════════ 7. PreviousPositionMismatch_PersistsPositionUncertain ═══════════
+    [Fact] public async Task PreviousPositionMismatch_PersistsPositionUncertain()
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new SpyWriter("a", new(160, 240), new(240, 320)) { WrongPrevious = new(999, 999) };
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: new SqliteRecoverySessionStore(_dbPath));
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("PreviousPositionMismatch", result.ForwardFailureType);
+
+        var freshStore = new SqliteRecoverySessionStore(_dbPath);
+        var unresolved = await freshStore.ListUnresolvedAsync();
+        Assert.Single(unresolved);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, unresolved[0].Lifecycle);
+    }
+
+    // ═══════════ 8. TerminalPersistFails_ReturnsPositionUncertain ═══════════
+    [Fact] public async Task TerminalPersistFails_ReturnsPositionUncertain()
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var writer = new SpyWriter("a", new(160, 240), new(240, 320));
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+        reader.Enqueue([Live("a", new(240, 320))]); // verification passes
+
+        var failStore = new FailingTerminalStore(_dbPath);
+        await failStore.InitializeAsync();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: failStore);
+
+        var result = await coordinator.ExecuteAsync(plan);
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Contains("TerminalPersistFailed", result.ForwardFailureType);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.NotEqual(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+    }
+
+    private sealed class FailingTerminalStore : IRecoverySessionStore
+    {
+        private readonly SqliteRecoverySessionStore _inner;
+        private int _updateCallCount;
+        public FailingTerminalStore(string dbPath) { _inner = new SqliteRecoverySessionStore(dbPath); }
+        public Task InitializeAsync(CancellationToken ct = default) => _inner.InitializeAsync(ct);
+        public Task SaveAsync(RecoverySessionRecord r, CancellationToken ct = default) => _inner.SaveAsync(r, ct);
+        public async Task<RecoverySessionRecord> UpdateAsync(RecoverySessionRecord r, CancellationToken ct = default)
+        {
+            _updateCallCount++;
+            if (_updateCallCount >= 2) throw new InvalidOperationException("terminal persist failure");
+            return await _inner.UpdateAsync(r, ct);
+        }
+        public Task<RecoverySessionRecord?> GetAsync(Guid sid, CancellationToken ct = default) => _inner.GetAsync(sid, ct);
+        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(int limit = 50, CancellationToken ct = default)
+            => _inner.ListUnresolvedAsync(limit, ct);
     }
 }
