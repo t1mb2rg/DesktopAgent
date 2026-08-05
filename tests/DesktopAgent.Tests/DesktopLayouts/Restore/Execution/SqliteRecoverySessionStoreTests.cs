@@ -127,6 +127,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         {
             Lifecycle = RecoverySessionLifecycle.Completed,
             ForwardAttempts = new[] { fwdAttempt },
+            CompletedForwardStepIndexes = new[] { 0 },
             VerificationResult = TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(
                 DateTimeOffset.UtcNow),
         };
@@ -288,11 +289,12 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         await store.SaveAsync(record);
         Assert.Equal(1, record.Revision);
 
-        // 更新生命周期（不带 WithNextRevision — UpdateAsync 内部递增）
+        // 更新生命周期（不带 WithNextRevision — Store 内部 CAS 递增）
         var updated = record with
         {
             Lifecycle = RecoverySessionLifecycle.Executing,
             ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
         };
         var result = await store.UpdateAsync(updated);
         Assert.Equal(2, result.Revision);
@@ -317,6 +319,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         {
             Lifecycle = RecoverySessionLifecycle.Executing,
             ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
         };
         var result2 = await store.UpdateAsync(r2);
         Assert.Equal(2, result2.Revision);
@@ -349,11 +352,12 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         var record = MakeReadyRecord();
         await store.SaveAsync(record);
 
-        // 第一次更新成功（UpdateAsync 内部递增到 2）
+        // 第一次更新成功（Store 内部 CAS 递增到 2）
         var updated1 = record with
         {
             Lifecycle = RecoverySessionLifecycle.Executing,
             ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
         };
         var result = await store.UpdateAsync(updated1);
         Assert.Equal(2, result.Revision);
@@ -720,6 +724,39 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ListUnresolved_MultipleCorrupted_ReportsAll()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var r1 = MakePositionUncertainRecord();
+        await store.SaveAsync(r1);
+        var r2 = MakePositionUncertainRecord();
+        await store.SaveAsync(r2);
+        var r3 = MakePositionUncertainRecord();
+        await store.SaveAsync(r3);
+
+        // 损坏 r1 和 r3（r2 保持正常）
+        using var c = OpenRawConnection();
+        using var cmd1 = c.CreateCommand();
+        cmd1.CommandText = "UPDATE desktop_layout_recovery_sessions SET lifecycle = 99 WHERE session_id = @sid";
+        cmd1.Parameters.AddWithValue("@sid", r1.SessionId.ToString("D"));
+        cmd1.ExecuteNonQuery();
+
+        using var cmd3 = c.CreateCommand();
+        cmd3.CommandText = "UPDATE desktop_layout_recovery_sessions SET lifecycle = 99 WHERE session_id = @sid";
+        cmd3.Parameters.AddWithValue("@sid", r3.SessionId.ToString("D"));
+        cmd3.ExecuteNonQuery();
+
+        // ListUnresolved 应同时报告 2 个损坏记录
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(
+            () => store.ListUnresolvedAsync());
+        Assert.Contains("2", ex.Message); // 2 条损坏
+        Assert.Contains(r1.SessionId.ToString("D"), ex.Message);
+        Assert.Contains(r3.SessionId.ToString("D"), ex.Message);
+    }
+
+    [Fact]
     public async Task ListUnresolved_CorruptedRecord_FailClosed()
     {
         var store = CreateStore();
@@ -789,12 +826,22 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         Assert.Equal(record.ExecutionPlan.Steps.Count, loaded.ExecutionPlan.Steps.Count);
 
         // 8. 再执行一次 Revision 更新并验证陈旧写入拒绝
+        // Rollback attempt 使用 Rollback 坐标：Requested = Step.From, ExpectedPrevious = Step.To
+        var rbAttempt = new TargetDisplayLayoutExecutionAttemptResult(
+            1, 0, TargetDisplayLayoutExecutionAttemptPhase.Rollback,
+            "a", new PixelPoint(240, 320), new PixelPoint(160, 240), // ExpectedPrevious=To, Requested=From
+            "a", new PixelPoint(240, 320), new PixelPoint(160, 240), // Reported
+            true, true,
+            TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess,
+            ConnectionMethod.FindWindowSW,
+            null, null, null, null);
         var updated = loaded with
         {
             Lifecycle = RecoverySessionLifecycle.FailedRollbackIncomplete,
             RequiresManualRecovery = true,
             ForwardFailureType = "InexactPosition",
-            RollbackAttempts = new[] { MakeExactAttempt(1, 0, TargetDisplayLayoutExecutionAttemptPhase.Rollback) },
+            RollbackAttempts = new[] { rbAttempt },
+            CompletedRollbackSourceStepIndexes = new[] { 0 },
             VerificationResult = TargetDisplayLayoutExecutionVerificationResult.RollbackFailed(
                 1, new[] { "位置未恢复" }, DateTimeOffset.UtcNow),
         };
@@ -877,11 +924,11 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════
-    //  R. UpdateAsync 持久化 Plan JSON 变更
+    //  R. Update 拒绝修改不可变字段 — Plan 变更被拒
     // ═══════════════════════════════════════════════════
 
     [Fact]
-    public async Task Update_PlanChanges_Persisted()
+    public async Task Update_PlanChanged_Throws()
     {
         var store = CreateStore();
         await store.InitializeAsync();
@@ -889,28 +936,25 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         var record = MakeReadyRecord();
         await store.SaveAsync(record);
 
-        // 修改 ExecutionPlan 后更新
-        var newStep = new TargetDisplayLayoutExecutionStep(0, "a", "N_a_updated",
-            new PixelPoint(160, 240), new PixelPoint(300, 400),
+        var loaded = await store.GetAsync(record.SessionId);
+        // 创建不同 Step 的 ExecutionPlan（保持 TargetDeviceName/TargetDeviceName 一致）
+        var newStep = new TargetDisplayLayoutExecutionStep(0, "a", "N_a",
+            new PixelPoint(160, 240), new PixelPoint(300, 400), // ToPosition changed
             TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD);
         var newExecPlan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
             new[] { newStep },
             Array.Empty<TargetDisplayLayoutStagingAssignment>(),
             Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
 
-        var updated = record with
+        var updated = loaded!.Freeze() with
         {
             ExecutionPlan = newExecPlan,
-            Lifecycle = RecoverySessionLifecycle.Executing,
         };
 
-        var result = await store.UpdateAsync(updated);
-        Assert.Equal(2, result.Revision);
-
-        var loaded = await store.GetAsync(record.SessionId);
-        Assert.Equal(2, loaded!.Revision);
-        Assert.Equal("N_a_updated", loaded.ExecutionPlan.Steps[0].DisplayName);
-        Assert.Equal(new PixelPoint(300, 400), loaded.ExecutionPlan.Steps[0].ToPosition);
+        // ExecutionPlan 不可变 → UpdateAsync 拒绝
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.UpdateAsync(updated));
+        Assert.Contains("ExecutionPlan", ex.Message);
     }
 
     // ═══════════════════════════════════════════════════
@@ -998,17 +1042,17 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════
-    //  V. ComputedForwardStepIndexes 与 Attempts 一致
+    //  V. CompletedForwardStepIndexes 与 Attempts 一致
     // ═══════════════════════════════════════════════════
 
     [Fact]
-    public void ComputedIndexes_MatchAttempts()
+    public void CompletedIndexes_MatchAttempts()
     {
         var record = MakeCompletedRecord();
         // MakeCompletedRecord 有 1 个 ExactSuccess Forward attempt at step 0
-        Assert.Single(record.ComputedForwardStepIndexes);
-        Assert.Equal(0, record.ComputedForwardStepIndexes[0]);
-        Assert.Empty(record.ComputedRollbackSourceStepIndexes);
+        Assert.Single(record.CompletedForwardStepIndexes);
+        Assert.Equal(0, record.CompletedForwardStepIndexes[0]);
+        Assert.Empty(record.CompletedRollbackSourceStepIndexes);
     }
 
     // ═══════════════════════════════════════════════════
@@ -1053,7 +1097,209 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════
-    //  X. 6 项阻断修复验证
+    //  X. 新增合同验证测试
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Save_RevisionNotOne_Throws()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+        var record = MakeReadyRecord() with { Revision = 2 };
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => store.SaveAsync(record));
+        Assert.Contains("Revision", ex.Message);
+    }
+
+    [Fact]
+    public async Task SaveExecuting_CompletedIndexes_RoundTrip()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
+        };
+        await store.SaveAsync(record);
+
+        var loaded = await store.GetAsync(record.SessionId);
+        Assert.NotNull(loaded);
+        Assert.Single(loaded!.CompletedForwardStepIndexes);
+        Assert.Equal(0, loaded.CompletedForwardStepIndexes[0]);
+        Assert.Empty(loaded.CompletedRollbackSourceStepIndexes);
+    }
+
+    [Fact]
+    public async Task Save_DefensiveFreeze_ModifiedInputAfterSave_StoredUnchanged()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var mutableAttempts = new List<TargetDisplayLayoutExecutionAttemptResult>
+        {
+            MakeExactAttempt(0, 0),
+        };
+        var mutableCompleted = new List<int> { 0 };
+
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            ForwardAttempts = mutableAttempts,
+            CompletedForwardStepIndexes = mutableCompleted,
+        };
+
+        await store.SaveAsync(record);
+
+        // Save 后修改原始 mutable List
+        mutableAttempts.Add(MakeExactAttempt(1, 1));
+        mutableCompleted.Add(99);
+
+        // fresh readback 不应受影响
+        var loaded = await store.GetAsync(record.SessionId);
+        Assert.Single(loaded!.ForwardAttempts);
+        Assert.Single(loaded.CompletedForwardStepIndexes);
+        Assert.Equal(0, loaded.CompletedForwardStepIndexes[0]);
+    }
+
+    [Fact]
+    public async Task Update_ImmutableFieldChanged_Throws()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+        var record = MakeReadyRecord();
+        await store.SaveAsync(record);
+
+        var loaded = await store.GetAsync(record.SessionId);
+        // SafetySnapshotId 不可变但 Validate() 不检查 — 由 UpdateAsync 冻结逻辑捕获
+        var tampered = loaded!.Freeze() with { SafetySnapshotId = Guid.NewGuid() };
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.UpdateAsync(tampered));
+        Assert.Contains("SafetySnapshotId", ex.Message);
+    }
+
+    [Fact]
+    public async Task Update_ReturnedRecord_MatchesFreshGet()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = MakeReadyRecord();
+        await store.SaveAsync(record);
+
+        var loaded = await store.GetAsync(record.SessionId);
+        var updated = loaded!.Freeze() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
+        };
+
+        var result = await store.UpdateAsync(updated);
+        var freshGet = await store.GetAsync(record.SessionId);
+
+        // 逐字段验证返回对象与 fresh Get 一致
+        Assert.Equal(freshGet!.SessionId, result.SessionId);
+        Assert.Equal(freshGet.SafetySnapshotId, result.SafetySnapshotId);
+        Assert.Equal(freshGet.TargetDeviceName, result.TargetDeviceName);
+        Assert.Equal(freshGet.StartedAtUtc, result.StartedAtUtc);
+        Assert.Equal(freshGet.Lifecycle, result.Lifecycle);
+        Assert.Equal(freshGet.Revision, result.Revision);
+        Assert.Equal(freshGet.UpdatedAtUtc, result.UpdatedAtUtc);
+        Assert.Equal(freshGet.ForwardAttempts.Count, result.ForwardAttempts.Count);
+        Assert.Equal(freshGet.CompletedForwardStepIndexes.Count, result.CompletedForwardStepIndexes.Count);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Y. Trigger-based 事务中途故障测试
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Save_ChildInsertFails_NoPartialParent()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        // 安装 BEFORE INSERT Trigger 使 Attempts 插入失败
+        using var c = OpenRawConnection();
+        using var setup = c.CreateCommand();
+        setup.CommandText = @"
+            CREATE TRIGGER IF NOT EXISTS trg_fail_attempts
+            BEFORE INSERT ON desktop_layout_recovery_attempts
+            BEGIN
+                SELECT RAISE(ABORT, 'trigger-forced rollback');
+            END;
+        ";
+        setup.ExecuteNonQuery();
+
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
+        };
+
+        await Assert.ThrowsAsync<SqliteException>(() => store.SaveAsync(record));
+
+        // 父表不应有残留
+        var loaded = await store.GetAsync(record.SessionId);
+        Assert.Null(loaded);
+    }
+
+    [Fact]
+    public async Task Update_DeleteOldAttempts_InsertFails_OldStateRestored()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = MakeReadyRecord() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
+        };
+        await store.SaveAsync(record);
+
+        var loaded = await store.GetAsync(record.SessionId);
+
+        // 安装 Trigger 使 Attempts 插入失败
+        using var c = OpenRawConnection();
+        using var setup = c.CreateCommand();
+        setup.CommandText = @"
+            CREATE TRIGGER IF NOT EXISTS trg_fail_attempts
+            BEFORE INSERT ON desktop_layout_recovery_attempts
+            BEGIN
+                SELECT RAISE(ABORT, 'trigger-forced rollback');
+            END;
+        ";
+        setup.ExecuteNonQuery();
+
+        var updated = loaded!.Freeze() with
+        {
+            Lifecycle = RecoverySessionLifecycle.Completed,
+            VerificationResult = TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(
+                DateTimeOffset.UtcNow),
+        };
+
+        await Assert.ThrowsAsync<SqliteException>(() => store.UpdateAsync(updated));
+
+        // Trigger 清理
+        using var cleanup = c.CreateCommand();
+        cleanup.CommandText = "DROP TRIGGER IF EXISTS trg_fail_attempts;";
+        cleanup.ExecuteNonQuery();
+
+        // 旧状态应完整恢复
+        var restored = await store.GetAsync(record.SessionId);
+        Assert.Equal(1, restored!.Revision);
+        Assert.Equal(RecoverySessionLifecycle.Executing, restored.Lifecycle);
+        Assert.Single(restored.ForwardAttempts);
+        Assert.Single(restored.CompletedForwardStepIndexes);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Z. 6 项阻断修复验证
     // ═══════════════════════════════════════════════════
 
     [Fact]
@@ -1126,6 +1372,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         {
             Lifecycle = RecoverySessionLifecycle.Completed,
             ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
+            CompletedForwardStepIndexes = new[] { 0 },
             VerificationResult = new TargetDisplayLayoutExecutionVerificationResult(
                 ExecutionVerificationPhase.Forward,
                 ExecutionVerificationStatus.Passed, 5, // FailedItemCount=5 but Passed

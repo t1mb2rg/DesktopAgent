@@ -713,4 +713,102 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.Single(rStore.GetAsync(tid1).GetAwaiter().GetResult()!.Rules);
         Assert.Single(rStore.GetAsync(tid2).GetAwaiter().GetResult()!.Rules);
     }
+
+    // ═══════════════════════════ V3ToV4 Icon Rule Migration ═══════════════════════════
+
+    [Fact]
+    public void V3ToV4_PreservesIconRuleData()
+    {
+        // 构造 v3 数据库：snapshots + templates + zones + icon_rules
+        using (var c = OpenRawConnection())
+        {
+            using var tx = c.BeginTransaction();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = @"
+                PRAGMA user_version = 3;
+                CREATE TABLE IF NOT EXISTS desktop_layout_snapshots (
+                    snapshot_id TEXT PRIMARY KEY NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    target_monitor_device_name TEXT NULL,
+                    connection_method INTEGER NOT NULL,
+                    format_version INTEGER NOT NULL,
+                    icon_count INTEGER NOT NULL
+                );
+                INSERT INTO desktop_layout_snapshots VALUES
+                    ('00000000-0000-0000-0000-000000000099',
+                     '2026-08-01T12:00:00.0000000+00:00', 'DISPLAY1', 1, 1, 2);
+                CREATE TABLE IF NOT EXISTS desktop_layout_templates (
+                    template_id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL, version INTEGER NOT NULL,
+                    target_display_binding_kind INTEGER NOT NULL,
+                    target_display_device_name TEXT NULL,
+                    zone_count INTEGER NOT NULL
+                );
+                INSERT INTO desktop_layout_templates VALUES
+                    ('00000000-0000-0000-0000-000000000088',
+                     'Mig-Template', 1, 1, NULL, 1);
+                CREATE TABLE IF NOT EXISTS desktop_layout_template_zones (
+                    template_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+                    zone_id TEXT NOT NULL, name TEXT NOT NULL,
+                    left_value INTEGER NOT NULL, top_value INTEGER NOT NULL,
+                    right_value INTEGER NOT NULL, bottom_value INTEGER NOT NULL,
+                    sort_order INTEGER NOT NULL, placement_flow INTEGER NOT NULL,
+                    max_item_count INTEGER NULL,
+                    PRIMARY KEY (template_id, ordinal),
+                    FOREIGN KEY (template_id) REFERENCES desktop_layout_templates(template_id) ON DELETE CASCADE
+                );
+                INSERT INTO desktop_layout_template_zones VALUES
+                    ('00000000-0000-0000-0000-000000000088', 0,
+                     '00000000-0000-0000-0000-000000000077', 'Z',
+                     0, 0, 10000, 10000, 0, 0, NULL);
+                CREATE TABLE IF NOT EXISTS desktop_layout_template_icon_rules (
+                    template_id TEXT NOT NULL, stable_id TEXT NOT NULL,
+                    rule_kind INTEGER NOT NULL, target_zone_id TEXT NULL,
+                    PRIMARY KEY (template_id, stable_id),
+                    FOREIGN KEY (template_id) REFERENCES desktop_layout_templates(template_id) ON DELETE CASCADE
+                );
+                INSERT INTO desktop_layout_template_icon_rules VALUES
+                    ('00000000-0000-0000-0000-000000000088', 'my-icon', 2,
+                     '00000000-0000-0000-0000-000000000077');
+            ";
+            cmd.ExecuteNonQuery();
+            tx.Commit();
+        }
+
+        Assert.Equal(3, ReadUserVersion());
+
+        // 升级到 v4
+        var store = new DesktopAgent.Persistence.DesktopLayouts.Templates.Rules
+            .SqliteDesktopLayoutIconRuleStore(_dbPath);
+        store.InitializeAsync().GetAwaiter().GetResult();
+
+        Assert.Equal(4, ReadUserVersion());
+
+        // 原版 snapshot/template 数据保留
+        using var c2 = OpenRawConnection();
+        using var selSnap = c2.CreateCommand();
+        selSnap.CommandText = "SELECT icon_count FROM desktop_layout_snapshots WHERE snapshot_id = '00000000-0000-0000-0000-000000000099'";
+        Assert.Equal(2L, (long)selSnap.ExecuteScalar()!);
+
+        using var selTpl = c2.CreateCommand();
+        selTpl.CommandText = "SELECT name FROM desktop_layout_templates WHERE template_id = '00000000-0000-0000-0000-000000000088'";
+        Assert.Equal("Mig-Template", (string)selTpl.ExecuteScalar()!);
+
+        // 规则数据逐字段保留
+        using var selRule = c2.CreateCommand();
+        selRule.CommandText = @"
+            SELECT stable_id, rule_kind, target_zone_id
+            FROM desktop_layout_template_icon_rules
+            WHERE template_id = '00000000-0000-0000-0000-000000000088'
+        ";
+        using var r = selRule.ExecuteReader();
+        Assert.True(r.Read());
+        Assert.Equal("my-icon", r.GetString(0));
+        Assert.Equal(2, r.GetInt32(1)); // ZoneOverride
+        Assert.Equal("00000000-0000-0000-0000-000000000077", r.GetString(2));
+
+        // v4 recovery tables 已创建
+        Assert.True(TableExists("desktop_layout_recovery_sessions"));
+        Assert.True(TableExists("desktop_layout_recovery_attempts"));
+    }
 }

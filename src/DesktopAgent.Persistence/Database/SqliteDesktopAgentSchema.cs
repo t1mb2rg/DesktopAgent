@@ -209,6 +209,8 @@ internal static class SqliteDesktopAgentSchema
                 execution_plan_json         TEXT NOT NULL,
                 plan_payload_format_version INTEGER NOT NULL
                     CHECK(plan_payload_format_version > 0),
+                completed_forward_step_indexes_json        TEXT NOT NULL,
+                completed_rollback_source_step_indexes_json TEXT NOT NULL,
                 forward_failure_type        TEXT NULL,
                 forward_failure_message     TEXT NULL,
                 recovery_failure_type       TEXT NULL,
