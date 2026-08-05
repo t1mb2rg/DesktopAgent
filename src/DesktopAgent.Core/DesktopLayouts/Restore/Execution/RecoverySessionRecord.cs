@@ -22,23 +22,67 @@ public sealed record RecoverySessionRecord
     public bool IsPositionUncertain { get; init; }
     public int? LastFailedStepIndex { get; init; }
 
-    // ── 计划冻结副本 ──
-    public TargetDisplayLayoutRestorePlan SourceRestorePlan { get; init; } = null!;
+    // ── 计划冻结副本（init 时立即深拷贝） ──
+    private TargetDisplayLayoutRestorePlan _sourceRestorePlan = null!;
+    public TargetDisplayLayoutRestorePlan SourceRestorePlan
+    {
+        get => _sourceRestorePlan;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _sourceRestorePlan = TargetDisplayLayoutRecoverySession.FreezeRestorePlan(value);
+        }
+    }
+
     public TargetDisplayLayoutExecutionPlan ExecutionPlan { get; init; } = null!;
 
-    // ── 尝试结果 ──
-    public IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> ForwardAttempts { get; init; } =
+    // ── 尝试结果（init 时立即深拷贝） ──
+    private IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> _forwardAttempts =
         Array.Empty<TargetDisplayLayoutExecutionAttemptResult>();
+    public IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> ForwardAttempts
+    {
+        get => _forwardAttempts;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _forwardAttempts = Array.AsReadOnly(value.ToArray());
+        }
+    }
 
-    public IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> RollbackAttempts { get; init; } =
+    private IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> _rollbackAttempts =
         Array.Empty<TargetDisplayLayoutExecutionAttemptResult>();
+    public IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> RollbackAttempts
+    {
+        get => _rollbackAttempts;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _rollbackAttempts = Array.AsReadOnly(value.ToArray());
+        }
+    }
 
-    // ── 已完成步骤索引（持久化，非派生） ──
-    public IReadOnlyList<int> CompletedForwardStepIndexes { get; init; } =
-        Array.Empty<int>();
+    // ── 已完成步骤索引（持久化，init 时立即深拷贝） ──
+    private IReadOnlyList<int> _completedForwardStepIndexes = Array.Empty<int>();
+    public IReadOnlyList<int> CompletedForwardStepIndexes
+    {
+        get => _completedForwardStepIndexes;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _completedForwardStepIndexes = Array.AsReadOnly(value.ToArray());
+        }
+    }
 
-    public IReadOnlyList<int> CompletedRollbackSourceStepIndexes { get; init; } =
-        Array.Empty<int>();
+    private IReadOnlyList<int> _completedRollbackSourceStepIndexes = Array.Empty<int>();
+    public IReadOnlyList<int> CompletedRollbackSourceStepIndexes
+    {
+        get => _completedRollbackSourceStepIndexes;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _completedRollbackSourceStepIndexes = Array.AsReadOnly(value.ToArray());
+        }
+    }
 
     // ── 失败证据（无 Exception 对象） ──
     public string? ForwardFailureType { get; init; }
@@ -52,26 +96,6 @@ public sealed record RecoverySessionRecord
     // ── 并发控制 ──
     public int Revision { get; init; }
     public DateTimeOffset UpdatedAtUtc { get; init; }
-
-    // ═══════════════════════════════════════════════════
-    //  冻结（防御性复制全部集合）
-    // ═══════════════════════════════════════════════════
-
-    /// <summary>
-    /// 返回一个新的 Record，其中全部集合均已深度复制并冻结。
-    /// 原 Record 的集合引用被修改后，冻结副本不受影响。
-    /// </summary>
-    public RecoverySessionRecord Freeze()
-    {
-        return this with
-        {
-            ForwardAttempts = Array.AsReadOnly(ForwardAttempts.ToArray()),
-            RollbackAttempts = Array.AsReadOnly(RollbackAttempts.ToArray()),
-            CompletedForwardStepIndexes = Array.AsReadOnly(CompletedForwardStepIndexes.ToArray()),
-            CompletedRollbackSourceStepIndexes = Array.AsReadOnly(CompletedRollbackSourceStepIndexes.ToArray()),
-            SourceRestorePlan = TargetDisplayLayoutRecoverySession.FreezeRestorePlan(SourceRestorePlan),
-        };
-    }
 
     /// <summary>验证 DateTimeOffset 的 Offset 为 UTC (Offset=0)。</summary>
     public static void RequireUtc(DateTimeOffset value, string fieldName)
@@ -265,6 +289,8 @@ public sealed record RecoverySessionRecord
                 {
                     if (a.RequestedPosition != step.FromPosition)
                         errors.Add($"Rollback Attempt #{a.AttemptIndex} RequestedPosition={a.RequestedPosition} ≠ Step[{a.SourceStepIndex}].From={step.FromPosition}。");
+                    if (a.ExpectedPreviousPosition != step.ToPosition)
+                        errors.Add($"Rollback Attempt #{a.AttemptIndex} ExpectedPreviousPosition={a.ExpectedPreviousPosition} ≠ Step[{a.SourceStepIndex}].To={step.ToPosition}。");
                 }
 
                 // Outcome 坐标一致性
@@ -386,15 +412,30 @@ public sealed record RecoverySessionRecord
                     errors.Add($"StagingAssignment StableId=\"{sa.StableId}\" 重复。");
             }
 
-            // 所有 staging steps 被 assignment 引用
-            var assignedStagingIds = new HashSet<string>(
-                ExecutionPlan.StagingAssignments.Select(sa => sa.StableId), StringComparer.Ordinal);
-            foreach (var step in ExecutionPlan.Steps.Where(
-                s => s.Kind is TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging
-                    or TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget))
+            // EnterStepIndex / ExitStepIndex 唯一性
+            var enterIndexes = new HashSet<int>();
+            var exitIndexes = new HashSet<int>();
+            foreach (var sa in ExecutionPlan.StagingAssignments)
             {
-                if (!assignedStagingIds.Contains(step.StableId))
-                    errors.Add($"Staging step #{step.StepIndex} StableId=\"{step.StableId}\" 未被任何 StagingAssignment 引用。");
+                if (!enterIndexes.Add(sa.EnterStepIndex))
+                    errors.Add($"EnterStepIndex {sa.EnterStepIndex} 被多个 StagingAssignment 引用。");
+                if (!exitIndexes.Add(sa.ExitStepIndex))
+                    errors.Add($"ExitStepIndex {sa.ExitStepIndex} 被多个 StagingAssignment 引用。");
+            }
+
+            // 每个 staging step 的 StepIndex 必须恰好被 assignment 引用
+            foreach (var step in ExecutionPlan.Steps)
+            {
+                if (step.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging)
+                {
+                    if (!enterIndexes.Contains(step.StepIndex))
+                        errors.Add($"MoveToTemporaryStaging StepIndex={step.StepIndex} 未被任何 StagingAssignment 的 EnterStepIndex 引用。");
+                }
+                else if (step.Kind == TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget)
+                {
+                    if (!exitIndexes.Contains(step.StepIndex))
+                        errors.Add($"MoveFromTemporaryStagingToTarget StepIndex={step.StepIndex} 未被任何 StagingAssignment 的 ExitStepIndex 引用。");
+                }
             }
         }
 
@@ -517,6 +558,8 @@ public sealed record RecoverySessionRecord
                         errors.Add($"{name} #{a.AttemptIndex} ExactSuccess 但 ExceptionType/ErrorMessage 非 null。");
                     if (a.ReportedStableId is null || a.ActualPosition is null)
                         errors.Add($"{name} #{a.AttemptIndex} ExactSuccess 但 ReportedStableId/ActualPosition 为 null。");
+                    if (!string.Equals(a.ReportedStableId, a.ExpectedStableId, StringComparison.Ordinal))
+                        errors.Add($"{name} #{a.AttemptIndex} ExactSuccess 但 ReportedStableId \"{a.ReportedStableId}\" ≠ ExpectedStableId \"{a.ExpectedStableId}\"。");
                     break;
 
                 case TargetDisplayLayoutExecutionAttemptOutcome.InexactKnown:
@@ -531,8 +574,14 @@ public sealed record RecoverySessionRecord
                         errors.Add($"{name} #{a.AttemptIndex} WriterException 但 ExceptionType 为空。");
                     if (a.HasTrustedActualPosition || a.IsExact)
                         errors.Add($"{name} #{a.AttemptIndex} WriterException 但 HasTrusted={a.HasTrustedActualPosition}, IsExact={a.IsExact}。");
-                    if (a.ReportedStableId is not null || a.ActualPosition is not null)
-                        errors.Add($"{name} #{a.AttemptIndex} WriterException 但 ReportedStableId/ActualPosition 非 null。");
+                    if (a.ReportedStableId is not null)
+                        errors.Add($"{name} #{a.AttemptIndex} WriterException 但 ReportedStableId 非 null。");
+                    if (a.ReportedPreviousPosition is not null)
+                        errors.Add($"{name} #{a.AttemptIndex} WriterException 但 ReportedPreviousPosition 非 null。");
+                    if (a.ActualPosition is not null)
+                        errors.Add($"{name} #{a.AttemptIndex} WriterException 但 ActualPosition 非 null。");
+                    if (a.ConnectionMethod is not null)
+                        errors.Add($"{name} #{a.AttemptIndex} WriterException 但 ConnectionMethod 非 null。");
                     break;
 
                 case TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch:

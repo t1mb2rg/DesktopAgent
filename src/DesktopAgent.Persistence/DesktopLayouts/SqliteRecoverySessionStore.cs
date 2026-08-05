@@ -52,7 +52,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         ArgumentNullException.ThrowIfNull(record);
 
         // 冻结 + Revision 强制为 1
-        record = record.Freeze();
+        // Record 已在 init 赋值时自动冻结
         if (record.Revision != 1)
             throw new ArgumentException(
                 $"SaveAsync 要求 Revision=1，实际为 {record.Revision}。", nameof(record));
@@ -99,7 +99,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(record);
 
-        record = record.Freeze();
+        // Record 已在 init 赋值时自动冻结
         record.Validate();
 
         using var connection = CreateConnection();
@@ -539,22 +539,27 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
 
         using var connection = CreateConnection();
 
-        // 阶段 1：全表扫描 — 收集所有 session_id 并逐条验证
-        var allIds = new List<Guid>();
+        // 阶段 1：全表扫描 — 以原始 TEXT 收集并逐条验证
+        var rawIds = new List<string>();
         using (var sel = connection.CreateCommand())
         {
             sel.CommandText = "SELECT session_id FROM desktop_layout_recovery_sessions ORDER BY rowid";
             using var reader = sel.ExecuteReader();
             while (reader.Read())
-                allIds.Add(Guid.Parse(reader.GetString(0)));
+                rawIds.Add(reader.GetString(0));
         }
 
-        // 逐条读取并收集损坏记录
+        // 逐条 TryParse + GetInternal，收集全部损坏
         var corruptedIds = new List<string>();
         var cleanRecords = new List<RecoverySessionRecord>();
-        foreach (var sid in allIds)
+        foreach (var raw in rawIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!Guid.TryParse(raw, out var sid))
+            {
+                corruptedIds.Add($"无效 SessionId 原始值：\"{raw}\"");
+                continue;
+            }
             try
             {
                 var record = GetInternal(connection, sid);

@@ -7,6 +7,5 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="DesktopAgent.Tests" />
-    <InternalsVisibleTo Include="DesktopAgent.Persistence" />
   </ItemGroup>
 </Project>

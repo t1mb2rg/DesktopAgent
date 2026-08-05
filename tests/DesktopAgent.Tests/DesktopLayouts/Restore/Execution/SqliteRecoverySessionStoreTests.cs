@@ -946,7 +946,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             Array.Empty<TargetDisplayLayoutStagingAssignment>(),
             Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
 
-        var updated = loaded!.Freeze() with
+        var updated = loaded! with
         {
             ExecutionPlan = newExecPlan,
         };
@@ -1133,7 +1133,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task Save_DefensiveFreeze_ModifiedInputAfterSave_StoredUnchanged()
+    public async Task Record_DefensiveFreeze_BeforeAndAfterSave_InputMutationIgnored()
     {
         var store = CreateStore();
         await store.InitializeAsync();
@@ -1151,13 +1151,22 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             CompletedForwardStepIndexes = mutableCompleted,
         };
 
-        await store.SaveAsync(record);
-
-        // Save 后修改原始 mutable List
+        // 构造完成后、SaveAsync 之前修改原始 List
         mutableAttempts.Add(MakeExactAttempt(1, 1));
         mutableCompleted.Add(99);
 
-        // fresh readback 不应受影响
+        // Record 自身在构造时已冻结，不应受影响
+        Assert.Single(record.ForwardAttempts);
+        Assert.Single(record.CompletedForwardStepIndexes);
+        Assert.Equal(0, record.CompletedForwardStepIndexes[0]);
+
+        await store.SaveAsync(record);
+
+        // SaveAsync 后再次修改原始 List
+        mutableAttempts.Add(MakeExactAttempt(2, 2));
+        mutableCompleted.Add(100);
+
+        // fresh Store GetAsync 读回内容仍未变化
         var loaded = await store.GetAsync(record.SessionId);
         Assert.Single(loaded!.ForwardAttempts);
         Assert.Single(loaded.CompletedForwardStepIndexes);
@@ -1174,7 +1183,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
 
         var loaded = await store.GetAsync(record.SessionId);
         // SafetySnapshotId 不可变但 Validate() 不检查 — 由 UpdateAsync 冻结逻辑捕获
-        var tampered = loaded!.Freeze() with { SafetySnapshotId = Guid.NewGuid() };
+        var tampered = loaded! with { SafetySnapshotId = Guid.NewGuid() };
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => store.UpdateAsync(tampered));
         Assert.Contains("SafetySnapshotId", ex.Message);
@@ -1190,7 +1199,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         await store.SaveAsync(record);
 
         var loaded = await store.GetAsync(record.SessionId);
-        var updated = loaded!.Freeze() with
+        var updated = loaded! with
         {
             Lifecycle = RecoverySessionLifecycle.Executing,
             ForwardAttempts = new[] { MakeExactAttempt(0, 0) },
@@ -1276,7 +1285,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         ";
         setup.ExecuteNonQuery();
 
-        var updated = loaded!.Freeze() with
+        var updated = loaded! with
         {
             Lifecycle = RecoverySessionLifecycle.Completed,
             VerificationResult = TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(
@@ -1396,6 +1405,182 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         Assert.True(restored.IsNoOp);
         Assert.False(restored.IsExecutable);
         Assert.Empty(restored.Steps);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  AA. 定向测试门禁 — 7 项
+    // ═══════════════════════════════════════════════════
+
+    [Fact]
+    public void Validate_RollbackExpectedPreviousMismatch_Throws()
+    {
+        var plan = MakeExecutionPlan();
+        // Rollback: ExpectedPrevious = Step.To = (240,320), Requested = Step.From = (160,240)
+        // 故意使 ExpectedPreviousPosition 不等于 Step.ToPosition
+        var badAttempt = new TargetDisplayLayoutExecutionAttemptResult(
+            0, 0, TargetDisplayLayoutExecutionAttemptPhase.Rollback,
+            "a", new PixelPoint(999, 999), new PixelPoint(160, 240), // ExpectedPrevious=(999,999) ≠ Step.To
+            "a", new PixelPoint(999, 999), new PixelPoint(160, 240),
+            true, true, TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess,
+            ConnectionMethod.FindWindowSW, null, null, null, null);
+
+        var record = MakeReadyRecord() with
+        {
+            ExecutionPlan = plan,
+            RollbackAttempts = new[] { badAttempt },
+            CompletedRollbackSourceStepIndexes = new[] { 0 },
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("ExpectedPrevious", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_ExactSuccessReportedStableIdMismatch_Throws()
+    {
+        var plan = MakeExecutionPlan();
+        // 所有字段合法，只让 ReportedStableId 不匹配 ExpectedStableId
+        var badAttempt = new TargetDisplayLayoutExecutionAttemptResult(
+            0, 0, TargetDisplayLayoutExecutionAttemptPhase.Forward,
+            "a", new PixelPoint(160, 240), new PixelPoint(240, 320),
+            "WRONG_ID", new PixelPoint(160, 240), new PixelPoint(240, 320),
+            true, true, TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess,
+            ConnectionMethod.FindWindowSW, null, null, null, null);
+
+        var record = MakeReadyRecord() with
+        {
+            ExecutionPlan = plan,
+            ForwardAttempts = new[] { badAttempt },
+            CompletedForwardStepIndexes = new[] { 0 },
+            Lifecycle = RecoverySessionLifecycle.Completed,
+            VerificationResult = TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(
+                DateTimeOffset.UtcNow),
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("ReportedStableId", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_WriterExceptionWithWriterResultFields_Throws()
+    {
+        var plan = MakeExecutionPlan();
+        // WriterException 携带 ConnectionMethod 应被拒绝
+        var badAttempt = new TargetDisplayLayoutExecutionAttemptResult(
+            0, 0, TargetDisplayLayoutExecutionAttemptPhase.Forward,
+            "a", new PixelPoint(160, 240), new PixelPoint(240, 320),
+            null, null, null,
+            false, false, TargetDisplayLayoutExecutionAttemptOutcome.WriterException,
+            ConnectionMethod.FindWindowSW, // WriterException 不应携带 ConnectionMethod
+            "SomeException", "BOOM", null, null);
+
+        var record = MakeReadyRecord() with
+        {
+            ExecutionPlan = plan,
+            ForwardAttempts = new[] { badAttempt },
+            CompletedForwardStepIndexes = Array.Empty<int>(),
+            Lifecycle = RecoverySessionLifecycle.PositionUncertain,
+            RequiresManualRecovery = true,
+            IsPositionUncertain = true,
+            ForwardFailureType = "SomeException",
+        };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("ConnectionMethod", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_UnreferencedStagingStepIndex_Throws()
+    {
+        // 构造：同一个 StableId 下有 2 个 staging step，但只有 1 个 assignment
+        // StableId 集合检查会通过，但 StepIndex 检查应拒绝未被引用的 step
+        // 所有 staging 坐标必须完全一致以避免触发位置校验
+        var steps = new[]
+        {
+            new TargetDisplayLayoutExecutionStep(0, "b", "N_b",
+                new PixelPoint(100, 100), new PixelPoint(200, 200),
+                TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD),
+            new TargetDisplayLayoutExecutionStep(1, "a", "N_a",
+                new PixelPoint(300, 300), new PixelPoint(400, 400),
+                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 1),
+            new TargetDisplayLayoutExecutionStep(2, "a", "N_a",
+                new PixelPoint(400, 400), new PixelPoint(600, 600),
+                TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD, 1),
+            // 额外 staging step（same StableId "a"）未被任何 assignment 引用
+            new TargetDisplayLayoutExecutionStep(3, "a", "N_a",
+                new PixelPoint(700, 700), new PixelPoint(800, 800),
+                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 2),
+        };
+        var stagingAssignments = new[]
+        {
+            new TargetDisplayLayoutStagingAssignment("a",
+                new PixelPoint(400, 400), 1, 2),
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            steps, stagingAssignments,
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+
+        var record = MakeReadyRecord() with { ExecutionPlan = plan };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        // 必须包含 StepIndex 未被引用的语义
+        Assert.Contains("StepIndex", ex.Message);
+        Assert.Contains("EnterStepIndex", ex.Message);
+    }
+
+    [Fact]
+    public void Validate_DuplicateStagingEnterStepIndex_Throws()
+    {
+        var steps = new[]
+        {
+            new TargetDisplayLayoutExecutionStep(0, "a", "N_a",
+                new PixelPoint(100, 100), new PixelPoint(200, 200),
+                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 1),
+            new TargetDisplayLayoutExecutionStep(1, "a", "N_a",
+                new PixelPoint(200, 200), new PixelPoint(300, 300),
+                TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD, 1),
+            new TargetDisplayLayoutExecutionStep(2, "a", "N_a",
+                new PixelPoint(100, 100), new PixelPoint(200, 200),
+                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 2),
+            new TargetDisplayLayoutExecutionStep(3, "a", "N_a",
+                new PixelPoint(200, 200), new PixelPoint(300, 300),
+                TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD, 2),
+        };
+        // 两个 assignment 引用相同的 EnterStepIndex=0（不同 StableId/ExitStepIndex）
+        var stagingAssignments = new[]
+        {
+            new TargetDisplayLayoutStagingAssignment("a",
+                new PixelPoint(200, 200), 0, 1),
+            new TargetDisplayLayoutStagingAssignment("a",
+                new PixelPoint(200, 200), 0, 3), // EnterStepIndex=0 重复
+        };
+        var plan = new TargetDisplayLayoutExecutionPlan(TD, true, false,
+            steps, stagingAssignments,
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+
+        var record = MakeReadyRecord() with { ExecutionPlan = plan };
+        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        Assert.Contains("EnterStepIndex", ex.Message);
+    }
+
+    [Fact]
+    public async Task ListUnresolved_InvalidRawSessionId_ReportsCorruption()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        // 保存一条合法 Ready 记录
+        var record = MakeReadyRecord();
+        await store.SaveAsync(record);
+
+        // 直接 SQL 将 session_id 改为非 GUID 字符串
+        using var c = OpenRawConnection();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE desktop_layout_recovery_sessions SET session_id = @bad WHERE session_id = @sid";
+        cmd.Parameters.AddWithValue("@bad", "not-a-guid");
+        cmd.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
+        cmd.ExecuteNonQuery();
+
+        // ListUnresolved 应抛出 InvalidDataException（不是 FormatException）
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(
+            () => store.ListUnresolvedAsync());
+        Assert.Contains("not-a-guid", ex.Message);
     }
 
     // ═══════════════════════════════════════════════════
