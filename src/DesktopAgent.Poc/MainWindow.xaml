@@ -208,5 +208,19 @@
                            FontWeight="SemiBold" Foreground="#0078D4" Text="" />
             </Grid>
         </Border>
+
+        <!-- ═══ 跨重启恢复状态区域 ═══ -->
+        <Border Grid.Row="12" Margin="10,5,10,0" Padding="8" CornerRadius="4"
+                Background="#FFF8E1" BorderBrush="#FFB74D" BorderThickness="1"
+                x:Name="RecoveryBorder" Visibility="Collapsed">
+            <StackPanel>
+                <TextBlock FontWeight="SemiBold" FontSize="13" Foreground="#E65100"
+                           Text="检测到未解决的恢复会话" />
+                <TextBlock x:Name="RecoveryStatusText" Margin="0,4,0,0" FontSize="12"
+                           TextWrapping="Wrap" />
+                <Button x:Name="RecoveryRestoreButton" Width="120" Height="28" Margin="0,8,0,0"
+                        Content="检查并恢复" Click="RecoveryRestore_Click" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

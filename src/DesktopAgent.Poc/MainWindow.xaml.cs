@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private readonly IDesktopLayoutTemplateStore _templateStore;
     private readonly IDesktopLayoutIconRuleStore _ruleStore;
     private readonly IRecoverySessionStore _recoverySessionStore;
+    private readonly PersistedRecoveryCoordinator _recoveryCoordinator;
 
     private readonly ObservableCollection<DisplayRow> _displayRows = [];
     private IReadOnlyList<DisplayDescriptor> _cachedDisplays = Array.Empty<DisplayDescriptor>();
@@ -74,7 +75,8 @@ public partial class MainWindow : Window
         TargetDisplayLayoutExecutionCoordinator layoutExecutionCoordinator,
         IDesktopLayoutTemplateStore templateStore,
         IDesktopLayoutIconRuleStore ruleStore,
-        IRecoverySessionStore recoverySessionStore)
+        IRecoverySessionStore recoverySessionStore,
+        PersistedRecoveryCoordinator recoveryCoordinator)
     {
         InitializeComponent();
 
@@ -89,6 +91,7 @@ public partial class MainWindow : Window
         _templateStore = templateStore;
         _ruleStore = ruleStore;
         _recoverySessionStore = recoverySessionStore;
+        _recoveryCoordinator = recoveryCoordinator;
 
         DisplaysGrid.ItemsSource = _displayRows;
         IconsGrid.ItemsSource = _iconRows;
@@ -203,18 +206,7 @@ public partial class MainWindow : Window
         }
 
         // 初始化 RecoverySession Store + 检测未解决会话
-        try
-        {
-            await _recoverySessionStore.InitializeAsync();
-            var unresolved = await _recoverySessionStore.ListUnresolvedAsync(limit: 1);
-            if (unresolved.Count > 0)
-                _layoutRestoreRequiresAttention = true;
-        }
-        catch
-        {
-            // 损坏或无法读取恢复数据 → 执行锁定
-            _layoutRestoreRequiresAttention = true;
-        }
+        await CheckRecoveryStateAsync();
 
         try
         {
@@ -947,6 +939,90 @@ public partial class MainWindow : Window
         TargetDisplayLayoutRestorePlan SourceRestorePlan,
         TargetDisplayLayoutExecutionPlan PreviewExecutionPlan,
         TargetDisplayLayoutExecutionScopeGate.GateResult GateResult);
+
+    // ═══════════════════════════════ 跨重启恢复 ═══════════════════════════════
+
+    private async Task CheckRecoveryStateAsync()
+    {
+        try
+        {
+            await _recoverySessionStore.InitializeAsync();
+            var unresolved = await _recoveryCoordinator.ListUnresolvedAsync();
+            if (unresolved.Count > 0)
+            {
+                _layoutRestoreRequiresAttention = true;
+                var s = unresolved[0];
+                RecoveryStatusText.Text =
+                    $"会话: {s.SessionId.ToString("D")[..8]}...\r\n" +
+                    $"显示器: {s.TargetDeviceName}\r\n" +
+                    $"开始: {s.StartedAtUtc:yyyy-MM-dd HH:mm}\r\n" +
+                    $"状态: {s.Lifecycle}\r\n" +
+                    $"Forward完成: {s.CompletedForwardStepIndexes.Count}\r\n" +
+                    $"Rollback完成: {s.CompletedRollbackSourceStepIndexes.Count}\r\n" +
+                    $"位置不确定: {s.IsPositionUncertain}";
+                RecoveryBorder.Visibility = System.Windows.Visibility.Visible;
+            }
+        }
+        catch
+        {
+            _layoutRestoreRequiresAttention = true;
+            RecoveryStatusText.Text = "恢复数据损坏 — 需要人工处理。";
+            RecoveryBorder.Visibility = System.Windows.Visibility.Visible;
+            RecoveryRestoreButton.IsEnabled = false;
+        }
+        UpdateInteractiveState();
+    }
+
+    private async void RecoveryRestore_Click(object sender, RoutedEventArgs e)
+    {
+        if (_layoutRestoreOperationInProgress) return;
+        var result = System.Windows.MessageBox.Show(
+            "将使用持久化的恢复会话执行保守回滚。\r\n不会执行新的 Forward 步骤。\r\n继续？",
+            "跨重启恢复确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != System.Windows.MessageBoxResult.Yes) return;
+
+        RecoveryRestoreButton.IsEnabled = false;
+        _layoutRestoreOperationInProgress = true;
+        try
+        {
+            var unresolved = await _recoveryCoordinator.ListUnresolvedAsync();
+            if (unresolved.Count == 0)
+            {
+                _layoutRestoreRequiresAttention = false;
+                RecoveryBorder.Visibility = System.Windows.Visibility.Collapsed;
+                UpdateInteractiveState();
+                return;
+            }
+
+            foreach (var session in unresolved)
+            {
+                await _recoveryCoordinator.RecoverAsync(session);
+            }
+
+            // 恢复后重新查询
+            var after = await _recoveryCoordinator.ListUnresolvedAsync();
+            if (after.Count == 0)
+            {
+                _layoutRestoreRequiresAttention = false;
+                RecoveryBorder.Visibility = System.Windows.Visibility.Collapsed;
+            }
+            else
+            {
+                RecoveryStatusText.Text = $"仍有 {after.Count} 个未解决会话。";
+            }
+        }
+        catch
+        {
+            _layoutRestoreRequiresAttention = true;
+            RecoveryStatusText.Text = "恢复过程异常 — 需要人工处理。";
+        }
+        finally
+        {
+            _layoutRestoreOperationInProgress = false;
+            RecoveryRestoreButton.IsEnabled = true;
+            UpdateInteractiveState();
+        }
+    }
 
     private void InvalidateLayoutRestorePreview(string reason)
     {

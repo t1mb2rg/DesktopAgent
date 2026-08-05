@@ -8,10 +8,6 @@ using DesktopAgent.WindowsInterop.DesktopIcons;
 
 namespace DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 
-/// <summary>
-/// 跨重启恢复协调器 — 使用持久化 RecoverySessionRecord 执行保守 Rollback。
-/// 只回滚持久化确认完成的 Forward 步骤，不重放 Forward，不使用当前模板/规则。
-/// </summary>
 public sealed class PersistedRecoveryCoordinator
 {
     private readonly IRecoverySessionStore _store;
@@ -34,47 +30,54 @@ public sealed class PersistedRecoveryCoordinator
         _staExecutor = staExecutor ?? throw new ArgumentNullException(nameof(staExecutor));
     }
 
-    /// <summary>查询未解决会话列表。</summary>
     public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(CancellationToken ct = default)
         => _store.ListUnresolvedAsync(limit: 50, ct);
 
-    /// <summary>检查是否存在未解决会话（损坏数据也视为未解决）。</summary>
     public async Task<bool> HasUnresolvedAsync(CancellationToken ct = default)
     {
         try { return (await _store.ListUnresolvedAsync(limit: 1, ct)).Count > 0; }
         catch (InvalidDataException) { return true; }
     }
 
-    /// <summary>
-    /// 对持久化会话执行跨重启恢复。
-    /// 1. 重新读取当前桌面状态和身份
-    /// 2. 对持久化确认完成的 Forward 步骤执行保守 Rollback
-    /// 3. 独立验证
-    /// 4. 持久化终态
-    /// </summary>
     public async Task<TargetDisplayLayoutExecutionRunResult> RecoverAsync(
         RecoverySessionRecord record,
         CancellationToken cancellationToken = default)
     {
-        var execPlan = record.ExecutionPlan;
-        var allAttempts = new List<TargetDisplayLayoutExecutionAttemptResult>();
-        var attemptIndex = record.ForwardAttempts.Count + record.RollbackAttempts.Count;
-        var rbSourceIndexes = new List<int>(record.CompletedRollbackSourceStepIndexes);
+        // ── 0. fresh Get ──
+        var fresh = await _store.GetAsync(record.SessionId, cancellationToken);
+        if (fresh is null)
+            return PositionUncertain(record, new List<TargetDisplayLayoutExecutionAttemptResult>(),
+                "SessionNotFound", "GetAsync 返回 null。");
 
-        // 计算待回滚步骤：CompletedForward − CompletedRollback，降序
-        var pendingSteps = record.CompletedForwardStepIndexes
-            .Except(record.CompletedRollbackSourceStepIndexes)
+        var execPlan = fresh.ExecutionPlan;
+        // ── 拒绝 staging/cycle ──
+        if (execPlan.UsesTemporaryStaging)
+            return PositionUncertain(fresh, new List<TargetDisplayLayoutExecutionAttemptResult>(),
+                "StagingNotSupported", "跨重启恢复不支持含临时中转的计划。");
+
+        var allRbAttempts = new List<TargetDisplayLayoutExecutionAttemptResult>(fresh.RollbackAttempts);
+        var attemptIndex = fresh.ForwardAttempts.Count + fresh.RollbackAttempts.Count;
+        var rbIndexes = new List<int>(fresh.CompletedRollbackSourceStepIndexes);
+
+        // 待回滚: CompletedFwd − CompletedRb, 降序
+        var pendingSteps = fresh.CompletedForwardStepIndexes
+            .Except(fresh.CompletedRollbackSourceStepIndexes)
             .OrderByDescending(x => x)
             .ToList();
 
         if (pendingSteps.Count == 0)
         {
-            // 无需回滚 → 已经是终态
-            return new TargetDisplayLayoutExecutionRunResult(
-                TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack,
-                false, false, null, record.SafetySnapshotId,
-                record.ForwardAttempts, record.RollbackAttempts,
-                null, false, false, null, null, null, null);
+            // 无需回滚 → 持久化终态
+            return await PersistRecoveryTerminalAsync(fresh, allRbAttempts, rbIndexes,
+                Array.Empty<string>(), 0, cancellationToken);
+        }
+
+        // 验证所有 StepIndex 在合法范围
+        foreach (var si in pendingSteps)
+        {
+            if (si < 0 || si >= execPlan.Steps.Count)
+                return PositionUncertain(fresh, allRbAttempts, "InvalidStepIndex",
+                    $"Pending step index {si} 超出范围 [0, {execPlan.Steps.Count})。");
         }
 
         // ── 1. fresh 环境检查 ──
@@ -86,160 +89,237 @@ public sealed class PersistedRecoveryCoordinator
             capabilities = await _staExecutor.RunAsync(() => _positionWriter.GetCapabilities());
             displays = _topologyReader.GetDisplays();
             var rawRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
-            currentRead = new DesktopIconReadResult(
-                rawRead.Icons, rawRead.FailedItemCount,
-                rawRead.ConnectionMethod, rawRead.ReadTime,
-                rawRead.PrimaryPathException);
+            var assignedIcons = rawRead.Icons.Select(icon =>
+            {
+                var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, displays);
+                return icon with { MonitorDeviceName = monitor?.DeviceName };
+            }).ToList();
+            currentRead = new DesktopIconReadResult(assignedIcons, rawRead.FailedItemCount,
+                rawRead.ConnectionMethod, rawRead.ReadTime, rawRead.PrimaryPathException);
         }
-        catch
+        catch (Exception ex)
         {
-            return UncertainResult(record, allAttempts, "TopologyReadFailed",
-                "跨重启恢复前环境读取失败。");
+            return PositionUncertain(fresh, allRbAttempts, "TopologyReadFailed",
+                $"环境读取失败：{ex.Message}");
         }
 
         if (currentRead.FailedItemCount != 0)
-            return UncertainResult(record, allAttempts, "CurrentReadIncomplete",
+            return PositionUncertain(fresh, allRbAttempts, "CurrentReadIncomplete",
                 $"FailedItemCount={currentRead.FailedItemCount}。");
 
         // ── 2. 逐步骤 Rollback ──
+        var currentCp = fresh;
         foreach (var si in pendingSteps)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (si < 0 || si >= execPlan.Steps.Count) continue;
-
             var step = execPlan.Steps[si];
-            // Rollback 参数固定：Requested = Step.From, ExpectedPrevious = Step.To
             var rollbackTarget = step.FromPosition;
-            string stableId = step.StableId;
 
-            // 身份检查：StableId 存在于当前桌面且位置匹配
+            // 身份检查
             var currentIcon = currentRead.Icons.FirstOrDefault(
-                i => string.Equals(i.StableId, stableId, StringComparison.Ordinal));
+                i => string.Equals(i.StableId, step.StableId, StringComparison.Ordinal));
             if (currentIcon is null)
             {
-                allAttempts.Add(new TargetDisplayLayoutExecutionAttemptResult(
+                allRbAttempts.Add(new TargetDisplayLayoutExecutionAttemptResult(
                     attemptIndex, si, TargetDisplayLayoutExecutionAttemptPhase.Rollback,
-                    stableId, step.ToPosition, rollbackTarget,
-                    null, null, null,
-                    false, false, TargetDisplayLayoutExecutionAttemptOutcome.WriterException,
-                    null, "StableIdMissing", $"StableId \"{stableId}\" 在当前桌面缺失。",
-                    null, null));
+                    step.StableId, step.ToPosition, rollbackTarget,
+                    null, null, null, false, false,
+                    TargetDisplayLayoutExecutionAttemptOutcome.WriterException,
+                    null, "StableIdMissing", $"\"{step.StableId}\" 未找到。", null, null));
                 attemptIndex++;
-                continue;
+                // 持久化 + 停止
+                return await PersistRecoveryTerminalAsync(fresh, allRbAttempts, rbIndexes,
+                    new[] { $"\"{step.StableId}\" 缺失" }, 1, cancellationToken);
             }
 
             if (currentIcon.PixelPosition != step.ToPosition)
             {
-                allAttempts.Add(new TargetDisplayLayoutExecutionAttemptResult(
+                allRbAttempts.Add(new TargetDisplayLayoutExecutionAttemptResult(
                     attemptIndex, si, TargetDisplayLayoutExecutionAttemptPhase.Rollback,
-                    stableId, step.ToPosition, rollbackTarget,
-                    null, new PixelPoint(currentIcon.PixelPosition.X, currentIcon.PixelPosition.Y), null,
-                    false, false, TargetDisplayLayoutExecutionAttemptOutcome.PreviousPositionMismatch,
-                    currentRead.ConnectionMethod,
-                    null, null, null, null));
+                    step.StableId, step.ToPosition, rollbackTarget,
+                    null, currentIcon.PixelPosition, null, false, false,
+                    TargetDisplayLayoutExecutionAttemptOutcome.PreviousPositionMismatch,
+                    currentRead.ConnectionMethod, null, null, null, null));
                 attemptIndex++;
-                continue;
+                return await PersistRecoveryTerminalAsync(fresh, allRbAttempts, rbIndexes,
+                    new[] { $"\"{step.StableId}\" 当前位置={currentIcon.PixelPosition} ≠ 预期={step.ToPosition}" },
+                    1, cancellationToken);
             }
 
-            // 调用 Writer
+            // ── 调用 Writer ──
             DesktopIconMoveResult moveResult;
             try
             {
                 moveResult = await _staExecutor.RunAsync(
-                    () => _positionWriter.MoveDesktopIcon(stableId, rollbackTarget));
+                    () => _positionWriter.MoveDesktopIcon(step.StableId, rollbackTarget));
             }
             catch (Exception ex)
             {
-                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
+                allRbAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
                     attemptIndex, si, step, rollbackTarget, step.ToPosition, ex));
                 attemptIndex++;
-                continue;
+                var (ok, _) = await TryPersistCheckpointAsync(fresh, allRbAttempts, rbIndexes,
+                    RecoverySessionLifecycle.PositionUncertain, true, true, si,
+                    ex.GetType().Name, ex.Message, null, null, currentCp, cancellationToken);
+                if (!ok) return PositionUncertain(fresh, allRbAttempts, "CheckpointPersistFailed",
+                    "恢复检查点持久化失败。");
+                return await PersistRecoveryTerminalAsync(fresh, allRbAttempts, rbIndexes,
+                    new[] { $"Writer 异常：{ex.Message}" }, 1, cancellationToken);
             }
 
-            if (!string.Equals(moveResult.StableId, stableId, StringComparison.Ordinal))
+            // 验证 Writer 结果
+            if (!string.Equals(moveResult.StableId, step.StableId, StringComparison.Ordinal))
             {
-                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
+                allRbAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
                     attemptIndex, si, step, rollbackTarget, step.ToPosition, moveResult));
                 attemptIndex++;
-                continue;
+                var (ok, _) = await TryPersistCheckpointAsync(fresh, allRbAttempts, rbIndexes,
+                    RecoverySessionLifecycle.PositionUncertain, true, true, si,
+                    "RollbackStableIdMismatch",
+                    $"StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。", null, null,
+                    currentCp, cancellationToken);
+                if (!ok) return PositionUncertain(fresh, allRbAttempts, "CheckpointPersistFailed",
+                    "恢复检查点持久化失败。");
+                return await PersistRecoveryTerminalAsync(fresh, allRbAttempts, rbIndexes,
+                    new[] { $"Rollback StableId mismatch: {moveResult.StableId}" }, 1, cancellationToken);
             }
 
             if (moveResult.IsExact)
             {
-                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
+                allRbAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
                     attemptIndex, si, step, rollbackTarget, step.ToPosition, moveResult));
-                rbSourceIndexes.Add(si);
+                rbIndexes.Add(si);
             }
             else
             {
-                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
+                allRbAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
                     attemptIndex, si, step, rollbackTarget, step.ToPosition, moveResult));
+                return await PersistRecoveryTerminalAsync(fresh, allRbAttempts, rbIndexes,
+                    new[] { $"Rollback 非精确: step {si}" }, 1, cancellationToken);
             }
             attemptIndex++;
 
-            // 每步持久化
-            if (record.Revision > 0)
+            // ── 持久化 checkpoint ──
             {
-                try
-                {
-                    var cp = new RecoverySessionRecord
-                    {
-                        SessionId = record.SessionId, SafetySnapshotId = record.SafetySnapshotId,
-                        TargetDeviceName = record.TargetDeviceName, StartedAtUtc = record.StartedAtUtc,
-                        SourceRestorePlan = record.SourceRestorePlan, ExecutionPlan = execPlan,
-                        Lifecycle = RecoverySessionLifecycle.Executing,
-                        ForwardAttempts = record.ForwardAttempts,
-                        RollbackAttempts = allAttempts
-                            .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList().AsReadOnly(),
-                        CompletedForwardStepIndexes = record.CompletedForwardStepIndexes,
-                        CompletedRollbackSourceStepIndexes = rbSourceIndexes.AsReadOnly(),
-                        Revision = record.Revision, UpdatedAtUtc = DateTimeOffset.UtcNow,
-                    };
-                    cp.Validate();
-                    var updated = await _store.UpdateAsync(cp);
-                    var fresh = await _store.GetAsync(record.SessionId);
-                    if (fresh is not null) record = fresh;
-                }
-                catch { /* 持久化失败不中止恢复 */ }
+                var (ok, newCp) = await TryPersistCheckpointAsync(fresh, allRbAttempts, rbIndexes,
+                    RecoverySessionLifecycle.Executing, false, false, si,
+                    null, null, null, null, currentCp, cancellationToken);
+                if (!ok) return PositionUncertain(fresh, allRbAttempts, "CheckpointPersistFailed",
+                    "恢复检查点持久化失败。");
+                currentCp = newCp!;
             }
         }
 
         // ── 3. 独立验证 ──
+        return await VerifyAndPersistRecoveryAsync(fresh, allRbAttempts, rbIndexes,
+            pendingSteps, execPlan, cancellationToken);
+    }
+
+    // ═══════════════ helpers ═══════════════
+
+    private async Task<(bool Ok, RecoverySessionRecord? NewCp)> TryPersistCheckpointAsync(
+        RecoverySessionRecord original,
+        List<TargetDisplayLayoutExecutionAttemptResult> allRbAttempts,
+        List<int> rbIndexes,
+        RecoverySessionLifecycle lifecycle, bool manual, bool uncertain, int? failedIdx,
+        string? fwdType, string? fwdMsg, string? recType, string? recMsg,
+        RecoverySessionRecord currentCp,
+        CancellationToken ct)
+    {
+        try
+        {
+            var mergedRb = original.RollbackAttempts
+                .Concat(allRbAttempts.Where(a => !original.RollbackAttempts.Any(
+                    o => o.AttemptIndex == a.AttemptIndex)))
+                .OrderBy(a => a.AttemptIndex).ToList().AsReadOnly();
+            var mergedRbIdx = original.CompletedRollbackSourceStepIndexes
+                .Union(rbIndexes).OrderBy(x => x).ToList().AsReadOnly();
+
+            var record = new RecoverySessionRecord
+            {
+                SessionId = original.SessionId, SafetySnapshotId = original.SafetySnapshotId,
+                TargetDeviceName = original.TargetDeviceName, StartedAtUtc = original.StartedAtUtc,
+                SourceRestorePlan = original.SourceRestorePlan, ExecutionPlan = original.ExecutionPlan,
+                Lifecycle = lifecycle, RequiresManualRecovery = manual,
+                IsPositionUncertain = uncertain, LastFailedStepIndex = failedIdx,
+                ForwardAttempts = original.ForwardAttempts,
+                RollbackAttempts = mergedRb,
+                CompletedForwardStepIndexes = original.CompletedForwardStepIndexes,
+                CompletedRollbackSourceStepIndexes = mergedRbIdx,
+                ForwardFailureType = fwdType, ForwardFailureMessage = fwdMsg,
+                RecoveryFailureType = recType, RecoveryFailureMessage = recMsg,
+                Revision = currentCp.Revision,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            };
+            record.Validate();
+            var updated = await _store.UpdateAsync(record);
+            var fresh = await _store.GetAsync(original.SessionId);
+            if (fresh is null || !TargetDisplayLayoutExecutionCoordinator.RecordsAreEquivalent(updated, fresh))
+                return (false, null);
+            return (true, fresh);
+        }
+        catch { return (false, null); }
+    }
+
+    private async Task<TargetDisplayLayoutExecutionRunResult> VerifyAndPersistRecoveryAsync(
+        RecoverySessionRecord record,
+        List<TargetDisplayLayoutExecutionAttemptResult> allRbAttempts,
+        List<int> rbIndexes,
+        List<int> pendingSteps,
+        TargetDisplayLayoutExecutionPlan execPlan,
+        CancellationToken ct)
+    {
         TargetDisplayLayoutExecutionVerificationResult verification;
         try
         {
-            var verifyRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
+            var rawRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
             var issues = new List<string>();
             var notRestored = 0;
-
             foreach (var si in pendingSteps)
             {
                 var step = execPlan.Steps[si];
-                var currentIcon = verifyRead.Icons.FirstOrDefault(
+                var currentIcon = rawRead.Icons.FirstOrDefault(
                     i => string.Equals(i.StableId, step.StableId, StringComparison.Ordinal));
                 if (currentIcon is null)
-                { issues.Add($"StableId \"{step.StableId}\" 在验证读取中缺失。"); notRestored++; }
+                { issues.Add($"\"{step.StableId}\" 缺失。"); notRestored++; }
                 else if (currentIcon.PixelPosition != step.FromPosition)
-                { issues.Add($"\"{step.StableId}\" 未恢复到原位置。"); notRestored++; }
+                { issues.Add($"\"{step.StableId}\" 位置未恢复。"); notRestored++; }
             }
-
             verification = notRestored > 0
-                ? TargetDisplayLayoutExecutionVerificationResult.RollbackFailed(
-                    notRestored, issues, DateTimeOffset.UtcNow)
+                ? TargetDisplayLayoutExecutionVerificationResult.RollbackFailed(notRestored, issues, DateTimeOffset.UtcNow)
                 : TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(DateTimeOffset.UtcNow);
         }
         catch (Exception ex)
         {
-            return UncertainResult(record, allAttempts, "RecoveryVerificationException",
-                $"恢复后验证异常：{ex.Message}");
+            return PositionUncertain(record, allRbAttempts, "VerificationException",
+                $"验证异常：{ex.Message}");
         }
 
-        // ── 4. 持久化终态 ──
-        var finalLifecycle = verification.Status == ExecutionVerificationStatus.Passed
-            ? RecoverySessionLifecycle.FailedAndRolledBack
+        return await PersistRecoveryTerminalAsync(record, allRbAttempts, rbIndexes,
+            verification.Issues, verification.FailedItemCount, ct);
+    }
+
+    private async Task<TargetDisplayLayoutExecutionRunResult> PersistRecoveryTerminalAsync(
+        RecoverySessionRecord record,
+        List<TargetDisplayLayoutExecutionAttemptResult> allRbAttempts,
+        List<int> rbIndexes,
+        IReadOnlyList<string> issues, int failedItemCount,
+        CancellationToken ct)
+    {
+        var isPassed = failedItemCount == 0 && issues.Count == 0;
+        var lifecycle = isPassed ? RecoverySessionLifecycle.FailedAndRolledBack
             : RecoverySessionLifecycle.FailedRollbackIncomplete;
-        var needsManual = verification.Status != ExecutionVerificationStatus.Passed;
-        var isUncertain = verification.Status == ExecutionVerificationStatus.Uncertain;
+        var manual = !isPassed;
+        var verification = isPassed
+            ? TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(DateTimeOffset.UtcNow)
+            : TargetDisplayLayoutExecutionVerificationResult.RollbackFailed(failedItemCount, issues, DateTimeOffset.UtcNow);
+
+        var mergedRb = record.RollbackAttempts
+            .Concat(allRbAttempts.Where(a => !record.RollbackAttempts.Any(
+                o => o.AttemptIndex == a.AttemptIndex)))
+            .OrderBy(a => a.AttemptIndex).ToList().AsReadOnly();
+        var mergedRbIdx = record.CompletedRollbackSourceStepIndexes
+            .Union(rbIndexes).OrderBy(x => x).ToList().AsReadOnly();
 
         try
         {
@@ -247,57 +327,53 @@ public sealed class PersistedRecoveryCoordinator
             {
                 SessionId = record.SessionId, SafetySnapshotId = record.SafetySnapshotId,
                 TargetDeviceName = record.TargetDeviceName, StartedAtUtc = record.StartedAtUtc,
-                SourceRestorePlan = record.SourceRestorePlan, ExecutionPlan = execPlan,
-                Lifecycle = finalLifecycle,
-                RequiresManualRecovery = needsManual, IsPositionUncertain = isUncertain,
-                ForwardAttempts = record.ForwardAttempts,
-                RollbackAttempts = allAttempts
-                    .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList().AsReadOnly(),
+                SourceRestorePlan = record.SourceRestorePlan, ExecutionPlan = record.ExecutionPlan,
+                Lifecycle = lifecycle, RequiresManualRecovery = manual,
+                IsPositionUncertain = false, LastFailedStepIndex = null,
+                ForwardAttempts = record.ForwardAttempts, RollbackAttempts = mergedRb,
                 CompletedForwardStepIndexes = record.CompletedForwardStepIndexes,
-                CompletedRollbackSourceStepIndexes = rbSourceIndexes.AsReadOnly(),
+                CompletedRollbackSourceStepIndexes = mergedRbIdx,
                 VerificationResult = verification,
                 Revision = record.Revision, UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             final.Validate();
-            await _store.UpdateAsync(final);
+            var updated = await _store.UpdateAsync(final);
+            var fresh = await _store.GetAsync(record.SessionId);
+            if (fresh is null || !TargetDisplayLayoutExecutionCoordinator.RecordsAreEquivalent(updated, fresh))
+            {
+                return PositionUncertain(record, allRbAttempts,
+                    "TerminalPersistFailed", "恢复终态持久化或 readback 不一致。");
+            }
         }
-        catch { /* best-effort */ }
-
-        var fwdAtt = record.ForwardAttempts;
-        var rbAtt = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList()
-            as IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult>;
-
-        return verification.Status switch
+        catch
         {
-            ExecutionVerificationStatus.Passed => new TargetDisplayLayoutExecutionRunResult(
+            return PositionUncertain(record, allRbAttempts,
+                "TerminalPersistFailed", "恢复终态持久化异常。");
+        }
+
+        var rbList = mergedRb as IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult>;
+        return isPassed
+            ? new TargetDisplayLayoutExecutionRunResult(
                 TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, false, false,
-                null, record.SafetySnapshotId, fwdAtt, rbAtt,
-                null, false, false, null, null, null, null, verification),
-
-            ExecutionVerificationStatus.Failed => new TargetDisplayLayoutExecutionRunResult(
+                null, record.SafetySnapshotId, record.ForwardAttempts, rbList,
+                null, false, false, null, null, null, null, verification)
+            : new TargetDisplayLayoutExecutionRunResult(
                 TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete, false, false,
-                null, record.SafetySnapshotId, fwdAtt, rbAtt,
+                null, record.SafetySnapshotId, record.ForwardAttempts, rbList,
                 null, true, false, "RecoveryVerificationFailed",
-                "恢复后验证失败。", null, null, verification),
-
-            _ => new TargetDisplayLayoutExecutionRunResult(
-                TargetDisplayLayoutExecutionRunStatus.PositionUncertain, false, false,
-                null, record.SafetySnapshotId, fwdAtt, rbAtt,
-                null, true, true, "RecoveryVerificationUncertain",
-                "恢复后验证不确定。", null, null, verification),
-        };
+                "恢复后验证失败。", null, null, verification);
     }
 
-    private static TargetDisplayLayoutExecutionRunResult UncertainResult(
+    private static TargetDisplayLayoutExecutionRunResult PositionUncertain(
         RecoverySessionRecord record,
-        List<TargetDisplayLayoutExecutionAttemptResult> allAttempts,
+        List<TargetDisplayLayoutExecutionAttemptResult> allRbAttempts,
         string type, string message)
     {
         return new TargetDisplayLayoutExecutionRunResult(
             TargetDisplayLayoutExecutionRunStatus.PositionUncertain, false, false,
             null, record.SafetySnapshotId,
             record.ForwardAttempts,
-            allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
+            allRbAttempts as IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult>,
             null, true, true, type, message, null, null);
     }
 }
