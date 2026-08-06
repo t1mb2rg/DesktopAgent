@@ -169,6 +169,31 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
         }
     }
 
+    /// <summary>Verification reader that emits an event on each read.</summary>
+    private sealed class EventReader : IDesktopIconReader
+    {
+        private readonly List<string> _events;
+        private readonly DesktopIconDescriptor _icon;
+        public EventReader(List<string> events, DesktopIconDescriptor icon) { _events = events; _icon = icon; }
+        public DesktopIconReadResult ReadDesktopIcons()
+        {
+            _events.Add("VerificationRead");
+            return new DesktopIconReadResult(
+                new List<DesktopIconDescriptor> { _icon }, 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
+        }
+    }
+
+    /// <summary>Delegates to first reader, then second reader.</summary>
+    private sealed class CompositeReader : IDesktopIconReader
+    {
+        private readonly IDesktopIconReader _first;
+        private readonly IDesktopIconReader _second;
+        private int _callCount;
+        public CompositeReader(IDesktopIconReader first, IDesktopIconReader second) { _first = first; _second = second; }
+        public DesktopIconReadResult ReadDesktopIcons()
+            => (_callCount++ == 0 ? _first : _second).ReadDesktopIcons();
+    }
+
     // ═══════════════════════════════════════════════
     // 1. Recovery_UsesLatestRevisionForTerminalAfterCheckpoint
     // ═══════════════════════════════════════════════
@@ -184,33 +209,38 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
 
         var sharedEvents = new List<string>();
         var estore = new EventStore(_dbPath, sharedEvents);
-        // Re-initialize through estore (same db)
-        // Actually, EventStore wraps Sqlite, so seed is already in the db.
-        // But we need to use estore as the store for the coordinator.
-        // The seed was saved to the same _dbPath, so GetAsync through estore works.
-
         var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        var iconReader = new ScriptedDesktopIconReader();
+        // Verification reader that emits to shared event stream
+        var verifyReader = new EventReader(sharedEvents,
+            new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(160, 80), TD, false, true));
         // Environment check: icon at ToPosition (240,80) — precondition passes
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
-        // Independent verification: icon at FromPosition (160,80) — restored
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(160, 80), TD, false, true)]);
+        var envReader = new ScriptedDesktopIconReader();
+        envReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
 
+        // Compose: first read from envReader, second from verifyReader
+        var compositeReader = new CompositeReader(envReader, verifyReader);
         var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
+        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, compositeReader, writer, new StaThreadExecutor());
 
         var result = await coordinator.RecoverAsync(seed);
 
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
-        // Checkpoint should use Revision=1 (seed), terminal should use Revision=2 (after checkpoint)
-        Assert.Contains("Update:Executing:Revision1", sharedEvents);
-        Assert.Contains("Update:FailedAndRolledBack:Revision2", sharedEvents);
+        // Precise event sequence: Get(initial), Writer:0, Update:Executing(Rev1), Get,
+        // VerificationRead, Update:FailedAndRolledBack(Rev2), Get
+        var expected = new[]
+        {
+            "Get", "Writer:0",
+            "Update:Executing:Revision1", "Get",
+            "VerificationRead",
+            "Update:FailedAndRolledBack:Revision2", "Get"
+        };
+        Assert.Equal(expected, sharedEvents);
         // Fresh store verification
         var freshStore = CreateStore();
         var record = await freshStore.GetAsync(seed.SessionId);
         Assert.NotNull(record);
         Assert.Equal(RecoverySessionLifecycle.FailedAndRolledBack, record.Lifecycle);
-        Assert.Equal(3, record.Revision); // 1→save, 2→checkpoint, 3→terminal
+        Assert.Equal(3, record.Revision);
     }
 
     // ═══════════════════════════════════════════════
@@ -417,7 +447,7 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
         Assert.NotNull(record);
         Assert.Equal(RecoverySessionLifecycle.Executing, record.Lifecycle);
         // RunResult carries TerminalPersistFailed
-        Assert.Contains("TerminalPersistFailed", result.ForwardFailureType);
+        Assert.Equal("TerminalPersistFailed", result.ForwardFailureType);
     }
 
     private sealed class TamperGetStore : IRecoverySessionStore
@@ -529,5 +559,120 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
         Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
         // Attempt count unchanged
         Assert.Equal(beforeRbCount, result.RollbackAttempts.Count);
+    }
+
+    // ═══════════════════════════════════════════════
+    // 9. Recovery_WriterException_UsesFreshCheckpointAndStops
+    // ═══════════════════════════════════════════════
+    [Fact]
+    public async Task Recovery_WriterException_UsesFreshCheckpointAndStops()
+    {
+        var store = CreateStore();
+        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
+        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
+            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+            new[] { 0 }, Array.Empty<int>(),
+            "TestInterrupted", "测试中断。");
+
+        var sharedEvents = new List<string>();
+        var estore = new EventStore(_dbPath, sharedEvents);
+        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80)) { FailMove = true };
+        var iconReader = new ScriptedDesktopIconReader();
+        // Environment check: icon at ToPosition
+        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
+
+        var topoReader = new FakeDisplayTopologyReader(TD, WA);
+        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        // Writer called exactly once, then exception
+        Assert.Contains("Writer:0", sharedEvents);
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:1"));
+        // Single Update:PositionUncertain, then Get — no second terminal Update
+        Assert.Contains("Update:PositionUncertain:Revision1", sharedEvents);
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Update:FailedAndRolledBack"));
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Update:FailedRollbackIncomplete"));
+        // Fresh store: PositionUncertain + Revision increased once
+        var freshStore = CreateStore();
+        var record = await freshStore.GetAsync(seed.SessionId);
+        Assert.NotNull(record);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
+        Assert.True(record.RequiresManualRecovery);
+        Assert.True(record.IsPositionUncertain);
+        Assert.Equal(2, record.Revision); // 1→save, 2→WriterException persist
+        // Exactly one new RollbackAttempt: WriterException
+        Assert.Equal(seed.RollbackAttempts.Count + 1, record.RollbackAttempts.Count);
+        var rb = record.RollbackAttempts.Last();
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.WriterException, rb.Outcome);
+    }
+
+    // ═══════════════════════════════════════════════
+    // 10. Recovery_WriterStableIdMismatch_UsesFreshCheckpointAndStops
+    // ═══════════════════════════════════════════════
+    [Fact]
+    public async Task Recovery_WriterStableIdMismatch_UsesFreshCheckpointAndStops()
+    {
+        var store = CreateStore();
+        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
+        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
+            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+            new[] { 0 }, Array.Empty<int>(),
+            "TestInterrupted", "测试中断。");
+
+        var sharedEvents = new List<string>();
+        var estore = new EventStore(_dbPath, sharedEvents);
+        // Writer returns wrong StableId
+        var writer = new WrongStableIdWriter(sharedEvents, "a", new(240, 80), new(160, 80), "WRONG");
+        var iconReader = new ScriptedDesktopIconReader();
+        // Environment check: icon at ToPosition
+        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
+
+        var topoReader = new FakeDisplayTopologyReader(TD, WA);
+        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("RollbackStableIdMismatch", result.ForwardFailureType);
+        // Writer called exactly once
+        Assert.Contains(sharedEvents, e => e.StartsWith("Writer:"));
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:1"));
+        // Single Update:PositionUncertain — no terminal Update
+        Assert.Contains("Update:PositionUncertain:Revision1", sharedEvents);
+        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Update:FailedAndRolledBack"));
+        // Fresh store
+        var freshStore = CreateStore();
+        var record = await freshStore.GetAsync(seed.SessionId);
+        Assert.NotNull(record);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
+        Assert.Equal("RollbackStableIdMismatch", record.RecoveryFailureType);
+        Assert.Equal(2, record.Revision);
+        Assert.Equal(seed.RollbackAttempts.Count + 1, record.RollbackAttempts.Count);
+        var rb = record.RollbackAttempts.Last();
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch, rb.Outcome);
+    }
+
+    private sealed class WrongStableIdWriter : IDesktopIconPositionWriter
+    {
+        private readonly List<string> _events;
+        private readonly string _sid;
+        private readonly PixelPoint _from, _to;
+        private readonly string _wrongSid;
+        private int _callCount;
+        public WrongStableIdWriter(List<string> events, string sid, PixelPoint from, PixelPoint to, string wrongSid)
+        { _events = events; _sid = sid; _from = from; _to = to; _wrongSid = wrongSid; }
+        public DesktopIconPositioningCapabilities GetCapabilities()
+            => new(false, new PixelPoint(80, 80), ConnectionMethod.FindWindowSW, null);
+        public DesktopIconMoveResult MoveDesktopIcon(string sid, PixelPoint target)
+        {
+            _events.Add($"Writer:{_callCount++}");
+            return new DesktopIconMoveResult(_wrongSid, _from, target, target, ConnectionMethod.FindWindowSW, null);
+        }
     }
 }

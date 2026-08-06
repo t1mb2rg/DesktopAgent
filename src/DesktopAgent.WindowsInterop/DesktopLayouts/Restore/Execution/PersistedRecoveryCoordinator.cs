@@ -158,15 +158,24 @@ public sealed class PersistedRecoveryCoordinator
                 allRbAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
                     attemptIndex, si, step, rollbackTarget, step.ToPosition, ex));
                 attemptIndex++;
-                var (ok, _) = await TryPersistCheckpointAsync(currentCp, allRbAttempts, rbIndexes,
+                var (ok, newCp) = await TryPersistCheckpointAsync(currentCp, allRbAttempts, rbIndexes,
                     RecoverySessionLifecycle.PositionUncertain, true, true, si,
                     currentCp.ForwardFailureType ?? "InterruptedExecution",
                     currentCp.ForwardFailureMessage ?? "应用重启时发现未终结的持久化执行会话。",
                     ex.GetType().Name, ex.Message, currentCp, cancellationToken);
-                if (!ok) return PositionUncertain(currentCp, allRbAttempts, "CheckpointPersistFailed",
-                    "恢复检查点持久化失败。");
-                return await PersistRecoveryTerminalAsync(currentCp, allRbAttempts, rbIndexes,
-                    new[] { $"Writer 异常：{ex.Message}" }, 1, cancellationToken);
+                if (!ok || newCp is null)
+                {
+                    return PositionUncertain(currentCp, allRbAttempts,
+                        "TerminalPersistFailed",
+                        "RollbackWriterException 后 PositionUncertain 检查点持久化失败。");
+                }
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.PositionUncertain, false, false,
+                    null, newCp.SafetySnapshotId,
+                    newCp.ForwardAttempts, newCp.RollbackAttempts,
+                    null, true, true,
+                    ex.GetType().Name, $"Writer 异常：{ex.Message}",
+                    null, null, null);
             }
 
             // 验证 Writer 结果
@@ -175,16 +184,26 @@ public sealed class PersistedRecoveryCoordinator
                 allRbAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
                     attemptIndex, si, step, rollbackTarget, step.ToPosition, moveResult));
                 attemptIndex++;
-                var (ok, _) = await TryPersistCheckpointAsync(currentCp, allRbAttempts, rbIndexes,
+                var (ok, newCp) = await TryPersistCheckpointAsync(currentCp, allRbAttempts, rbIndexes,
                     RecoverySessionLifecycle.PositionUncertain, true, true, si,
                     currentCp.ForwardFailureType ?? "InterruptedExecution",
                     currentCp.ForwardFailureMessage ?? "应用重启时发现未终结的持久化执行会话。",
                     "RollbackStableIdMismatch",
                     $"StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。", currentCp, cancellationToken);
-                if (!ok) return PositionUncertain(currentCp, allRbAttempts, "CheckpointPersistFailed",
-                    "恢复检查点持久化失败。");
-                return await PersistRecoveryTerminalAsync(currentCp, allRbAttempts, rbIndexes,
-                    new[] { $"Rollback StableId mismatch: {moveResult.StableId}" }, 1, cancellationToken);
+                if (!ok || newCp is null)
+                {
+                    return PositionUncertain(currentCp, allRbAttempts,
+                        "TerminalPersistFailed",
+                        "RollbackStableIdMismatch 后 PositionUncertain 检查点持久化失败。");
+                }
+                return new TargetDisplayLayoutExecutionRunResult(
+                    TargetDisplayLayoutExecutionRunStatus.PositionUncertain, false, false,
+                    null, newCp.SafetySnapshotId,
+                    newCp.ForwardAttempts, newCp.RollbackAttempts,
+                    null, true, true,
+                    "RollbackStableIdMismatch",
+                    $"StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。",
+                    null, null, null);
             }
 
             if (moveResult.IsExact)
