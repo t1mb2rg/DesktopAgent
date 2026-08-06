@@ -328,7 +328,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     return await RollbackKnownS(
                         session, i - 1, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
                         "OperationCanceledException", "步骤间取消。",
-                        null, null, cancellationToken);
+                        null, null, cancellationToken, currentCheckpoint);
                 }
                 // 无副作用 → 返回 FailedBeforeWrite，不抛出 OCE 逃逸到 UI
                 return FailedBeforeWriteS("OperationCanceledBeforeWrite",
@@ -454,12 +454,46 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     null, null);
             }
 
-            // 非精确 → 尝试回滚
+            // 非精确 → 不进入 Rollback Writer（持久化模式）或保持旧行为（非持久化模式）
             if (!moveResult.IsExact)
             {
                 allAttempts[allAttempts.Count - 1] = TargetDisplayLayoutExecutionAttemptResult.FromInexactForward(
                     attemptIndex - 1, i, step, moveResult);
 
+                if (currentCheckpoint is not null)
+                {
+                    var inexactFwdOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
+                    var inexactRbOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
+                    var inexactCompletedFwd = inexactFwdOnly
+                        .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                        .Select(a => a.SourceStepIndex).ToList();
+
+                    var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session,
+                        inexactFwdOnly, inexactRbOnly,
+                        inexactCompletedFwd, Array.Empty<int>(),
+                        RecoverySessionLifecycle.PositionUncertain, true, true, i,
+                        "InexactPosition",
+                        $"步骤 #{i} ActualPosition ({moveResult.ActualPosition.X},{moveResult.ActualPosition.Y}) " +
+                        $"≠ ToPosition ({step.ToPosition.X},{step.ToPosition.Y})。",
+                        null, null, null, currentCheckpoint);
+                    if (!persisted)
+                    {
+                        return PositionUncertainS(session, i, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            "TerminalPersistFailed",
+                            "InexactPosition 发生后，PositionUncertain 终态持久化失败。",
+                            null, null);
+                    }
+
+                    return PositionUncertainS(session, i, allAttempts,
+                        executionPlan, safetySnapshotId,
+                        "InexactPosition",
+                        $"步骤 #{i} ActualPosition ({moveResult.ActualPosition.X},{moveResult.ActualPosition.Y}) " +
+                        $"≠ ToPosition ({step.ToPosition.X},{step.ToPosition.Y})。",
+                        null, null);
+                }
+
+                // 非持久化旧模式：仍然进入 RollbackKnownS 尝试回滚
                 return await RollbackKnownS(
                     session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
                     "InexactPosition",
@@ -503,7 +537,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
                     "OperationCanceledException", "Writer 完成后检测到取消。",
                     null, null,
-                    cancellationToken);
+                    cancellationToken, currentCheckpoint);
             }
         }
 
@@ -667,6 +701,304 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         CancellationToken _,
         RecoverySessionRecord? currentCheckpoint = null)
     {
+        // ── 非持久化旧模式：保持原两步行为（current failed step + prior steps）──
+        if (currentCheckpoint is null)
+            return await RollbackKnownS_Legacy(session, failedStepIndex, allAttempts,
+                executionPlan, safetySnapshotId, attemptIndex,
+                forwardFailureType, forwardFailureMessage, recoveryFailureType, recoveryFailureMessage);
+
+        // ── 统一候选列表：ExactSuccess Forward，按 SourceStepIndex 降序，去重 ──
+        var candidates = allAttempts
+            .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
+                     && a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+            .GroupBy(a => a.SourceStepIndex)
+            .Select(g => g.First())
+            .OrderByDescending(a => a.SourceStepIndex)
+            .ToList();
+
+        var rbSourceIndexes = new List<int>();
+
+        foreach (var candidate in candidates)
+        {
+            var si = candidate.SourceStepIndex;
+            var step = executionPlan.Steps[si];
+            var rollbackTarget = step.FromPosition;
+            var expectedPrevious = step.ToPosition;
+
+            // ── 调用 Rollback Writer ──
+            DesktopIconMoveResult rbResult;
+            try
+            {
+                rbResult = await _staExecutor.RunAsync(
+                    () => _positionWriter.MoveDesktopIcon(step.StableId, rollbackTarget));
+            }
+            catch (Exception ex)
+            {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackException(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, ex));
+                if (currentCheckpoint is not null)
+                {
+                    var (ok, _) = await PersistRollbackCheckpointAsync(
+                        session, allAttempts, rbSourceIndexes,
+                        RecoverySessionLifecycle.PositionUncertain, true, true, failedStepIndex,
+                        forwardFailureType, forwardFailureMessage,
+                        "RollbackWriterException", $"回滚步骤 #{si} Writer 异常：{ex.Message}",
+                        currentCheckpoint);
+                    if (!ok)
+                    {
+                        return PositionUncertainS(session, failedStepIndex, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            forwardFailureType, forwardFailureMessage,
+                            "TerminalPersistFailed",
+                            "RollbackWriterException 后终态持久化失败。");
+                    }
+                }
+                return PositionUncertainS(session, failedStepIndex, allAttempts,
+                    executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackWriterException", $"回滚步骤 #{si} Writer 异常：{ex.Message}");
+            }
+
+            // 验证 StableId
+            if (!string.Equals(rbResult.StableId, step.StableId, StringComparison.Ordinal))
+            {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
+                if (currentCheckpoint is not null)
+                {
+                    var (ok, _) = await PersistRollbackCheckpointAsync(
+                        session, allAttempts, rbSourceIndexes,
+                        RecoverySessionLifecycle.PositionUncertain, true, true, failedStepIndex,
+                        forwardFailureType, forwardFailureMessage,
+                        "RollbackStableIdMismatch",
+                        $"回滚步骤 #{si} StableId \"{rbResult.StableId}\" ≠ 期望 \"{step.StableId}\"。",
+                        currentCheckpoint);
+                    if (!ok)
+                    {
+                        return PositionUncertainS(session, failedStepIndex, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            forwardFailureType, forwardFailureMessage,
+                            "TerminalPersistFailed",
+                            "RollbackStableIdMismatch 后终态持久化失败。");
+                    }
+                }
+                return PositionUncertainS(session, failedStepIndex, allAttempts,
+                    executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackStableIdMismatch",
+                    $"回滚步骤 #{si} StableId \"{rbResult.StableId}\" ≠ 期望 \"{step.StableId}\"。");
+            }
+
+            // 验证 PreviousPosition（使用 step.ToPosition 作为期望值）
+            if (rbResult.PreviousPosition != expectedPrevious)
+            {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackPreviousPositionMismatch(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
+                if (currentCheckpoint is not null)
+                {
+                    var (ok, _) = await PersistRollbackCheckpointAsync(
+                        session, allAttempts, rbSourceIndexes,
+                        RecoverySessionLifecycle.PositionUncertain, true, true, failedStepIndex,
+                        forwardFailureType, forwardFailureMessage,
+                        "RollbackPreviousPositionMismatch",
+                        $"回滚步骤 #{si} PreviousPosition ({rbResult.PreviousPosition.X},{rbResult.PreviousPosition.Y}) ≠ 期望 ({expectedPrevious.X},{expectedPrevious.Y})。",
+                        currentCheckpoint);
+                    if (!ok)
+                    {
+                        return PositionUncertainS(session, failedStepIndex, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            forwardFailureType, forwardFailureMessage,
+                            "TerminalPersistFailed",
+                            "RollbackPreviousPositionMismatch 后终态持久化失败。");
+                    }
+                }
+                return PositionUncertainS(session, failedStepIndex, allAttempts,
+                    executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackPreviousPositionMismatch",
+                    $"回滚步骤 #{si} PreviousPosition ({rbResult.PreviousPosition.X},{rbResult.PreviousPosition.Y}) ≠ 期望 ({expectedPrevious.X},{expectedPrevious.Y})。");
+            }
+
+            // 非精确
+            if (!rbResult.IsExact)
+            {
+                allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
+                    attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
+                if (currentCheckpoint is not null)
+                {
+                    var (ok, _) = await PersistRollbackCheckpointAsync(
+                        session, allAttempts, rbSourceIndexes,
+                        RecoverySessionLifecycle.FailedRollbackIncomplete, true, false, failedStepIndex,
+                        forwardFailureType, forwardFailureMessage,
+                        "RollbackInexact",
+                        $"回滚步骤 #{si} 非精确：Actual=({rbResult.ActualPosition.X},{rbResult.ActualPosition.Y}), Target=({rollbackTarget.X},{rollbackTarget.Y})。",
+                        currentCheckpoint);
+                    if (!ok)
+                    {
+                        return PositionUncertainS(session, failedStepIndex, allAttempts,
+                            executionPlan, safetySnapshotId,
+                            forwardFailureType, forwardFailureMessage,
+                            "TerminalPersistFailed",
+                            "RollbackInexact 后终态持久化失败。");
+                    }
+                }
+                return FailedRollbackIncompleteS(session, failedStepIndex, allAttempts,
+                    executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackInexact",
+                    $"回滚步骤 #{si} 非精确：Actual=({rbResult.ActualPosition.X},{rbResult.ActualPosition.Y}), Target=({rollbackTarget.X},{rollbackTarget.Y})。");
+            }
+
+            // ExactSuccess
+            allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
+                attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
+            attemptIndex++;
+            rbSourceIndexes.Add(si);
+
+            // 持久化 ExactSuccess checkpoint
+            if (currentCheckpoint is not null)
+            {
+                var (ok, newCp) = await PersistRollbackCheckpointAsync(
+                    session, allAttempts, rbSourceIndexes,
+                    RecoverySessionLifecycle.Executing, false, false, failedStepIndex,
+                    forwardFailureType, forwardFailureMessage,
+                    null, null,
+                    currentCheckpoint);
+                if (!ok)
+                {
+                    return PositionUncertainS(session, failedStepIndex, allAttempts,
+                        executionPlan, safetySnapshotId,
+                        forwardFailureType, forwardFailureMessage,
+                        "RollbackCheckpointPersistFailed",
+                        "Rollback checkpoint 持久化失败。");
+                }
+                currentCheckpoint = newCp!;
+            }
+        }
+
+        // ═══ 全部 ExactSuccess Rollback 完成 → 独立验证 + 终态持久化 ═══
+        var allForward = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
+        var allRollback = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
+        var rollbackSourceIndexes = allRollback
+            .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+            .Select(a => a.SourceStepIndex).ToList();
+
+        TargetDisplayLayoutExecutionVerificationResult rbVerification;
+        try
+        {
+            rbVerification = await _verifyRollback(executionPlan, session, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            var issue = $"回滚后验证抛出异常：{ex.GetType().Name}: {ex.Message}";
+            var uncertainVerification = TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                0, new[] { issue }, DateTimeOffset.UtcNow);
+
+            if (currentCheckpoint is not null)
+            {
+                var (ok, _) = await TryUpdateAndGetVerifiedAsync(
+                    session, allForward, allRollback,
+                    allForward.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                        .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList(),
+                    rollbackSourceIndexes.Distinct().OrderBy(x => x).ToList(),
+                    RecoverySessionLifecycle.PositionUncertain, true, true, failedStepIndex,
+                    forwardFailureType, forwardFailureMessage,
+                    "RollbackVerificationException", issue,
+                    uncertainVerification,
+                    currentCheckpoint);
+                if (!ok)
+                {
+                    return PositionUncertainS(session, failedStepIndex, allAttempts,
+                        executionPlan, safetySnapshotId,
+                        forwardFailureType, forwardFailureMessage,
+                        "TerminalPersistFailed",
+                        "RollbackVerificationException 后终态持久化失败。");
+                }
+            }
+
+            var rbeSession = BuildSession(session, allForward, allRollback,
+                failedStepIndex, true, true, "PositionUncertain");
+            return new TargetDisplayLayoutExecutionRunResult(
+                TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+                false, false, rbeSession, safetySnapshotId,
+                allForward, allRollback,
+                failedStepIndex, true, true,
+                forwardFailureType, forwardFailureMessage,
+                "RollbackVerificationException", issue,
+                uncertainVerification);
+        }
+
+        // 终态持久化（按验证状态映射 lifecycle）
+        var (rbLifecycle, rbManual, rbUncertain, rbRecoveryType, rbRecoveryMsg) = rbVerification.Status switch
+        {
+            ExecutionVerificationStatus.Passed =>
+                (RecoverySessionLifecycle.FailedAndRolledBack, false, false, recoveryFailureType, recoveryFailureMessage),
+            ExecutionVerificationStatus.Failed =>
+                (RecoverySessionLifecycle.FailedRollbackIncomplete, true, false, "RollbackVerificationFailed",
+                 $"回滚后独立验证失败：" + string.Join("; ", rbVerification.Issues)),
+            ExecutionVerificationStatus.Uncertain =>
+                (RecoverySessionLifecycle.PositionUncertain, true, true, "RollbackVerificationUncertain",
+                 $"回滚后独立验证不确定：" + string.Join("; ", rbVerification.Issues)),
+            _ => (RecoverySessionLifecycle.PositionUncertain, true, true, "RollbackVerificationUnknown", "未知验证状态。")
+        };
+
+        if (currentCheckpoint is not null)
+        {
+            var (ok, _) = await TryUpdateAndGetVerifiedAsync(
+                session, allForward, allRollback,
+                allForward.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                    .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList(),
+                rollbackSourceIndexes.Distinct().OrderBy(x => x).ToList(),
+                rbLifecycle, rbManual, rbUncertain, failedStepIndex,
+                forwardFailureType, forwardFailureMessage,
+                rbRecoveryType, rbRecoveryMsg,
+                rbVerification,
+                currentCheckpoint);
+            if (!ok)
+            {
+                return PositionUncertainS(session, failedStepIndex, allAttempts,
+                    executionPlan, safetySnapshotId,
+                    forwardFailureType, forwardFailureMessage,
+                    "TerminalPersistFailed",
+                    "Rollback 终态持久化失败。");
+            }
+        }
+
+        var resultSession = BuildSession(session, allForward, allRollback,
+            failedStepIndex, rbManual, rbUncertain,
+            rbLifecycle == RecoverySessionLifecycle.FailedAndRolledBack ? "FailedAndRolledBack"
+            : rbLifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete ? "FailedRollbackIncomplete"
+            : "PositionUncertain");
+        return new TargetDisplayLayoutExecutionRunResult(
+            rbLifecycle == RecoverySessionLifecycle.FailedAndRolledBack
+                ? TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack
+                : rbLifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete
+                    ? TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete
+                    : TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
+            false, false, resultSession, safetySnapshotId,
+            allForward, allRollback,
+            failedStepIndex, rbManual, rbUncertain,
+            forwardFailureType, forwardFailureMessage,
+            rbRecoveryType, rbRecoveryMsg,
+            rbVerification);
+    }
+
+    // ═══════════════════════════════════════════════
+    //  RollbackKnownS 旧版（非持久化模式）
+    // ═══════════════════════════════════════════════
+
+    private async Task<TargetDisplayLayoutExecutionRunResult> RollbackKnownS_Legacy(
+        TargetDisplayLayoutRecoverySession session,
+        int failedStepIndex,
+        List<TargetDisplayLayoutExecutionAttemptResult> allAttempts,
+        TargetDisplayLayoutExecutionPlan executionPlan,
+        Guid safetySnapshotId,
+        int attemptIndex,
+        string forwardFailureType,
+        string forwardFailureMessage,
+        string? recoveryFailureType,
+        string? recoveryFailureMessage)
+    {
         // Step 1: 回滚当前失败步骤
         var currentAttempt = allAttempts.Last(a =>
             a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
@@ -692,7 +1024,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     ex.GetType().Name, $"回滚步骤 #{failedStepIndex} Writer 异常：{ex.Message}");
             }
 
-            // 1. 先验证 StableId
             if (!string.Equals(rbResult.StableId, currentStep.StableId, StringComparison.Ordinal))
             {
                 allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
@@ -704,7 +1035,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     $"回滚步骤 #{failedStepIndex} StableId \"{rbResult.StableId}\" ≠ 期望 \"{currentStep.StableId}\"。");
             }
 
-            // 2. 再验证 PreviousPosition
             if (rbResult.PreviousPosition != currentExpectedPrevious)
             {
                 allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackPreviousPositionMismatch(
@@ -717,7 +1047,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     $"≠ 期望 ({currentExpectedPrevious.X},{currentExpectedPrevious.Y})。");
             }
 
-            // 3. 身份可信后判断位置精确性
             if (!rbResult.IsExact)
             {
                 allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
@@ -805,27 +1134,23 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             attemptIndex++;
         }
 
-        // 全部精确回滚 → 独立回滚验证（使用 CancellationToken.None，不可取消）
+        // 全部精确回滚 → 独立回滚验证
         var allForward = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var allRollback = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
         var rollbackSourceIndexes = allRollback
             .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
             .Select(a => a.SourceStepIndex).ToList();
 
-        // 回滚后验证使用不可取消 token；验证异常不得逃出 Coordinator
         TargetDisplayLayoutExecutionVerificationResult rbVerification;
         try
         {
-            rbVerification = await _verifyRollback(
-                executionPlan, session, CancellationToken.None);
+            rbVerification = await _verifyRollback(executionPlan, session, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            var issue =
-                $"回滚后验证抛出异常：{ex.GetType().Name}: {ex.Message}";
-            var uncertainVerification =
-                TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
-                    0, new[] { issue }, DateTimeOffset.UtcNow);
+            var issue = $"回滚后验证抛出异常：{ex.GetType().Name}: {ex.Message}";
+            var uncertainVerification = TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
+                0, new[] { issue }, DateTimeOffset.UtcNow);
             var rbeSession = BuildSession(session, allForward, allRollback,
                 failedStepIndex, true, true, "PositionUncertain");
             return new TargetDisplayLayoutExecutionRunResult(
@@ -834,8 +1159,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 allForward, allRollback,
                 failedStepIndex, true, true,
                 forwardFailureType, forwardFailureMessage,
-                "RollbackVerificationException",
-                issue,
+                "RollbackVerificationException", issue,
                 uncertainVerification);
         }
 
