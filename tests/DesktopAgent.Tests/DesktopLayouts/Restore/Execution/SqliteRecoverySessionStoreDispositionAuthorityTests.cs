@@ -9,7 +9,7 @@ public sealed class SqliteRecoverySessionStoreDispositionAuthorityTests : IDispo
     private const string TargetDisplay = @"\\.\DISPLAY1";
     private readonly string _tempDir = Path.Combine(
         Path.GetTempPath(),
-        "DesktopAgent-R8-" + Guid.NewGuid().ToString("N"));
+        "DesktopAgent-R9-" + Guid.NewGuid().ToString("N"));
 
     [Fact]
     public async Task ListUnresolved_ClassifiesEveryLifecycleThroughDispositionSemantics()
@@ -95,7 +95,6 @@ public sealed class SqliteRecoverySessionStoreDispositionAuthorityTests : IDispo
         RecoverySessionLifecycle lifecycle,
         DateTimeOffset startedAtUtc)
     {
-        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
         var (restorePlan, executionPlan) = MakeNoOpPlans();
 
         return new RecoverySessionRecord
@@ -105,8 +104,6 @@ public sealed class SqliteRecoverySessionStoreDispositionAuthorityTests : IDispo
             TargetDeviceName = TargetDisplay,
             StartedAtUtc = startedAtUtc,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = disposition.RequiresManualRecovery,
-            IsPositionUncertain = disposition.IsPositionUncertain,
             SourceRestorePlan = restorePlan,
             ExecutionPlan = executionPlan,
             ForwardAttempts = Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
@@ -115,7 +112,7 @@ public sealed class SqliteRecoverySessionStoreDispositionAuthorityTests : IDispo
             CompletedRollbackSourceStepIndexes = Array.Empty<int>(),
             ForwardFailureType = lifecycle is RecoverySessionLifecycle.FailedRollbackIncomplete
                 or RecoverySessionLifecycle.PositionUncertain
-                ? "R8AuthorityTest"
+                ? "R9AuthorityTest"
                 : null,
             Revision = 1,
             UpdatedAtUtc = startedAtUtc,
