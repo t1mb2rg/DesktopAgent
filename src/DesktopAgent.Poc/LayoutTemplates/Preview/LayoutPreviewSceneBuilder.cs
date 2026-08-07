@@ -124,6 +124,7 @@ public static class LayoutPreviewSceneBuilder
         DesktopLayoutPreviewItemState.AlreadyAtTarget => "已就位",
         DesktopLayoutPreviewItemState.MoveRequired => "需要移动",
         DesktopLayoutPreviewItemState.Unassigned => "未分配",
+        DesktopLayoutPreviewItemState.Fixed => "固定",
         _ => state.ToString()
     };
 
@@ -173,7 +174,7 @@ public static class LayoutPreviewSceneBuilder
             var oldState = item.PlacementState switch
             {
                 DesktopLayoutRuleAwarePreviewPlacementState.Fixed =>
-                    DesktopLayoutPreviewItemState.AlreadyAtTarget,
+                    DesktopLayoutPreviewItemState.Fixed,
                 DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget =>
                     DesktopLayoutPreviewItemState.AlreadyAtTarget,
                 DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired =>
