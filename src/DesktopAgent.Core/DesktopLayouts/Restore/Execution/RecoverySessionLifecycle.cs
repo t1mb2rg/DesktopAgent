@@ -1,7 +1,11 @@
 namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 
 /// <summary>
-/// 恢复会话生命周期状态。所有持久化和恢复路径必须使用此枚举，
+/// 恢复会话的持久化历史摘要。它记录会话走到过什么阶段、上一次如何收敛，
+/// 但不声明当前真实桌面是什么状态。
+///
+/// 是否需要自动对账、是否需要人工介入以及上一次安全分类，统一通过
+/// RecoverySessionDisposition.FromLifecycle 投影；所有持久化路径仍使用本枚举，
 /// 不得使用自由字符串。
 /// </summary>
 public enum RecoverySessionLifecycle
@@ -9,18 +13,18 @@ public enum RecoverySessionLifecycle
     /// <summary>会话已创建，Writer 尚未启动。</summary>
     Ready = 0,
 
-    /// <summary>Writer 操作进行中（可能在崩溃时残留）。</summary>
+    /// <summary>Writer 操作曾处于进行中；跨重启后必须重新观察事实并对账。</summary>
     Executing = 1,
 
-    /// <summary>全部 Forward 步骤成功，独立验证通过。</summary>
+    /// <summary>会话最终被验证为 Forward 目标已成立。</summary>
     Completed = 2,
 
-    /// <summary>Forward 失败或取消，全部已知步骤成功回滚，独立验证通过。</summary>
+    /// <summary>会话最终被验证为已恢复到 Original。</summary>
     FailedAndRolledBack = 3,
 
-    /// <summary>Forward 失败或取消，回滚不完整或独立验证失败。</summary>
+    /// <summary>上一次恢复结束在“已知但不完整”的人工处理状态。</summary>
     FailedRollbackIncomplete = 4,
 
-    /// <summary>Forward 或回滚后，位置不可信或独立验证无法确定。</summary>
+    /// <summary>上一次恢复无法证明位置事实，因此以位置不确定安全分类停止。</summary>
     PositionUncertain = 5,
 }
