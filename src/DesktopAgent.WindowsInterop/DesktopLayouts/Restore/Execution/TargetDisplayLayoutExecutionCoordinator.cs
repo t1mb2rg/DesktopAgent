@@ -347,14 +347,14 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 allAttempts.Add(excAttempt);
                 var fwdOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
                 var rbOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
-                var completedFwd = fwdOnly
+                var exceptionCompletedFwd = fwdOnly
                     .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                     .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList();
 
                 if (currentCheckpoint is not null)
                 {
                     var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session, fwdOnly, rbOnly,
-                        completedFwd, Array.Empty<int>(),
+                        exceptionCompletedFwd, Array.Empty<int>(),
                         RecoverySessionLifecycle.PositionUncertain, true, true, i,
                         ex.GetType().Name, $"步骤 #{i} Writer 异常：{ex.Message}",
                         null, null, null, currentCheckpoint);
