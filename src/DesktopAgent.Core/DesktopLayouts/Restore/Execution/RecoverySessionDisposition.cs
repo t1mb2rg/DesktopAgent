@@ -53,6 +53,16 @@ public readonly record struct RecoverySessionDisposition(
     public bool IsPositionUncertain =>
         SafetyClass == RecoverySessionSafetyClass.PositionUncertain;
 
+    /// <summary>
+    /// 检查旧 Schema 兼容 bool 是否只是本 Disposition 的正确投影。
+    /// 这是完整性判断，不赋予兼容字段任何独立业务解释权。
+    /// </summary>
+    public bool MatchesCompatibilityFlags(
+        bool requiresManualRecovery,
+        bool isPositionUncertain) =>
+        requiresManualRecovery == RequiresManualRecovery
+        && isPositionUncertain == IsPositionUncertain;
+
     public static RecoverySessionDisposition FromLifecycle(RecoverySessionLifecycle lifecycle) =>
         lifecycle switch
         {
@@ -95,8 +105,9 @@ public static class RecoverySessionDispositionExtensions
     {
         ArgumentNullException.ThrowIfNull(record);
         var disposition = record.GetDisposition();
-        return record.RequiresManualRecovery == disposition.RequiresManualRecovery
-            && record.IsPositionUncertain == disposition.IsPositionUncertain;
+        return disposition.MatchesCompatibilityFlags(
+            record.RequiresManualRecovery,
+            record.IsPositionUncertain);
     }
 
     /// <summary>
