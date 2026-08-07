@@ -721,16 +721,9 @@ public partial class LayoutPreviewWindow : Window
             ExecuteHintText.Text = "无需移动（NoOp）。";
             return;
         }
-        if (c.UsesTemporaryStaging)
-        {
-            ExecuteButton.IsEnabled = false;
-            ExecuteHintText.Text = "该计划需要临时中转，将在 M2-04C 开放真实执行。";
-            return;
-        }
 
-        // 批量 Gate 检查
-        var gate = TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch(
-            c.RestorePlan, c.ExecutionPlan);
+        var authorizedScopeGate = SelectAuthorizedScopeGate(c.UsesTemporaryStaging);
+        var gate = authorizedScopeGate(c.RestorePlan, c.ExecutionPlan);
         if (!gate.IsAllowed)
         {
             ExecuteButton.IsEnabled = false;
@@ -742,12 +735,16 @@ public partial class LayoutPreviewWindow : Window
         if (ExecutionConsentCheckBox.IsChecked != true)
         {
             ExecuteButton.IsEnabled = false;
-            ExecuteHintText.Text = "请先勾选同意框。";
+            ExecuteHintText.Text = c.UsesTemporaryStaging
+                ? "该计划包含循环/临时中转。请确认红色风险提示后勾选同意框。"
+                : "请先勾选同意框。";
             return;
         }
 
         ExecuteButton.IsEnabled = true;
-        ExecuteHintText.Text = "";
+        ExecuteHintText.Text = c.UsesTemporaryStaging
+            ? "将按 cycle/staging 专用安全闸门执行。"
+            : "";
     }
 
     private void UpdateExecuteHint(bool busy)
@@ -755,6 +752,15 @@ public partial class LayoutPreviewWindow : Window
         if (busy) ExecuteHintText.Text = "操作进行中…";
         else if (_manualRecoveryRequired) ExecuteHintText.Text = "需要人工处理，所有执行已禁用。";
     }
+
+    private static Func<
+        TargetDisplayLayoutRestorePlan,
+        TargetDisplayLayoutExecutionPlan,
+        TargetDisplayLayoutExecutionScopeGate.GateResult> SelectAuthorizedScopeGate(
+        bool usesTemporaryStaging)
+        => usesTemporaryStaging
+            ? TargetDisplayLayoutStagingExecutionScopeGate.Evaluate
+            : TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch;
 
     private void ExecutionConsent_Changed(object sender, RoutedEventArgs e) => UpdateButtons();
 
@@ -764,14 +770,14 @@ public partial class LayoutPreviewWindow : Window
     {
         if (_executionInProgress) return;
 
-        // 1. 再次验证窗口状态和批量 Gate
+        // 1. 再次验证窗口状态和用户确认候选对应的 ScopeGate
         if (_activeCandidate is null || _candidateBuildResult is null
             || !_candidateBuildResult.IsSuccess)
             return;
 
         var candidate = _activeCandidate;
-        var gate = TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch(
-            candidate.RestorePlan, candidate.ExecutionPlan);
+        var authorizedScopeGate = SelectAuthorizedScopeGate(candidate.UsesTemporaryStaging);
+        var gate = authorizedScopeGate(candidate.RestorePlan, candidate.ExecutionPlan);
         if (!gate.IsAllowed)
         {
             StatusText.Text = $"执行闸门拒绝：{string.Join("; ", gate.RejectionReasons)}";
@@ -784,19 +790,27 @@ public partial class LayoutPreviewWindow : Window
             return;
         }
 
-        // 2. 捕获已确认 Candidate
+        // 2. 捕获已确认 Candidate；authorizedScopeGate 随候选类型冻结，后续 fresh replan 不得偷换执行类型。
         var confirmedCandidate = candidate;
         var confirmedTemplateId = _candidateTemplateId;
         var confirmedTargetDeviceName = _candidateTargetDeviceName;
         var confirmedTemplate = _loadedTemplate;
 
         // 3. 二次确认对话框
+        var stagingRisk = confirmedCandidate.UsesTemporaryStaging
+            ? "\n⚠ 本计划包含循环并使用临时中转：\n" +
+              "- 一个或多个图标会先被移动到临时位置；\n" +
+              "- 同一图标可能被 Writer 移动多次；\n" +
+              "- 中断或失败可能留下持久化恢复会话，并锁定后续真实写入直到恢复。\n"
+            : string.Empty;
+
         var confirmMsg = $"确认执行批量桌面整理？\n\n" +
             $"模板：{confirmedCandidate.SourcePreviewPlan.Template.Name} v{confirmedCandidate.SourcePreviewPlan.Template.Version}\n" +
             $"目标显示器：{confirmedCandidate.TargetDeviceName}\n" +
             $"需要移动：{confirmedCandidate.MoveRequiredCount} 个图标\n" +
             $"执行步骤：{confirmedCandidate.ExecutionStepCount} 步\n" +
-            $"使用中转：{(confirmedCandidate.UsesTemporaryStaging ? "是" : "否")}\n\n" +
+            $"使用中转：{(confirmedCandidate.UsesTemporaryStaging ? "是" : "否")}\n" +
+            stagingRisk + "\n" +
             $"安全快照将在 Writer 前创建。\n" +
             $"真实桌面图标将被移动。\n" +
             $"失败时可能自动回滚。\n" +
@@ -933,8 +947,21 @@ public partial class LayoutPreviewWindow : Window
                 return;
             }
 
+            // 10.5. 使用用户确认时冻结的同一类 Gate 再审 fresh Candidate。
+            // staging/no-staging 类型即使在重建过程中发生变化，也不得在用户未重新确认时切换授权类型。
+            var freshGate = authorizedScopeGate(
+                freshCandidate.RestorePlan,
+                freshCandidate.ExecutionPlan);
+            if (!freshGate.IsAllowed)
+            {
+                StatusText.Text = $"执行前重建后的授权闸门拒绝，Writer 未启动：" +
+                    $"{string.Join("; ", freshGate.RejectionReasons)}\n请重新生成预览并重新确认。";
+                ExecutionConsentCheckBox.IsChecked = false;
+                return;
+            }
+
             // 11. 调用 Coordinator
-            StatusText.Text = "语义验证通过，正在执行…";
+            StatusText.Text = "语义验证和授权闸门均通过，正在执行…";
             UpdateButtons();
 
             TargetDisplayLayoutExecutionRunResult result;
@@ -942,7 +969,7 @@ public partial class LayoutPreviewWindow : Window
             {
                 result = await _executionCoordinator.ExecuteWithScopeGateAsync(
                     freshCandidate.RestorePlan,
-                    TargetDisplayLayoutExecutionScopeGate.EvaluateNoStagingBatch,
+                    authorizedScopeGate,
                     CancellationToken.None); // 使用 None — 执行不可中途取消
 
                 // ═══ Writer 后结果展示必须在同一 try 内 ═══
