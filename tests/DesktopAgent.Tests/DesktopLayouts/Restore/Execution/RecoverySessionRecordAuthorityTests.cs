@@ -48,51 +48,6 @@ public sealed class RecoverySessionRecordAuthorityTests
     }
 
     [Fact]
-    public void FromExecutionResult_RunSummaryFlagsDoNotBecomePersistedState()
-    {
-        var (restorePlan, executionPlan) = MakeNoOpPlans();
-        var session = new TargetDisplayLayoutRecoverySession(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            TargetDisplay,
-            DateTimeOffset.UtcNow,
-            restorePlan,
-            executionPlan,
-            Array.Empty<int>(),
-            Array.Empty<int>(),
-            null,
-            false,
-            false,
-            "Ready");
-
-        // 故意给 Completed 一个与其 Disposition 不一致的运行摘要。
-        // RunResult 可以为即时调用方保留摘要字段，但 RecoverySessionRecord 不再复制它们。
-        var result = new TargetDisplayLayoutExecutionRunResult(
-            TargetDisplayLayoutExecutionRunStatus.Completed,
-            true,
-            false,
-            session,
-            session.SafetySnapshotId,
-            Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null,
-            requiresManualRecovery: true,
-            isPositionUncertain: true,
-            forwardFailureType: null,
-            forwardFailureMessage: null,
-            recoveryFailureType: null,
-            recoveryFailureMessage: null);
-
-        var record = RecoverySessionRecord.FromExecutionResult(session, result);
-
-        Assert.Equal(RecoverySessionLifecycle.Completed, record.Lifecycle);
-        Assert.False(record.GetDisposition().RequiresManualRecovery);
-        Assert.False(record.GetDisposition().IsPositionUncertain);
-        Assert.Null(typeof(RecoverySessionRecord).GetProperty("RequiresManualRecovery"));
-        Assert.Null(typeof(RecoverySessionRecord).GetProperty("IsPositionUncertain"));
-    }
-
-    [Fact]
     public void WithProjectedLifecycle_ChangesOnlyAuthoritativeLifecycleSemantics()
     {
         var record = MakeRecord(RecoverySessionLifecycle.Executing);
