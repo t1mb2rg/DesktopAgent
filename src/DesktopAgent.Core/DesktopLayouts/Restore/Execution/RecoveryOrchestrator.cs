@@ -19,7 +19,6 @@ public sealed class RecoveryOrchestrator
     /// 检查是否存在未解决会话。损坏数据也算未解决。
     ///
     /// Store 返回的是持久化候选；真正的行为判定权属于 RecoverySessionDisposition。
-    /// 旧兼容 bool 只能作为一致性校验位，不能独立把一个 resolved 生命周期升级为 unresolved。
     /// </summary>
     public async Task<bool> HasUnresolvedSessionsAsync(CancellationToken ct = default)
     {
@@ -27,8 +26,6 @@ public sealed class RecoveryOrchestrator
         {
             var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
             var projection = RecoverySessionCandidateProjector.Project(candidates);
-
-            // 兼容字段与 Lifecycle 投影不一致 = 持久化数据损坏。
             return projection.HasCorruption || projection.Unresolved.Count > 0;
         }
         catch (InvalidDataException)
@@ -40,7 +37,7 @@ public sealed class RecoveryOrchestrator
 
     /// <summary>
     /// 获取未解决会话列表（用于 UI 展示）。损坏时返回空列表 + 标记。
-    /// 返回列表会再次按照 RecoverySessionDisposition 投影，Store 的历史兼容筛选没有最终解释权。
+    /// 返回列表会再次按照 RecoverySessionDisposition 投影，Store 没有最终解释权。
     /// </summary>
     public async Task<(IReadOnlyList<RecoverySessionRecord> Sessions, bool HasCorruption)>
         GetUnresolvedInfoAsync(CancellationToken ct = default)
@@ -76,7 +73,10 @@ public sealed class RecoveryOrchestrator
         return Task.FromResult(disposition.Handling == RecoverySessionHandling.None);
     }
 
-    /// <summary>持久化恢复完成后的终态。</summary>
+    /// <summary>
+    /// 持久化恢复完成后的终态。
+    /// Lifecycle 是唯一持久化处置语义源；人工处理/位置不确定等摘要由 Disposition 派生。
+    /// </summary>
     public async Task<bool> PersistRecoveryResultAsync(
         RecoverySessionRecord record,
         RecoverySessionLifecycle finalLifecycle,
@@ -84,8 +84,6 @@ public sealed class RecoveryOrchestrator
         IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> rollbackAttempts,
         IReadOnlyList<int> completedFwdIndexes,
         IReadOnlyList<int> completedRbIndexes,
-        bool requiresManualRecovery,
-        bool isPositionUncertain,
         string? forwardFailureType,
         string? forwardFailureMessage,
         string? recoveryFailureType,
@@ -95,15 +93,7 @@ public sealed class RecoveryOrchestrator
     {
         try
         {
-            var disposition = RecoverySessionDisposition.FromLifecycle(finalLifecycle);
-
-            // 旧调用签名暂时保留两个 bool 以兼容现有调用方，但它们不再是独立真相。
-            // 若调用方传入与 Lifecycle 投影矛盾的组合，fail-closed，不让三联状态继续漂移。
-            if (requiresManualRecovery != disposition.RequiresManualRecovery
-                || isPositionUncertain != disposition.IsPositionUncertain)
-            {
-                return false;
-            }
+            _ = RecoverySessionDisposition.FromLifecycle(finalLifecycle);
 
             var updated = new RecoverySessionRecord
             {
@@ -114,8 +104,6 @@ public sealed class RecoveryOrchestrator
                 SourceRestorePlan = record.SourceRestorePlan,
                 ExecutionPlan = record.ExecutionPlan,
                 Lifecycle = finalLifecycle,
-                RequiresManualRecovery = disposition.RequiresManualRecovery,
-                IsPositionUncertain = disposition.IsPositionUncertain,
                 LastFailedStepIndex = record.LastFailedStepIndex,
                 ForwardAttempts = forwardAttempts,
                 RollbackAttempts = rollbackAttempts,
