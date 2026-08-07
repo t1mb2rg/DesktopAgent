@@ -116,7 +116,16 @@ public sealed class TargetDisplayLayoutStagingExecutionScopeGateTests
     public void ExecutionWithoutStaging_IsRejected()
     {
         var (restore, execution) = MakeValidSwap();
-        var changed = CopyExecution(execution, usesTemporaryStaging: false);
+        var directOnlySteps = execution.Steps
+            .Where(step => step.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTarget)
+            .Select((step, index) => step with { StepIndex = index })
+            .ToArray();
+        var changed = CopyExecution(
+            execution,
+            steps: directOnlySteps,
+            stagingAssignments: Array.Empty<TargetDisplayLayoutStagingAssignment>());
+
+        Assert.False(changed.UsesTemporaryStaging);
 
         var result = TargetDisplayLayoutStagingExecutionScopeGate.Evaluate(restore, changed);
 
@@ -395,7 +404,6 @@ public sealed class TargetDisplayLayoutStagingExecutionScopeGateTests
     private static TargetDisplayLayoutExecutionPlan CopyExecution(
         TargetDisplayLayoutExecutionPlan source,
         string? targetDeviceName = null,
-        bool? usesTemporaryStaging = null,
         IReadOnlyList<TargetDisplayLayoutExecutionStep>? steps = null,
         IReadOnlyList<TargetDisplayLayoutStagingAssignment>? stagingAssignments = null)
         => new(
