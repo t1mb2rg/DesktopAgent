@@ -3,6 +3,9 @@ using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
 
 namespace DesktopAgent.Poc.LayoutTemplates.Preview;
 
+/// <summary>
+/// Zone 可视化数据 — 不可变 sealed class，构造时校验。
+/// </summary>
 public sealed class LayoutPreviewZoneVisual
 {
     public Guid ZoneId { get; }
@@ -31,7 +34,8 @@ public sealed class LayoutPreviewZoneVisual
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Zone Name 不能为空。", nameof(name));
         if (pixelRight <= pixelLeft || pixelBottom <= pixelTop)
-            throw new ArgumentException($"Pixel bounds 必须为正面积：({pixelLeft},{pixelTop})-({pixelRight},{pixelBottom})。");
+            throw new ArgumentException(
+                $"Pixel bounds 必须为正面积：({pixelLeft},{pixelTop})-({pixelRight},{pixelBottom})。");
         if (!double.IsFinite(canvasLeft) || !double.IsFinite(canvasTop)
             || !double.IsFinite(canvasWidth) || !double.IsFinite(canvasHeight))
             throw new ArgumentException("Zone 的 Canvas 坐标必须为有限数值。");
@@ -62,6 +66,10 @@ public sealed class LayoutPreviewZoneVisual
     }
 }
 
+/// <summary>
+/// 图标可视化数据 — 不可变 sealed class，构造时校验 TargetX/TargetY 成对、State 一致性、有限数值。
+/// Fixed 与 Unassigned 都没有目标坐标；AlreadyAtTarget / MoveRequired 必须有目标坐标与 Zone。
+/// </summary>
 public sealed class LayoutPreviewIconVisual
 {
     public DesktopIconSnapshotItem Icon { get; }
@@ -87,8 +95,10 @@ public sealed class LayoutPreviewIconVisual
         if (!double.IsFinite(currentCanvasX) || !double.IsFinite(currentCanvasY))
             throw new ArgumentException("Current Canvas 坐标必须为有限数值。");
 
+        // Target X/Y 必须成对出现
         if (targetCanvasX.HasValue != targetCanvasY.HasValue)
-            throw new ArgumentException("TargetCanvasX 和 TargetCanvasY 必须同时为 null 或同时有值。");
+            throw new ArgumentException(
+                "TargetCanvasX 和 TargetCanvasY 必须同时为 null 或同时有值。");
         if (targetCanvasX.HasValue && (!double.IsFinite(targetCanvasX.Value) || !double.IsFinite(targetCanvasY!.Value)))
             throw new ArgumentException("Target Canvas 坐标必须为有限数值。");
 
@@ -127,6 +137,10 @@ public sealed class LayoutPreviewIconVisual
     }
 }
 
+/// <summary>
+/// 布局预览场景 — 不可变 sealed class。
+/// 构造时验证不变量并对所有集合防御性复制。
+/// </summary>
 public sealed class LayoutPreviewScene
 {
     public DesktopLayoutPreviewPlan? Plan { get; }
@@ -152,7 +166,10 @@ public sealed class LayoutPreviewScene
         if (itemRows is null) throw new ArgumentNullException(nameof(itemRows));
         if (outOfScopeRows is null) throw new ArgumentNullException(nameof(outOfScopeRows));
         if (transform.WorkArea != plan.TargetDisplay.WorkArea)
-            throw new ArgumentException("Transform.WorkArea 必须与 Plan.TargetDisplay.WorkArea 完全一致。", nameof(transform));
+            throw new ArgumentException(
+                "Transform.WorkArea 必须与 Plan.TargetDisplay.WorkArea 完全一致。",
+                nameof(transform));
+
         if (zones.Count != plan.ResolvedTemplate.Zones.Count)
             throw new ArgumentException("Zones 数量不一致。", nameof(zones));
         if (icons.Count != plan.Items.Count)
@@ -171,6 +188,7 @@ public sealed class LayoutPreviewScene
         OutOfScopeRows = outOfScopeRows.ToList().AsReadOnly();
     }
 
+    /// <summary>规则感知场景构造器。</summary>
     internal LayoutPreviewScene(
         DesktopLayoutRuleAwarePreviewPlan ruleAwarePlan,
         LayoutPreviewCanvasTransform transform,
