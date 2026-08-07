@@ -23,7 +23,7 @@
             <RowDefinition Height="200" />     <!-- 14 状态栏 -->
         </Grid.RowDefinitions>
 
-        <!-- 0 标题栏 -->
+        <!-- ── 0 标题栏 ── -->
         <DockPanel Grid.Row="0" LastChildFill="False">
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="DesktopAgent PoC — M1-05C-B" />
@@ -38,7 +38,7 @@
                     Click="OpenLayoutPreview_Click" Content="布局预览" />
         </DockPanel>
 
-        <!-- 2 显示器拓扑 -->
+        <!-- ── 2 显示器拓扑 ── -->
         <DockPanel Grid.Row="2">
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                 <DockPanel>
@@ -70,7 +70,7 @@
             </DataGrid>
         </DockPanel>
 
-        <!-- 4 图标标题 -->
+        <!-- ── 4 图标标题 ── -->
         <DockPanel Grid.Row="4">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="桌面图标" />
@@ -84,7 +84,7 @@
             </StackPanel>
         </DockPanel>
 
-        <!-- 6 图标列表 -->
+        <!-- ── 6 图标列表 ── -->
         <DataGrid x:Name="IconsGrid" Grid.Row="6" AutoGenerateColumns="False" CanUserAddRows="False"
                   IsReadOnly="True" SelectionMode="Single" RowHeight="26"
                   SelectionChanged="IconsGrid_SelectionChanged">
@@ -109,7 +109,7 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <!-- 8 TabControl -->
+        <!-- ── 8 TabControl ── -->
         <TabControl Grid.Row="8">
             <TabItem Header="M1-04B 单图标移动">
                 <DockPanel Margin="4">
@@ -155,7 +155,7 @@
             </TabItem>
         </TabControl>
 
-        <!-- 10 快照标题 -->
+        <!-- ── 10 快照标题 ── -->
         <DockPanel Grid.Row="10">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="布局快照" />
@@ -167,7 +167,7 @@
                     Content="刷新列表" IsEnabled="False" />
         </DockPanel>
 
-        <!-- 12 快照列表 -->
+        <!-- ── 12 快照列表 ── -->
         <DataGrid x:Name="SnapshotsGrid" Grid.Row="12" AutoGenerateColumns="False"
                   CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single" RowHeight="26"
                   SelectionChanged="SnapshotsGrid_SelectionChanged">
@@ -181,7 +181,7 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <!-- 14 状态栏 -->
+        <!-- ── 14 状态栏 ── -->
         <Border Grid.Row="14" Padding="8,6" Background="#F3F3F3" CornerRadius="4">
             <Grid>
                 <Grid.RowDefinitions>
@@ -209,7 +209,7 @@
             </Grid>
         </Border>
 
-        <!-- 跨重启恢复状态区域 -->
+        <!-- ═══ 跨重启恢复状态区域 ═══ -->
         <Border Grid.Row="12" Grid.RowSpan="3" Panel.ZIndex="20"
                 Margin="0" Padding="12" CornerRadius="6"
                 Background="#FFF8E1" BorderBrush="#FFB74D" BorderThickness="1"
