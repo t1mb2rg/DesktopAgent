@@ -226,7 +226,7 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
         var fresh = await CreateStore().GetAsync(seed.SessionId);
         Assert.NotNull(fresh);
         Assert.Equal(RecoverySessionLifecycle.FailedRollbackIncomplete, fresh.Lifecycle);
-        Assert.False(fresh.IsPositionUncertain);
+        Assert.False(fresh.GetDisposition().IsPositionUncertain);
         Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.WriterException,
             Assert.Single(fresh.RollbackAttempts).Outcome);
     }
@@ -411,8 +411,6 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
             SourceRestorePlan = RestorePlanFor(executionPlan),
             ExecutionPlan = executionPlan,
             Lifecycle = RecoverySessionLifecycle.Executing,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             ForwardAttempts = forwardAttempts ?? Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             RollbackAttempts = rollbackAttempts ?? Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             CompletedForwardStepIndexes = completedForward ?? Array.Empty<int>(),
