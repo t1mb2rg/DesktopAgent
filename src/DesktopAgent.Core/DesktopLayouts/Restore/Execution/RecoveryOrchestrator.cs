@@ -26,13 +26,10 @@ public sealed class RecoveryOrchestrator
         try
         {
             var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
-            if (!TryProjectAuthoritativeUnresolved(candidates, out var unresolved))
-            {
-                // 兼容字段与 Lifecycle 投影不一致 = 持久化数据损坏。
-                return true;
-            }
+            var projection = RecoverySessionCandidateProjector.Project(candidates);
 
-            return unresolved.Count > 0;
+            // 兼容字段与 Lifecycle 投影不一致 = 持久化数据损坏。
+            return projection.HasCorruption || projection.Unresolved.Count > 0;
         }
         catch (InvalidDataException)
         {
@@ -51,10 +48,10 @@ public sealed class RecoveryOrchestrator
         try
         {
             var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
-            if (!TryProjectAuthoritativeUnresolved(candidates, out var unresolved))
-                return (Array.Empty<RecoverySessionRecord>(), true);
-
-            return (unresolved, false);
+            var projection = RecoverySessionCandidateProjector.Project(candidates);
+            return projection.HasCorruption
+                ? (Array.Empty<RecoverySessionRecord>(), true)
+                : (projection.Unresolved, false);
         }
         catch (InvalidDataException)
         {
@@ -140,34 +137,5 @@ public sealed class RecoveryOrchestrator
         {
             return false;
         }
-    }
-
-    /// <summary>
-    /// 将 Store 返回的候选重新投影为 Core 权威的 unresolved 列表。
-    ///
-    /// 返回 false 表示至少一条候选的旧兼容字段与 Lifecycle 投影冲突；
-    /// 这种冲突属于数据完整性错误，而不是一个新的业务状态。
-    /// </summary>
-    private static bool TryProjectAuthoritativeUnresolved(
-        IReadOnlyList<RecoverySessionRecord> candidates,
-        out IReadOnlyList<RecoverySessionRecord> unresolved)
-    {
-        ArgumentNullException.ThrowIfNull(candidates);
-
-        var authoritative = new List<RecoverySessionRecord>(candidates.Count);
-        foreach (var record in candidates)
-        {
-            if (record is null || !record.HasConsistentCompatibilityFlags())
-            {
-                unresolved = Array.Empty<RecoverySessionRecord>();
-                return false;
-            }
-
-            if (record.GetDisposition().IsUnresolved)
-                authoritative.Add(record);
-        }
-
-        unresolved = authoritative.AsReadOnly();
-        return true;
     }
 }
