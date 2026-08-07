@@ -72,6 +72,125 @@ public sealed class RecoveryOrchestratorDispositionTests
         Assert.Equal(0, store.CallCount);
     }
 
+    [Fact]
+    public async Task HasUnresolvedSessionsAsync_ResolvedStoreCandidate_CannotPromoteItself()
+    {
+        var store = new CandidateStore(
+            new RecoverySessionRecord
+            {
+                Lifecycle = RecoverySessionLifecycle.Completed,
+                RequiresManualRecovery = false,
+                IsPositionUncertain = false,
+            });
+        var orchestrator = new RecoveryOrchestrator(store);
+
+        var hasUnresolved = await orchestrator.HasUnresolvedSessionsAsync();
+
+        Assert.False(hasUnresolved);
+        Assert.Equal(1, store.ListCallCount);
+    }
+
+    [Fact]
+    public async Task GetUnresolvedInfoAsync_ResolvedStoreCandidate_IsFilteredByDisposition()
+    {
+        var store = new CandidateStore(
+            new RecoverySessionRecord
+            {
+                Lifecycle = RecoverySessionLifecycle.FailedAndRolledBack,
+                RequiresManualRecovery = false,
+                IsPositionUncertain = false,
+            });
+        var orchestrator = new RecoveryOrchestrator(store);
+
+        var (sessions, hasCorruption) = await orchestrator.GetUnresolvedInfoAsync();
+
+        Assert.False(hasCorruption);
+        Assert.Empty(sessions);
+    }
+
+    [Theory]
+    [InlineData(RecoverySessionLifecycle.Executing, false, false)]
+    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete, true, false)]
+    [InlineData(RecoverySessionLifecycle.PositionUncertain, true, true)]
+    public async Task GetUnresolvedInfoAsync_AuthoritativeDisposition_KeepsUnresolved(
+        RecoverySessionLifecycle lifecycle,
+        bool requiresManualRecovery,
+        bool isPositionUncertain)
+    {
+        var record = new RecoverySessionRecord
+        {
+            Lifecycle = lifecycle,
+            RequiresManualRecovery = requiresManualRecovery,
+            IsPositionUncertain = isPositionUncertain,
+        };
+        var store = new CandidateStore(record);
+        var orchestrator = new RecoveryOrchestrator(store);
+
+        var (sessions, hasCorruption) = await orchestrator.GetUnresolvedInfoAsync();
+
+        Assert.False(hasCorruption);
+        Assert.Single(sessions);
+        Assert.Same(record, sessions[0]);
+        Assert.True(sessions[0].GetDisposition().IsUnresolved);
+    }
+
+    [Fact]
+    public async Task HasUnresolvedSessionsAsync_CompatibilityFlagDrift_IsCorruptionNotBusinessState()
+    {
+        var store = new CandidateStore(
+            new RecoverySessionRecord
+            {
+                Lifecycle = RecoverySessionLifecycle.Completed,
+                RequiresManualRecovery = true,
+                IsPositionUncertain = false,
+            });
+        var orchestrator = new RecoveryOrchestrator(store);
+
+        var hasUnresolved = await orchestrator.HasUnresolvedSessionsAsync();
+
+        // fail-closed：锁定是因为数据损坏，不是因为旧 bool 获得了业务解释权。
+        Assert.True(hasUnresolved);
+    }
+
+    [Fact]
+    public async Task GetUnresolvedInfoAsync_CompatibilityFlagDrift_ReportsCorruption()
+    {
+        var store = new CandidateStore(
+            new RecoverySessionRecord
+            {
+                Lifecycle = RecoverySessionLifecycle.PositionUncertain,
+                RequiresManualRecovery = true,
+                IsPositionUncertain = false,
+            });
+        var orchestrator = new RecoveryOrchestrator(store);
+
+        var (sessions, hasCorruption) = await orchestrator.GetUnresolvedInfoAsync();
+
+        Assert.True(hasCorruption);
+        Assert.Empty(sessions);
+    }
+
+    [Fact]
+    public async Task HasUnresolvedSessionsAsync_StoreCorruption_FailsClosed()
+    {
+        var orchestrator = new RecoveryOrchestrator(
+            new ThrowingCandidateStore(new InvalidDataException("corrupt")));
+
+        Assert.True(await orchestrator.HasUnresolvedSessionsAsync());
+    }
+
+    [Fact]
+    public async Task GetUnresolvedInfoAsync_StoreCorruption_ReportsCorruption()
+    {
+        var orchestrator = new RecoveryOrchestrator(
+            new ThrowingCandidateStore(new InvalidDataException("corrupt")));
+
+        var (sessions, hasCorruption) = await orchestrator.GetUnresolvedInfoAsync();
+
+        Assert.True(hasCorruption);
+        Assert.Empty(sessions);
+    }
+
     private sealed class NeverCalledStore : IRecoverySessionStore
     {
         public int CallCount { get; private set; }
@@ -112,5 +231,78 @@ public sealed class RecoveryOrchestratorDispositionTests
             return Task.FromException<T>(
                 new InvalidOperationException("TryResolveAsync 不应访问持久化层。"));
         }
+    }
+
+    private sealed class CandidateStore : IRecoverySessionStore
+    {
+        private readonly IReadOnlyList<RecoverySessionRecord> _candidates;
+
+        public CandidateStore(params RecoverySessionRecord[] candidates)
+        {
+            _candidates = Array.AsReadOnly(candidates);
+        }
+
+        public int ListCallCount { get; private set; }
+
+        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
+            int limit = 50,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ListCallCount++;
+            return Task.FromResult<IReadOnlyList<RecoverySessionRecord>>(
+                _candidates.Take(limit).ToArray());
+        }
+
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SaveAsync(
+            RecoverySessionRecord record,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<RecoverySessionRecord> UpdateAsync(
+            RecoverySessionRecord record,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<RecoverySessionRecord?> GetAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingCandidateStore : IRecoverySessionStore
+    {
+        private readonly Exception _exception;
+
+        public ThrowingCandidateStore(Exception exception)
+        {
+            _exception = exception;
+        }
+
+        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
+            int limit = 50,
+            CancellationToken cancellationToken = default)
+            => Task.FromException<IReadOnlyList<RecoverySessionRecord>>(_exception);
+
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SaveAsync(
+            RecoverySessionRecord record,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<RecoverySessionRecord> UpdateAsync(
+            RecoverySessionRecord record,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<RecoverySessionRecord?> GetAsync(
+            Guid sessionId,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }
