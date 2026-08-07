@@ -37,7 +37,7 @@ public partial class MainWindow
                 FormatRecordSummary(record));
         }
 
-        private static string FormatHandling(RecoverySessionHandling handling) => handling switch
+        public static string FormatHandling(RecoverySessionHandling handling) => handling switch
         {
             RecoverySessionHandling.None => "无需处理",
             RecoverySessionHandling.AutomaticReconciliation => "可安全对账",
@@ -45,7 +45,7 @@ public partial class MainWindow
             _ => "未知"
         };
 
-        private static string FormatSafety(RecoverySessionSafetyClass safety) => safety switch
+        public static string FormatSafety(RecoverySessionSafetyClass safety) => safety switch
         {
             RecoverySessionSafetyClass.None => "无持久化不确定性",
             RecoverySessionSafetyClass.KnownIncomplete => "已知未完整恢复",
