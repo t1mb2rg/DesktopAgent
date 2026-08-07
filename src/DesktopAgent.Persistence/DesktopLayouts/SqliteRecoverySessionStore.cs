@@ -24,10 +24,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
     private SqliteConnection CreateConnection() =>
         SqliteDesktopAgentConnectionFactory.Open(_databasePath);
 
-    // ═══════════════════════════════════════════════════
-    //  InitializeAsync
-    // ═══════════════════════════════════════════════════
-
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -40,10 +36,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         return Task.CompletedTask;
     }
 
-    // ═══════════════════════════════════════════════════
-    //  SaveAsync
-    // ═══════════════════════════════════════════════════
-
     private const int SqliteConstraintPrimaryKey = 1555;
 
     public async Task SaveAsync(RecoverySessionRecord record, CancellationToken cancellationToken = default)
@@ -51,8 +43,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(record);
 
-        // 冻结 + Revision 强制为 1
-        // Record 已在 init 赋值时自动冻结
         if (record.Revision != 1)
             throw new ArgumentException(
                 $"SaveAsync 要求 Revision=1，实际为 {record.Revision}。", nameof(record));
@@ -89,34 +79,25 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         await Task.CompletedTask;
     }
 
-    // ═══════════════════════════════════════════════════
-    //  UpdateAsync（CAS：Revision N → N+1，不可变字段冻结）
-    // ═══════════════════════════════════════════════════
-
     public async Task<RecoverySessionRecord> UpdateAsync(
         RecoverySessionRecord record, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(record);
-
-        // Record 已在 init 赋值时自动冻结
         record.Validate();
 
         using var connection = CreateConnection();
         using var tx = connection.BeginTransaction();
 
-        // 读取 DB 当前记录以对比不可变字段
         var dbRecord = GetInternal(connection, record.SessionId);
         if (dbRecord is null)
             throw new InvalidOperationException(
                 $"恢复会话 {record.SessionId:D} 不存在，无法更新。");
 
-        // Revision 必须匹配（CAS）
         if (dbRecord.Revision != record.Revision)
             throw new InvalidOperationException(
                 $"恢复会话 {record.SessionId:D} Revision 冲突：期望 {record.Revision}，实际 {dbRecord.Revision}。");
 
-        // ── 不可变字段比较 ──
         if (record.SessionId != dbRecord.SessionId)
             throw new InvalidOperationException("SessionId 不可变更。");
         if (record.SafetySnapshotId != dbRecord.SafetySnapshotId)
@@ -130,7 +111,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         if (!PlansAreEquivalent(record.ExecutionPlan, dbRecord.ExecutionPlan))
             throw new InvalidOperationException("ExecutionPlan 不可变更。");
 
-        // CAS 更新到 Revision + 1
         var updated = record with
         {
             Revision = record.Revision + 1,
@@ -138,7 +118,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         };
         UpdateSessionRow(connection, updated);
 
-        // 原子替换 Attempts
         DeleteAttempts(connection, record.SessionId);
         InsertAttempts(connection, updated.SessionId, updated.ForwardAttempts);
         InsertAttempts(connection, updated.SessionId, updated.RollbackAttempts);
@@ -147,14 +126,8 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         tx.Commit();
 
         await Task.CompletedTask;
-
-        // 从 DB 重读完整记录，确保返回对象与 fresh Get 一致
         return (await Task.FromResult(GetInternal(connection, record.SessionId)))!;
     }
-
-    // ═══════════════════════════════════════════════════
-    //  Plan 深度等价比较（覆盖全部嵌套集合和顺序）
-    // ═══════════════════════════════════════════════════
 
     private static bool PlansAreEquivalent(
         TargetDisplayLayoutRestorePlan a, TargetDisplayLayoutRestorePlan b)
@@ -231,7 +204,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         for (var i = 0; i < a.Count; i++)
         {
             if (a[i].Code != b[i].Code) return false;
-            if (!string.Equals(a[i].Message, b[i].Message, StringComparison.Ordinal)) return false;
+            if (!string.Equals(a[i].Message, b[i].Message)) return false;
             if (!string.Equals(a[i].RelatedStableId, b[i].RelatedStableId, StringComparison.Ordinal)) return false;
         }
         return true;
@@ -301,15 +274,11 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         for (var i = 0; i < a.Count; i++)
         {
             if (a[i].Code != b[i].Code) return false;
-            if (!string.Equals(a[i].Message, b[i].Message, StringComparison.Ordinal)) return false;
+            if (!string.Equals(a[i].Message, b[i].Message)) return false;
             if (!string.Equals(a[i].RelatedStableId, b[i].RelatedStableId, StringComparison.Ordinal)) return false;
         }
         return true;
     }
-
-    // ═══════════════════════════════════════════════════
-    //  GetAsync
-    // ═══════════════════════════════════════════════════
 
     public Task<RecoverySessionRecord?> GetAsync(
         Guid sessionId, CancellationToken cancellationToken = default)
@@ -329,7 +298,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         sel.CommandText = @"
             SELECT session_id, safety_snapshot_id, target_device_name,
                    started_at_utc, lifecycle,
-                   requires_manual_recovery, is_position_uncertain,
                    last_failed_step_index,
                    source_restore_plan_json, execution_plan_json,
                    plan_payload_format_version,
@@ -354,7 +322,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         var startedAtUtc = DateTimeOffset.Parse(reader.GetString(3),
             CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
 
-        // UTC 强制校验
         if (startedAtUtc.Offset != TimeSpan.Zero)
             throw new InvalidDataException(
                 $"会话 {sessionId:D} started_at_utc 非 UTC (Offset={startedAtUtc.Offset})。");
@@ -364,50 +331,36 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             throw new InvalidDataException(
                 $"会话 {sessionId:D} Lifecycle 值无效：{lifecycleVal}。");
         var lifecycle = (RecoverySessionLifecycle)lifecycleVal;
+        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
 
-        var requiresManualRaw = reader.GetInt32(5);
-        if (requiresManualRaw != 0 && requiresManualRaw != 1)
-            throw new InvalidDataException(
-                $"会话 {sessionId:D} requires_manual_recovery 值无效：{requiresManualRaw}。");
-        var requiresManualRecovery = requiresManualRaw == 1;
-
-        var isPosUncertainRaw = reader.GetInt32(6);
-        if (isPosUncertainRaw != 0 && isPosUncertainRaw != 1)
-            throw new InvalidDataException(
-                $"会话 {sessionId:D} is_position_uncertain 值无效：{isPosUncertainRaw}。");
-        var isPositionUncertain = isPosUncertainRaw == 1;
-
-        var lastFailedStepIndex = reader.IsDBNull(7) ? (int?)null : reader.GetInt32(7);
-
-        var sourceRestorePlanJson = reader.GetString(8);
-        var executionPlanJson = reader.GetString(9);
-        var planPayloadFormatVersion = reader.GetInt32(10);
+        var lastFailedStepIndex = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5);
+        var sourceRestorePlanJson = reader.GetString(6);
+        var executionPlanJson = reader.GetString(7);
+        var planPayloadFormatVersion = reader.GetInt32(8);
 
         if (planPayloadFormatVersion != RecoveryPlanJsonSerializer.CurrentPlanPayloadFormatVersion)
             throw new InvalidDataException(
                 $"会话 {sessionId:D} plan_payload_format_version={planPayloadFormatVersion}，不支持。");
 
-        // Completed indexes JSON
-        var completedFwdJson = reader.GetString(11);
-        var completedRbJson = reader.GetString(12);
+        var completedFwdJson = reader.GetString(9);
+        var completedRbJson = reader.GetString(10);
 
-        var forwardFailureType = reader.IsDBNull(13) ? null : reader.GetString(13);
-        var forwardFailureMessage = reader.IsDBNull(14) ? null : reader.GetString(14);
-        var recoveryFailureType = reader.IsDBNull(15) ? null : reader.GetString(15);
-        var recoveryFailureMessage = reader.IsDBNull(16) ? null : reader.GetString(16);
-        var verificationResultJson = reader.IsDBNull(17) ? null : reader.GetString(17);
-        var revision = reader.GetInt32(18);
-        var updatedAtUtc = DateTimeOffset.Parse(reader.GetString(19),
+        var forwardFailureType = reader.IsDBNull(11) ? null : reader.GetString(11);
+        var forwardFailureMessage = reader.IsDBNull(12) ? null : reader.GetString(12);
+        var recoveryFailureType = reader.IsDBNull(13) ? null : reader.GetString(13);
+        var recoveryFailureMessage = reader.IsDBNull(14) ? null : reader.GetString(14);
+        var verificationResultJson = reader.IsDBNull(15) ? null : reader.GetString(15);
+        var revision = reader.GetInt32(16);
+        var updatedAtUtc = DateTimeOffset.Parse(reader.GetString(17),
             CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
 
         if (updatedAtUtc.Offset != TimeSpan.Zero)
             throw new InvalidDataException(
                 $"会话 {sessionId:D} updated_at_utc 非 UTC (Offset={updatedAtUtc.Offset})。");
 
-        var declaredFwdCount = reader.GetInt32(20);
-        var declaredRbCount = reader.GetInt32(21);
+        var declaredFwdCount = reader.GetInt32(18);
+        var declaredRbCount = reader.GetInt32(19);
 
-        // ── 反序列化 Plans ──
         TargetDisplayLayoutRestorePlan sourceRestorePlan;
         TargetDisplayLayoutExecutionPlan executionPlan;
         try
@@ -421,7 +374,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 $"会话 {sessionId:D} Plan payload 反序列化失败：{ex.Message}", ex);
         }
 
-        // Plan JSON round-trip 完整性验证
         if (sourceRestorePlan.Items is null || sourceRestorePlan.Items.Count == 0)
         {
             if (sourceRestorePlan.SnapshotTargetIconCount > 0)
@@ -434,7 +386,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             throw new InvalidDataException(
                 $"会话 {sessionId:D} ExecutionPlan IsExecutable=true, IsNoOp=false 但 Steps 为空。");
 
-        // ── 反序列化 Completed Indexes ──
         IReadOnlyList<int> completedFwd;
         IReadOnlyList<int> completedRb;
         try
@@ -448,7 +399,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 $"会话 {sessionId:D} Completed indexes JSON 反序列化失败：{ex.Message}", ex);
         }
 
-        // ── 反序列化 VerificationResult ──
         TargetDisplayLayoutExecutionVerificationResult? verificationResult = null;
         try
         {
@@ -461,7 +411,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 $"会话 {sessionId:D} VerificationResult JSON 反序列化失败：{ex.Message}", ex);
         }
 
-        // UTC 校验 VerificationResult
         if (verificationResult is not null)
         {
             try { RecoverySessionRecord.RequireUtc(verificationResult.VerifiedAtUtc, "VerificationResult.VerifiedAtUtc"); }
@@ -469,7 +418,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             { throw new InvalidDataException(ex.Message, ex); }
         }
 
-        // ── 读取 Attempts ──
         var attempts = ReadAttempts(connection, sessionId);
         var forwardAttempts = attempts
             .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward)
@@ -492,8 +440,8 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             TargetDeviceName = targetDeviceName,
             StartedAtUtc = startedAtUtc,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = requiresManualRecovery,
-            IsPositionUncertain = isPositionUncertain,
+            RequiresManualRecovery = disposition.RequiresManualRecovery,
+            IsPositionUncertain = disposition.IsPositionUncertain,
             LastFailedStepIndex = lastFailedStepIndex,
             SourceRestorePlan = sourceRestorePlan,
             ExecutionPlan = executionPlan,
@@ -511,7 +459,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         };
 
         record.Validate();
-
         return record;
     }
 
@@ -527,10 +474,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         return JsonSerializer.Serialize(list.ToArray());
     }
 
-    // ═══════════════════════════════════════════════════
-    //  ListUnresolvedAsync（两阶段全扫描）
-    // ═══════════════════════════════════════════════════
-
     public async Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
         int limit = 50, CancellationToken cancellationToken = default)
     {
@@ -539,7 +482,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
 
         using var connection = CreateConnection();
 
-        // 阶段 1：全表扫描 — 以原始 TEXT 收集并逐条验证
         var rawIds = new List<string>();
         using (var sel = connection.CreateCommand())
         {
@@ -549,7 +491,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 rawIds.Add(reader.GetString(0));
         }
 
-        // 逐条 TryParse + GetInternal，收集全部损坏
         var corruptedIds = new List<string>();
         var cleanRecords = new List<RecoverySessionRecord>();
         foreach (var raw in rawIds)
@@ -576,15 +517,11 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             }
         }
 
-        // 任一损坏 → fail-closed 全部报告
         if (corruptedIds.Count > 0)
             throw new InvalidDataException(
                 $"ListUnresolved 检测到 {corruptedIds.Count} 条损坏记录：" +
                 string.Join("; ", corruptedIds));
 
-        // 阶段 2：全表可信 → Disposition 权威分类、排序、limit。
-        // 旧兼容 bool 已在 GetInternal → record.Validate() 中完成完整性校验，
-        // 此处没有资格再作为 unresolved 的独立业务条件。
         return cleanRecords
             .Where(r => r.GetDisposition().IsUnresolved)
             .OrderByDescending(r => r.StartedAtUtc)
@@ -592,10 +529,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             .Take(limit)
             .ToList().AsReadOnly();
     }
-
-    // ═══════════════════════════════════════════════════
-    //  内部 SQL 操作
-    // ═══════════════════════════════════════════════════
 
     private static void InsertSessionRow(
         SqliteConnection connection, RecoverySessionRecord record)
@@ -605,7 +538,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             INSERT INTO desktop_layout_recovery_sessions
                 (session_id, safety_snapshot_id, target_device_name,
                  started_at_utc, lifecycle,
-                 requires_manual_recovery, is_position_uncertain,
                  last_failed_step_index,
                  source_restore_plan_json, execution_plan_json,
                  plan_payload_format_version,
@@ -619,7 +551,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             VALUES
                 (@sid, @ssid, @tdn,
                  @sat, @lc,
-                 @rmr, @ipu,
                  @lfsi,
                  @srpj, @epj,
                  @ppfv,
@@ -636,8 +567,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         ins.Parameters.AddWithValue("@sat",
             record.StartedAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         ins.Parameters.AddWithValue("@lc", (int)record.Lifecycle);
-        ins.Parameters.AddWithValue("@rmr", record.RequiresManualRecovery ? 1 : 0);
-        ins.Parameters.AddWithValue("@ipu", record.IsPositionUncertain ? 1 : 0);
         ins.Parameters.AddWithValue("@lfsi", (object?)record.LastFailedStepIndex ?? DBNull.Value);
 
         ins.Parameters.AddWithValue("@srpj",
@@ -670,12 +599,9 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
         SqliteConnection connection, RecoverySessionRecord record)
     {
         using var upd = connection.CreateCommand();
-        // 不再更新 Plan JSON 列 — 计划不可变
         upd.CommandText = @"
             UPDATE desktop_layout_recovery_sessions
             SET lifecycle = @lc,
-                requires_manual_recovery = @rmr,
-                is_position_uncertain = @ipu,
                 last_failed_step_index = @lfsi,
                 completed_forward_step_indexes_json = @cfwdj,
                 completed_rollback_source_step_indexes_json = @crbj,
@@ -691,8 +617,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             WHERE session_id = @sid AND revision = @expectedRev;
         ";
         upd.Parameters.AddWithValue("@lc", (int)record.Lifecycle);
-        upd.Parameters.AddWithValue("@rmr", record.RequiresManualRecovery ? 1 : 0);
-        upd.Parameters.AddWithValue("@ipu", record.IsPositionUncertain ? 1 : 0);
         upd.Parameters.AddWithValue("@lfsi", (object?)record.LastFailedStepIndex ?? DBNull.Value);
 
         upd.Parameters.AddWithValue("@cfwdj", SerializeIntList(record.CompletedForwardStepIndexes));
