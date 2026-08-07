@@ -10,6 +10,7 @@ public partial class MainWindow
 {
     private readonly ObservableCollection<RecoverySessionRow> _recoveryRows = [];
     private bool _recoveryPanelRefreshInProgress;
+    private bool _recoveryPanelCanAct;
     private string? _recoveryPanelLastDiagnostic;
 
     private sealed record RecoverySessionRow(
@@ -72,6 +73,7 @@ public partial class MainWindow
     private async void RecoveryRestoreSelected_Click(object sender, RoutedEventArgs e)
     {
         if (_layoutRestoreOperationInProgress
+            || !_recoveryPanelCanAct
             || RecoverySessionsGrid.SelectedItem is not RecoverySessionRow selected)
         {
             return;
@@ -145,6 +147,7 @@ public partial class MainWindow
         finally
         {
             _layoutRestoreOperationInProgress = false;
+            RecoveryRefreshButton.IsEnabled = !_recoveryPanelRefreshInProgress;
             UpdateRecoverySelectionState();
             UpdateInteractiveState();
         }
@@ -186,6 +189,7 @@ public partial class MainWindow
             return;
 
         _recoveryPanelRefreshInProgress = true;
+        _recoveryPanelCanAct = false;
         RecoveryRefreshButton.IsEnabled = false;
         RecoveryRestoreButton.IsEnabled = false;
         RecoverySessionsGrid.ItemsSource ??= _recoveryRows;
@@ -201,6 +205,7 @@ public partial class MainWindow
 
             if (_recoveryRows.Count == 0)
             {
+                _recoveryPanelCanAct = false;
                 _layoutRestoreRequiresAttention = false;
                 RecoveryStatusText.Text = "当前没有未解决的恢复会话。";
                 RecoverySessionDetailsText.Text = string.Empty;
@@ -208,6 +213,7 @@ public partial class MainWindow
                 return;
             }
 
+            _recoveryPanelCanAct = true;
             _layoutRestoreRequiresAttention = true;
             RecoveryBorder.Visibility = Visibility.Visible;
             RecoveryStatusText.Text =
@@ -222,6 +228,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
+            _recoveryPanelCanAct = false;
             _recoveryRows.Clear();
             _layoutRestoreRequiresAttention = true;
             RecoveryBorder.Visibility = Visibility.Visible;
@@ -245,13 +252,15 @@ public partial class MainWindow
         var selected = RecoverySessionsGrid.SelectedItem as RecoverySessionRow;
         RecoverySessionDetailsText.Text = selected?.Summary ?? "请选择一个恢复会话。";
         RecoveryRestoreButton.IsEnabled =
-            !_layoutRestoreOperationInProgress
+            _recoveryPanelCanAct
+            && !_layoutRestoreOperationInProgress
             && !_recoveryPanelRefreshInProgress
             && selected is not null;
     }
 
     private void ShowRecoveryPanelFailure(string heading, Exception ex)
     {
+        _recoveryPanelCanAct = false;
         _layoutRestoreRequiresAttention = true;
         RecoveryBorder.Visibility = Visibility.Visible;
         RecoveryStatusText.Text = $"{heading}，真实写入保持锁定。";
