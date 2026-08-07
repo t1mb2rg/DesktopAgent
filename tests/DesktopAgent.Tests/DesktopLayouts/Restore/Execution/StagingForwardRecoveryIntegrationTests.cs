@@ -73,6 +73,9 @@ public sealed class StagingForwardRecoveryIntegrationTests : IDisposable
         Assert.Empty(result.RollbackAttempts);
         Assert.Equal(3, world.MoveCalls.Count);
         Assert.Equal(
+            executionPlan.Steps.Select(step => (step.StableId, step.ToPosition)),
+            world.MoveCalls);
+        Assert.Equal(
             2,
             world.MoveCalls.Count(call =>
                 string.Equals(call.StableId, stagingAssignment.StableId, StringComparison.Ordinal)));
