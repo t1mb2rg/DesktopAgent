@@ -11,7 +11,7 @@ namespace DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 /// 几何碰撞、工作区、IconSpacing、依赖图和当前桌面陈旧性仍由 Writer 前重新规划的
 /// TargetDisplayLayoutExecutionPlanner 负责；本层只决定该最新计划是否属于用户已授权的 staging 执行范围。
 /// </summary>
-internal static class TargetDisplayLayoutStagingExecutionScopeGate
+public static class TargetDisplayLayoutStagingExecutionScopeGate
 {
     public static TargetDisplayLayoutExecutionScopeGate.GateResult Evaluate(
         TargetDisplayLayoutRestorePlan restorePlan,
@@ -179,7 +179,7 @@ internal static class TargetDisplayLayoutStagingExecutionScopeGate
         var assignmentStableIds = new HashSet<string>(StringComparer.Ordinal);
         var assignmentEnterIndexes = new HashSet<int>();
         var assignmentExitIndexes = new HashSet<int>();
-        var assignmentStagingPositions = new HashSet<Core.Geometry.PixelPoint>();
+        var assignmentStagingPositions = new HashSet<DesktopAgent.Core.Geometry.PixelPoint>();
 
         foreach (var assignment in executionPlan.StagingAssignments)
         {
