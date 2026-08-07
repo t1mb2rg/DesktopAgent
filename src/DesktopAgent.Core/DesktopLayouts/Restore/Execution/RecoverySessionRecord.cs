@@ -16,10 +16,8 @@ public sealed record RecoverySessionRecord
     public string TargetDeviceName { get; init; } = string.Empty;
     public DateTimeOffset StartedAtUtc { get; init; }
 
-    // ── 生命周期与标志 ──
+    // ── 生命周期 ──
     public RecoverySessionLifecycle Lifecycle { get; init; }
-    public bool RequiresManualRecovery { get; init; }
-    public bool IsPositionUncertain { get; init; }
     public int? LastFailedStepIndex { get; init; }
 
     // ── 计划冻结副本（init 时立即深拷贝） ──
@@ -111,6 +109,7 @@ public sealed record RecoverySessionRecord
 
     /// <summary>
     /// 从现有 RecoverySession 和 RunResult 创建完整持久化聚合。
+    /// RunResult 中的人工处理/位置不确定布尔值只是一次运行摘要，不进入持久化记录。
     /// 所有集合深度复制。
     /// </summary>
     public static RecoverySessionRecord FromExecutionResult(
@@ -121,21 +120,6 @@ public sealed record RecoverySessionRecord
         ArgumentNullException.ThrowIfNull(result);
 
         var lifecycle = DeriveLifecycle(result.Status);
-        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
-
-        // RunResult 是一次运行结果摘要，不拥有旧持久化兼容列的独立定义权。
-        // 如果它与 Lifecycle 的唯一投影冲突，应把这视为上游模型不一致，而不是静默写入漂移状态。
-        if (!disposition.MatchesCompatibilityFlags(
-                result.RequiresManualRecovery,
-                result.IsPositionUncertain))
-        {
-            throw new InvalidDataException(
-                $"RunResult 与 Lifecycle={lifecycle} 的持久化兼容投影冲突：" +
-                $"实际 RequiresManualRecovery={result.RequiresManualRecovery}, " +
-                $"IsPositionUncertain={result.IsPositionUncertain}；" +
-                $"预期 RequiresManualRecovery={disposition.RequiresManualRecovery}, " +
-                $"IsPositionUncertain={disposition.IsPositionUncertain}。");
-        }
 
         return new RecoverySessionRecord
         {
@@ -144,8 +128,6 @@ public sealed record RecoverySessionRecord
             TargetDeviceName = session.TargetDeviceName,
             StartedAtUtc = session.StartedAtUtc,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = disposition.RequiresManualRecovery,
-            IsPositionUncertain = disposition.IsPositionUncertain,
             LastFailedStepIndex = result.FailedStepIndex,
             SourceRestorePlan = session.SourceRestorePlan,
             ExecutionPlan = session.ExecutionPlan,
@@ -235,8 +217,7 @@ public sealed record RecoverySessionRecord
         }
 
         // ── Lifecycle 枚举 ──
-        var lifecycleIsDefined = Enum.IsDefined(Lifecycle);
-        if (!lifecycleIsDefined)
+        if (!Enum.IsDefined(Lifecycle))
             errors.Add($"无效的 Lifecycle 值：{(int)Lifecycle}。");
 
         // ── Revision ──
@@ -289,11 +270,9 @@ public sealed record RecoverySessionRecord
                 }
                 var step = ExecutionPlan.Steps[a.SourceStepIndex];
 
-                // StableId 交叉验证
                 if (!string.Equals(a.ExpectedStableId, step.StableId, StringComparison.Ordinal))
                     errors.Add($"Attempt #{a.AttemptIndex} ExpectedStableId \"{a.ExpectedStableId}\" ≠ Step[{a.SourceStepIndex}].StableId \"{step.StableId}\"。");
 
-                // 坐标验证
                 if (a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward)
                 {
                     if (a.ExpectedPreviousPosition != step.FromPosition)
@@ -301,7 +280,7 @@ public sealed record RecoverySessionRecord
                     if (a.RequestedPosition != step.ToPosition)
                         errors.Add($"Forward Attempt #{a.AttemptIndex} RequestedPosition={a.RequestedPosition} ≠ Step[{a.SourceStepIndex}].To={step.ToPosition}。");
                 }
-                else // Rollback
+                else
                 {
                     if (a.RequestedPosition != step.FromPosition)
                         errors.Add($"Rollback Attempt #{a.AttemptIndex} RequestedPosition={a.RequestedPosition} ≠ Step[{a.SourceStepIndex}].From={step.FromPosition}。");
@@ -309,7 +288,6 @@ public sealed record RecoverySessionRecord
                         errors.Add($"Rollback Attempt #{a.AttemptIndex} ExpectedPreviousPosition={a.ExpectedPreviousPosition} ≠ Step[{a.SourceStepIndex}].To={step.ToPosition}。");
                 }
 
-                // Outcome 坐标一致性
                 if (a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                 {
                     if (a.ActualPosition != a.RequestedPosition)
@@ -386,7 +364,6 @@ public sealed record RecoverySessionRecord
             if (ExecutionPlan.UsesTemporaryStaging != (actualStagingIn > 0))
                 errors.Add($"ExecutionPlan UsesTemporaryStaging={ExecutionPlan.UsesTemporaryStaging}，实际 staging steps={actualStagingIn}。");
 
-            // ── Staging Assignments 验证 ──
             foreach (var sa in ExecutionPlan.StagingAssignments)
             {
                 if (sa.EnterStepIndex < 0 || sa.EnterStepIndex >= ExecutionPlan.Steps.Count)
@@ -420,7 +397,6 @@ public sealed record RecoverySessionRecord
                 }
             }
 
-            // Staging StableId 唯一性
             var stagingIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var sa in ExecutionPlan.StagingAssignments)
             {
@@ -428,7 +404,6 @@ public sealed record RecoverySessionRecord
                     errors.Add($"StagingAssignment StableId=\"{sa.StableId}\" 重复。");
             }
 
-            // EnterStepIndex / ExitStepIndex 唯一性
             var enterIndexes = new HashSet<int>();
             var exitIndexes = new HashSet<int>();
             foreach (var sa in ExecutionPlan.StagingAssignments)
@@ -439,7 +414,6 @@ public sealed record RecoverySessionRecord
                     errors.Add($"ExitStepIndex {sa.ExitStepIndex} 被多个 StagingAssignment 引用。");
             }
 
-            // 每个 staging step 的 StepIndex 必须恰好被 assignment 引用
             foreach (var step in ExecutionPlan.Steps)
             {
                 if (step.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging)
@@ -452,24 +426,6 @@ public sealed record RecoverySessionRecord
                     if (!exitIndexes.Contains(step.StepIndex))
                         errors.Add($"MoveFromTemporaryStagingToTarget StepIndex={step.StepIndex} 未被任何 StagingAssignment 的 ExitStepIndex 引用。");
                 }
-            }
-        }
-
-        // ── 兼容标志一致性 ──
-        // Lifecycle/Disposition 是唯一语义源；旧 bool 只能验证自己是否仍是正确投影。
-        if (lifecycleIsDefined)
-        {
-            var disposition = RecoverySessionDisposition.FromLifecycle(Lifecycle);
-            if (!disposition.MatchesCompatibilityFlags(
-                    RequiresManualRecovery,
-                    IsPositionUncertain))
-            {
-                errors.Add(
-                    $"Lifecycle={Lifecycle} 的兼容字段漂移：" +
-                    $"实际 RequiresManualRecovery={RequiresManualRecovery}, " +
-                    $"IsPositionUncertain={IsPositionUncertain}；" +
-                    $"预期 RequiresManualRecovery={disposition.RequiresManualRecovery}, " +
-                    $"IsPositionUncertain={disposition.IsPositionUncertain}。");
             }
         }
 
