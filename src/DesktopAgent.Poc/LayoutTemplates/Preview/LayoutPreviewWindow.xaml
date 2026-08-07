@@ -85,7 +85,7 @@
                                        Foreground="Red" TextWrapping="Wrap" Visibility="Collapsed" />
                             <TextBlock x:Name="StagingWarningText" FontSize="11" FontWeight="Bold"
                                        Foreground="#E81123" TextWrapping="Wrap"
-                                       Text="该计划需要临时中转，将在 M2-04C 开放真实执行。"
+                                       Text="⚠ 该计划包含循环并使用临时中转。一个或多个图标会先移动到临时位置，同一图标可能被移动多次；中断或失败时可能留下待恢复会话并锁定后续真实写入。"
                                        Visibility="Collapsed" Margin="0,4,0,0" />
                         </StackPanel>
                     </GroupBox>
@@ -170,7 +170,7 @@
                                 <TextBlock Text="我理解该操作会真实移动桌面图标" FontSize="12"
                                            TextWrapping="Wrap" />
                             </CheckBox>
-                            <Button x:Name="ExecuteButton" Content="执行无中转批量整理"
+                            <Button x:Name="ExecuteButton" Content="执行批量整理"
                                     Height="32" FontWeight="SemiBold" Click="Execute_Click" />
                             <TextBlock x:Name="ExecuteHintText" FontSize="11" Foreground="#888"
                                        TextWrapping="Wrap" Margin="0,4,0,0" />
