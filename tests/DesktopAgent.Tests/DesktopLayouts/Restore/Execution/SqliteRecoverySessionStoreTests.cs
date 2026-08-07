@@ -98,8 +98,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             TargetDeviceName = TD,
             StartedAtUtc = DateTimeOffset.UtcNow,
             Lifecycle = RecoverySessionLifecycle.Ready,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             SourceRestorePlan = plan,
             ExecutionPlan = execPlan,
@@ -135,8 +133,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         return record with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             LastFailedStepIndex = 0,
             ForwardFailureType = "InexactPosition",
             ForwardFailureMessage = "位置不精确。",
@@ -204,8 +200,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         Assert.Equal(record.SafetySnapshotId, loaded.SafetySnapshotId);
         Assert.Equal(record.TargetDeviceName, loaded.TargetDeviceName);
         Assert.Equal(record.Lifecycle, loaded.Lifecycle);
-        Assert.Equal(record.RequiresManualRecovery, loaded.RequiresManualRecovery);
-        Assert.Equal(record.IsPositionUncertain, loaded.IsPositionUncertain);
+        Assert.Equal(record.GetDisposition(), loaded.GetDisposition());
         Assert.Equal(record.LastFailedStepIndex, loaded.LastFailedStepIndex);
         Assert.Equal(record.ForwardFailureType, loaded.ForwardFailureType);
         Assert.Equal(record.ForwardFailureMessage, loaded.ForwardFailureMessage);
@@ -252,8 +247,9 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         var loaded = await store.GetAsync(record.SessionId);
         Assert.NotNull(loaded);
         Assert.Equal(RecoverySessionLifecycle.PositionUncertain, loaded!.Lifecycle);
-        Assert.True(loaded.RequiresManualRecovery);
-        Assert.True(loaded.IsPositionUncertain);
+        var disposition = loaded.GetDisposition();
+        Assert.True(disposition.RequiresManualRecovery);
+        Assert.True(disposition.IsPositionUncertain);
         Assert.Equal("InexactPosition", loaded.ForwardFailureType);
     }
 
@@ -335,8 +331,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         var stale = record with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             ForwardFailureType = "StaleTest",
         };
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -416,24 +410,18 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         var r1 = MakeReadyRecord() with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             ForwardFailureType = "TestFailure",
             StartedAtUtc = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
         };
         var r2 = MakeReadyRecord() with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             ForwardFailureType = "TestFailure",
             StartedAtUtc = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero),
         };
         var r3 = MakeReadyRecord() with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             ForwardFailureType = "TestFailure",
             StartedAtUtc = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
         };
@@ -716,7 +704,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         var updated = loaded with
         {
             Lifecycle = RecoverySessionLifecycle.FailedRollbackIncomplete,
-            RequiresManualRecovery = true,
             ForwardFailureType = "InexactPosition",
             RollbackAttempts = new[] { rbAttempt },
             CompletedRollbackSourceStepIndexes = new[] { 0 },
@@ -1107,37 +1094,11 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     [Fact]
-    public void Validate_ReadyWithManualRecovery_Throws()
-    {
-        var record = MakeReadyRecord() with
-        {
-            Lifecycle = RecoverySessionLifecycle.Ready,
-            RequiresManualRecovery = true,
-        };
-        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
-        Assert.Contains("Ready", ex.Message);
-    }
-
-    [Fact]
-    public void Validate_ExecutingWithPositionUncertain_Throws()
-    {
-        var record = MakeReadyRecord() with
-        {
-            Lifecycle = RecoverySessionLifecycle.Executing,
-            IsPositionUncertain = true,
-        };
-        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
-        Assert.Contains("Executing", ex.Message);
-    }
-
-    [Fact]
     public void Validate_PositionUncertainWithoutFailureType_Throws()
     {
         var record = MakeReadyRecord() with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             ForwardFailureType = null,
         };
         var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
@@ -1247,8 +1208,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
             ForwardAttempts = new[] { badAttempt },
             CompletedForwardStepIndexes = Array.Empty<int>(),
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             ForwardFailureType = "SomeException",
         };
         var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
