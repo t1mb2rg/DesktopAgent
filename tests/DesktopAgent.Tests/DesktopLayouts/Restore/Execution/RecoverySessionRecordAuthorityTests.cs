@@ -7,53 +7,48 @@ public sealed class RecoverySessionRecordAuthorityTests
 {
     private const string TargetDisplay = @"\\.\DISPLAY1";
 
-    [Theory]
-    [InlineData(RecoverySessionLifecycle.Ready, false, false)]
-    [InlineData(RecoverySessionLifecycle.Executing, false, false)]
-    [InlineData(RecoverySessionLifecycle.Completed, false, false)]
-    [InlineData(RecoverySessionLifecycle.FailedAndRolledBack, false, false)]
-    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete, true, false)]
-    [InlineData(RecoverySessionLifecycle.PositionUncertain, true, true)]
-    public void Validate_AcceptsOnlyDispositionProjectedCompatibilityFlags(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain)
+    [Fact]
+    public void PersistedRecord_DoesNotExposeLegacyBooleanState()
     {
-        var record = MakeRecord(
-            lifecycle,
-            requiresManualRecovery,
-            isPositionUncertain);
+        var type = typeof(RecoverySessionRecord);
 
-        record.Validate();
-
-        Assert.True(record.HasConsistentCompatibilityFlags());
+        Assert.Null(type.GetProperty("RequiresManualRecovery"));
+        Assert.Null(type.GetProperty("IsPositionUncertain"));
     }
 
     [Theory]
-    [InlineData(RecoverySessionLifecycle.Ready, true, false)]
-    [InlineData(RecoverySessionLifecycle.Executing, false, true)]
-    [InlineData(RecoverySessionLifecycle.Completed, true, true)]
-    [InlineData(RecoverySessionLifecycle.FailedAndRolledBack, true, false)]
-    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete, false, false)]
-    [InlineData(RecoverySessionLifecycle.PositionUncertain, true, false)]
-    public void Validate_CompatibilityDrift_UsesSingleDispositionRule(
+    [InlineData(RecoverySessionLifecycle.Ready,
+        RecoverySessionHandling.None, RecoverySessionSafetyClass.None, false, false)]
+    [InlineData(RecoverySessionLifecycle.Executing,
+        RecoverySessionHandling.AutomaticReconciliation, RecoverySessionSafetyClass.None, false, false)]
+    [InlineData(RecoverySessionLifecycle.Completed,
+        RecoverySessionHandling.None, RecoverySessionSafetyClass.None, false, false)]
+    [InlineData(RecoverySessionLifecycle.FailedAndRolledBack,
+        RecoverySessionHandling.None, RecoverySessionSafetyClass.None, false, false)]
+    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete,
+        RecoverySessionHandling.ManualIntervention, RecoverySessionSafetyClass.KnownIncomplete, true, false)]
+    [InlineData(RecoverySessionLifecycle.PositionUncertain,
+        RecoverySessionHandling.ManualIntervention, RecoverySessionSafetyClass.PositionUncertain, true, true)]
+    public void Lifecycle_IsSinglePersistedSourceForDisposition(
         RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain)
+        RecoverySessionHandling expectedHandling,
+        RecoverySessionSafetyClass expectedSafety,
+        bool expectedManual,
+        bool expectedUncertain)
     {
-        var record = MakeRecord(
-            lifecycle,
-            requiresManualRecovery,
-            isPositionUncertain);
+        var record = MakeRecord(lifecycle);
+        record.Validate();
 
-        var ex = Assert.Throws<InvalidDataException>(() => record.Validate());
+        var disposition = record.GetDisposition();
 
-        Assert.Contains("兼容字段漂移", ex.Message);
-        Assert.Contains($"Lifecycle={lifecycle}", ex.Message);
+        Assert.Equal(expectedHandling, disposition.Handling);
+        Assert.Equal(expectedSafety, disposition.SafetyClass);
+        Assert.Equal(expectedManual, disposition.RequiresManualRecovery);
+        Assert.Equal(expectedUncertain, disposition.IsPositionUncertain);
     }
 
     [Fact]
-    public void FromExecutionResult_ConflictingRunFlags_FailsBeforePersistedRecordCanExist()
+    public void FromExecutionResult_RunSummaryFlagsDoNotBecomePersistedState()
     {
         var (restorePlan, executionPlan) = MakeNoOpPlans();
         var session = new TargetDisplayLayoutRecoverySession(
@@ -70,6 +65,8 @@ public sealed class RecoverySessionRecordAuthorityTests
             false,
             "Ready");
 
+        // 故意给 Completed 一个与其 Disposition 不一致的运行摘要。
+        // RunResult 可以为即时调用方保留摘要字段，但 RecoverySessionRecord 不再复制它们。
         var result = new TargetDisplayLayoutExecutionRunResult(
             TargetDisplayLayoutExecutionRunStatus.Completed,
             true,
@@ -80,65 +77,38 @@ public sealed class RecoverySessionRecordAuthorityTests
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             null,
             requiresManualRecovery: true,
-            isPositionUncertain: false,
-            forwardFailureType: null,
-            forwardFailureMessage: null,
-            recoveryFailureType: null,
-            recoveryFailureMessage: null);
-
-        var ex = Assert.Throws<InvalidDataException>(
-            () => RecoverySessionRecord.FromExecutionResult(session, result));
-
-        Assert.Contains("RunResult", ex.Message);
-        Assert.Contains("Lifecycle=Completed", ex.Message);
-    }
-
-    [Fact]
-    public void FromExecutionResult_MatchingFlags_AreWrittenFromDispositionProjection()
-    {
-        var (restorePlan, executionPlan) = MakeNoOpPlans();
-        var session = new TargetDisplayLayoutRecoverySession(
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            TargetDisplay,
-            DateTimeOffset.UtcNow,
-            restorePlan,
-            executionPlan,
-            Array.Empty<int>(),
-            Array.Empty<int>(),
-            null,
-            false,
-            false,
-            "Ready");
-
-        var result = new TargetDisplayLayoutExecutionRunResult(
-            TargetDisplayLayoutExecutionRunStatus.Completed,
-            true,
-            false,
-            session,
-            session.SafetySnapshotId,
-            Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            null,
-            requiresManualRecovery: false,
-            isPositionUncertain: false,
+            isPositionUncertain: true,
             forwardFailureType: null,
             forwardFailureMessage: null,
             recoveryFailureType: null,
             recoveryFailureMessage: null);
 
         var record = RecoverySessionRecord.FromExecutionResult(session, result);
-        var disposition = RecoverySessionDisposition.FromLifecycle(record.Lifecycle);
 
         Assert.Equal(RecoverySessionLifecycle.Completed, record.Lifecycle);
-        Assert.Equal(disposition.RequiresManualRecovery, record.RequiresManualRecovery);
-        Assert.Equal(disposition.IsPositionUncertain, record.IsPositionUncertain);
+        Assert.False(record.GetDisposition().RequiresManualRecovery);
+        Assert.False(record.GetDisposition().IsPositionUncertain);
+        Assert.Null(typeof(RecoverySessionRecord).GetProperty("RequiresManualRecovery"));
+        Assert.Null(typeof(RecoverySessionRecord).GetProperty("IsPositionUncertain"));
     }
 
-    private static RecoverySessionRecord MakeRecord(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain)
+    [Fact]
+    public void WithProjectedLifecycle_ChangesOnlyAuthoritativeLifecycleSemantics()
+    {
+        var record = MakeRecord(RecoverySessionLifecycle.Executing);
+
+        var changed = record.WithProjectedLifecycle(RecoverySessionLifecycle.PositionUncertain) with
+        {
+            ForwardFailureType = "ObservationUnavailable",
+        };
+
+        changed.Validate();
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, changed.Lifecycle);
+        Assert.True(changed.GetDisposition().RequiresManualRecovery);
+        Assert.True(changed.GetDisposition().IsPositionUncertain);
+    }
+
+    private static RecoverySessionRecord MakeRecord(RecoverySessionLifecycle lifecycle)
     {
         var (restorePlan, executionPlan) = MakeNoOpPlans();
         return new RecoverySessionRecord
@@ -148,8 +118,6 @@ public sealed class RecoverySessionRecordAuthorityTests
             TargetDeviceName = TargetDisplay,
             StartedAtUtc = DateTimeOffset.UtcNow,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = requiresManualRecovery,
-            IsPositionUncertain = isPositionUncertain,
             SourceRestorePlan = restorePlan,
             ExecutionPlan = executionPlan,
             ForwardAttempts = Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
