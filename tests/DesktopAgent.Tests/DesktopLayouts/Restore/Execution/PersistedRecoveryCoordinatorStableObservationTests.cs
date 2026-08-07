@@ -150,8 +150,6 @@ public sealed class PersistedRecoveryCoordinatorStableObservationTests : IDispos
             SourceRestorePlan = restorePlan,
             ExecutionPlan = executionPlan,
             Lifecycle = RecoverySessionLifecycle.Executing,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             ForwardAttempts = Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             RollbackAttempts = Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             CompletedForwardStepIndexes = Array.Empty<int>(),
