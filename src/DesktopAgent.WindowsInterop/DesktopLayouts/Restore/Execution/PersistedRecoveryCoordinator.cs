@@ -8,14 +8,14 @@ namespace DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 /// <summary>
 /// 持久化跨重启恢复协调器。
 /// 当前桌面观察是“现在发生了什么”的唯一权威事实；RecoverySession 只提供历史与意图。
+/// R3 要求恢复决策建立在连续一致的 Stable Observation 上。
 /// </summary>
 public sealed class PersistedRecoveryCoordinator
 {
     private readonly IRecoverySessionStore _store;
-    private readonly IDisplayTopologyReader _topologyReader;
-    private readonly IDesktopIconReader _iconReader;
     private readonly IDesktopIconPositionWriter _positionWriter;
     private readonly StaThreadExecutor _staExecutor;
+    private readonly RecoveryDesktopStateObserver _stateObserver;
 
     public PersistedRecoveryCoordinator(
         IRecoverySessionStore store,
@@ -25,10 +25,11 @@ public sealed class PersistedRecoveryCoordinator
         StaThreadExecutor staExecutor)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _topologyReader = topologyReader ?? throw new ArgumentNullException(nameof(topologyReader));
-        _iconReader = iconReader ?? throw new ArgumentNullException(nameof(iconReader));
+        ArgumentNullException.ThrowIfNull(topologyReader);
+        ArgumentNullException.ThrowIfNull(iconReader);
         _positionWriter = positionWriter ?? throw new ArgumentNullException(nameof(positionWriter));
         _staExecutor = staExecutor ?? throw new ArgumentNullException(nameof(staExecutor));
+        _stateObserver = new RecoveryDesktopStateObserver(topologyReader, iconReader, staExecutor);
     }
 
     public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(CancellationToken ct = default)
@@ -69,7 +70,7 @@ public sealed class PersistedRecoveryCoordinator
                 rollbackAttempts,
                 completedRollbackIndexes,
                 "RecoveryStagingNotSupported",
-                "跨重启恢复 R2 暂不支持含临时中转的执行计划。",
+                "跨重启恢复 R3 暂不支持含临时中转的执行计划。",
                 cancellationToken);
         }
 
@@ -81,10 +82,10 @@ public sealed class PersistedRecoveryCoordinator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            RecoveryReconciliationResult reconciliation;
+            StableReconciliationObservation observation;
             try
             {
-                reconciliation = await ObserveAndReconcileAsync(execPlan, cancellationToken);
+                observation = await ObserveStableAndReconcileAsync(execPlan, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -97,7 +98,23 @@ public sealed class PersistedRecoveryCoordinator
                     cancellationToken);
             }
 
-            // Observe → Compare 先收敛所有不需要 Writer 的情况。
+            if (!observation.Stability.IsStable
+                || observation.Stability.StableSample is null
+                || observation.Reconciliation is null)
+            {
+                return await PersistPositionUncertainAsync(
+                    currentCp,
+                    rollbackAttempts,
+                    completedRollbackIndexes,
+                    "RecoveryObservationNotStable",
+                    FormatStabilityIssues(observation.Stability),
+                    cancellationToken);
+            }
+
+            var stableSample = observation.Stability.StableSample;
+            var reconciliation = observation.Reconciliation;
+
+            // Stable Observe → Compare 先收敛所有不需要 Writer 的情况。
             switch (reconciliation.State)
             {
                 case RecoveryReconciliationState.NoWork:
@@ -208,6 +225,32 @@ public sealed class PersistedRecoveryCoordinator
                     cancellationToken);
             }
 
+            // Stable Observation 与 Writer 之间仍存在极小 TOCTOU 窗口。
+            // 在真正写入前再读一次 topology，只要物理坐标系有任何变化就立即停手。
+            try
+            {
+                if (!_stateObserver.IsTopologyStillEquivalent(stableSample))
+                {
+                    return await PersistPositionUncertainAsync(
+                        currentCp,
+                        rollbackAttempts,
+                        completedRollbackIndexes,
+                        "RecoveryTopologyChangedBeforeWrite",
+                        "稳定观察完成后、Writer 调用前显示拓扑发生变化；拒绝在已变化的物理坐标系中写入。",
+                        cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                return await PersistPositionUncertainAsync(
+                    currentCp,
+                    rollbackAttempts,
+                    completedRollbackIndexes,
+                    "RecoveryTopologyGuardFailed",
+                    $"Writer 前 topology guard 失败：{ex.Message}",
+                    cancellationToken);
+            }
+
             DesktopIconMoveResult? moveResult = null;
             Exception? writerException = null;
             TargetDisplayLayoutExecutionAttemptResult attempt;
@@ -274,12 +317,12 @@ public sealed class PersistedRecoveryCoordinator
             rollbackAttempts.Add(attempt);
             nextAttemptIndex++;
 
-            // Act 之后无论 Writer 返回成功、非精确还是抛异常，都重新读取真实桌面。
+            // Act 之后无论 Writer 返回成功、非精确还是抛异常，都必须再次获得稳定观察。
             // Writer 的返回值只进入 Journal，不直接决定当前事实。
-            RecoveryReconciliationResult postWriteReconciliation;
+            StableReconciliationObservation postObservation;
             try
             {
-                postWriteReconciliation = await ObserveAndReconcileAsync(execPlan, cancellationToken);
+                postObservation = await ObserveStableAndReconcileAsync(execPlan, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -291,6 +334,20 @@ public sealed class PersistedRecoveryCoordinator
                     $"Writer 后无法重新读取真实桌面：{ex.Message}",
                     cancellationToken);
             }
+
+            if (!postObservation.Stability.IsStable
+                || postObservation.Reconciliation is null)
+            {
+                return await PersistPositionUncertainAsync(
+                    currentCp,
+                    rollbackAttempts,
+                    completedRollbackIndexes,
+                    "RecoveryPostWriteObservationNotStable",
+                    FormatStabilityIssues(postObservation.Stability),
+                    cancellationToken);
+            }
+
+            var postWriteReconciliation = postObservation.Reconciliation;
 
             // StableIdMismatch 可能意味着 Writer 影响了错误对象。
             // 即便目标图标看起来安全，也无法证明未影响计划外对象，因此必须 fail-closed。
@@ -317,7 +374,7 @@ public sealed class PersistedRecoveryCoordinator
                     cancellationToken);
             }
 
-            // 如果 Writer 虽然抛异常/返回非精确，但真实桌面已证明全部 Desired，
+            // 如果 Writer 虽然抛异常/返回非精确，但稳定观察已证明全部 Desired，
             // 则当前事实是 Forward 已完整存在，直接识别为 Committed。
             if (postWriteReconciliation.State == RecoveryReconciliationState.Committed)
             {
@@ -354,8 +411,8 @@ public sealed class PersistedRecoveryCoordinator
             if (postItem.Relation == RecoveryItemRelation.AtDesired)
             {
                 var detail = writerException is not null
-                    ? $"Writer 抛出 {writerException.GetType().Name}，且重新观察后“{step.StableId}”仍位于 Desired。"
-                    : $"重新观察后“{step.StableId}”仍位于 Desired。";
+                    ? $"Writer 抛出 {writerException.GetType().Name}，且稳定观察后“{step.StableId}”仍位于 Desired。"
+                    : $"稳定观察后“{step.StableId}”仍位于 Desired。";
 
                 return await PersistKnownIncompleteAsync(
                     currentCp,
@@ -378,8 +435,8 @@ public sealed class PersistedRecoveryCoordinator
                     cancellationToken);
             }
 
-            // 当前 item 已由真实桌面证明回到 Original。
-            // 先持久化这次 Writer 的历史证据，再进入下一轮全量 Observe。
+            // 当前 item 已由稳定观察证明回到 Original。
+            // 先持久化这次 Writer 的历史证据，再进入下一轮 Stable Observe。
             var checkpoint = await TryPersistExecutingCheckpointAsync(
                 currentCp,
                 rollbackAttempts,
@@ -398,29 +455,16 @@ public sealed class PersistedRecoveryCoordinator
         }
     }
 
-    private async Task<RecoveryReconciliationResult> ObserveAndReconcileAsync(
+    private async Task<StableReconciliationObservation> ObserveStableAndReconcileAsync(
         TargetDisplayLayoutExecutionPlan executionPlan,
         CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested();
+        var stability = await _stateObserver.ObserveStableAsync(executionPlan, ct);
+        var reconciliation = stability.IsStable && stability.StableSample is not null
+            ? RecoveryReconciler.Reconcile(executionPlan, stability.StableSample.Desktop)
+            : null;
 
-        var displays = _topologyReader.GetDisplays();
-        var rawRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
-
-        var assignedIcons = rawRead.Icons.Select(icon =>
-        {
-            var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, displays);
-            return icon with { MonitorDeviceName = monitor?.DeviceName };
-        }).ToArray();
-
-        var observed = new DesktopIconReadResult(
-            assignedIcons,
-            rawRead.FailedItemCount,
-            rawRead.ConnectionMethod,
-            rawRead.ReadTime,
-            rawRead.PrimaryPathException);
-
-        return RecoveryReconciler.Reconcile(executionPlan, observed);
+        return new StableReconciliationObservation(stability, reconciliation);
     }
 
     private async Task<RecoverySessionRecord?> TryPersistExecutingCheckpointAsync(
@@ -708,6 +752,14 @@ public sealed class PersistedRecoveryCoordinator
         return string.Join(" | ", reconciliation.Issues.Select(issue => issue.Message));
     }
 
+    private static string FormatStabilityIssues(RecoveryObservationStabilityResult stability)
+    {
+        if (stability.Issues.Count == 0)
+            return $"连续观察状态为 {stability.Status}，无法证明当前桌面稳定。";
+
+        return string.Join(" | ", stability.Issues.Select(issue => issue.Message));
+    }
+
     private static TargetDisplayLayoutExecutionRunResult UnpersistedPositionUncertain(
         RecoverySessionRecord record,
         IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> rollbackAttempts,
@@ -732,4 +784,8 @@ public sealed class PersistedRecoveryCoordinator
             recoveryFailureMessage,
             null);
     }
+
+    private sealed record StableReconciliationObservation(
+        RecoveryObservationStabilityResult Stability,
+        RecoveryReconciliationResult? Reconciliation);
 }
