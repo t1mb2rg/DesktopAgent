@@ -101,10 +101,6 @@ public partial class MainWindow : Window
         Closing += OnClosing;
     }
 
-    // ═══════════════════════════════════════════════════
-    //  MoveRecoverySession
-    // ═══════════════════════════════════════════════════
-
     private sealed record MoveRecoverySession(
         Guid SafetySnapshotId,
         string StableId,
@@ -115,10 +111,6 @@ public partial class MainWindow : Window
         PixelPoint LastKnownPosition,
         DateTime StartedAtUtc,
         bool IsPositionUncertain = false);
-
-    // ═══════════════════════════════════════════════════
-    //  统一交互状态
-    // ═══════════════════════════════════════════════════
 
     private void UpdateInteractiveState()
     {
@@ -150,7 +142,6 @@ public partial class MainWindow : Window
 
         RestoreOriginalPositionButton.IsEnabled = hasSession && !busy;
 
-        // M1-05C-B
         var canPreviewLayout = !busy && !hasSession && !_layoutRestoreRequiresAttention
             && _snapshotStoreReady && _currentTarget is not null
             && SnapshotsGrid.SelectedItem is SnapshotRow;
@@ -180,10 +171,6 @@ public partial class MainWindow : Window
         }
     }
 
-    // ═══════════════════════════════════════════════════
-    //  初始化
-    // ═══════════════════════════════════════════════════
-
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         RefreshDisplays();
@@ -205,7 +192,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 初始化 RecoverySession Store + 检测未解决会话
         await CheckRecoveryStateAsync();
 
         try
@@ -226,10 +212,6 @@ public partial class MainWindow : Window
         UpdateSnapshotStats();
         UpdateInteractiveState();
     }
-
-    // ═══════════════════════════════════════════════════
-    //  显示器拓扑
-    // ═══════════════════════════════════════════════════
 
     private void RefreshDisplays_Click(object sender, RoutedEventArgs e)
     {
@@ -312,10 +294,6 @@ public partial class MainWindow : Window
             d.DpiX, d.DpiY, d.ScaleX, d.ScaleY);
     }
 
-    // ═══════════════════════════════════════════════════
-    //  读取结果生命周期
-    // ═══════════════════════════════════════════════════
-
     private void InvalidateLastIconRead(string reason)
     {
         _lastReadResult = null;
@@ -379,10 +357,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    // ═══════════════════════════════════════════════════
-    //  诊断复制
-    // ═══════════════════════════════════════════════════
-
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -395,10 +369,6 @@ public partial class MainWindow : Window
         catch (Exception ex) { CopyDiagnosticsButton.Content = "复制失败"; Debug.WriteLine($"[M1-04B] 复制诊断失败：{ex.Message}"); }
         finally { _ = Task.Delay(1500).ContinueWith(_ => Dispatcher.Invoke(() => CopyDiagnosticsButton.Content = "复制诊断")); }
     }
-
-    // ═══════════════════════════════════════════════════
-    //  桌面图标读取
-    // ═══════════════════════════════════════════════════
 
     private async void ReadDesktopIcons_Click(object sender, RoutedEventArgs e)
     {
@@ -462,10 +432,6 @@ public partial class MainWindow : Window
         finally { _iconReadInProgress = false; UpdateInteractiveState(); }
     }
 
-    // ═══════════════════════════════════════════════════
-    //  保存快照
-    // ═══════════════════════════════════════════════════
-
     private async void SaveSnapshot_Click(object sender, RoutedEventArgs e)
     {
         if (IsAnyOperationInProgress) return;
@@ -505,10 +471,6 @@ public partial class MainWindow : Window
         finally { _snapshotOperationInProgress = false; UpdateInteractiveState(); }
     }
 
-    // ═══════════════════════════════════════════════════
-    //  快照列表
-    // ═══════════════════════════════════════════════════
-
     private async void RefreshSnapshots_Click(object sender, RoutedEventArgs e)
     {
         if (IsAnyOperationInProgress) return;
@@ -543,10 +505,6 @@ public partial class MainWindow : Window
 
     private void IconsGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateInteractiveState();
     private void MoveConsentChanged(object sender, RoutedEventArgs e) => UpdateInteractiveState();
-
-    // ═══════════════════════════════════════════════════
-    //  移动到相邻空位
-    // ═══════════════════════════════════════════════════
 
     private async void MoveSelectedIcon_Click(object sender, RoutedEventArgs e)
     {
@@ -691,10 +649,6 @@ public partial class MainWindow : Window
         finally { _moveOperationInProgress = false; UpdateInteractiveState(); }
     }
 
-    // ═══════════════════════════════════════════════════
-    //  恢复原位置
-    // ═══════════════════════════════════════════════════
-
     private async void RestoreOriginalPosition_Click(object sender, RoutedEventArgs e)
     {
         if (IsAnyOperationInProgress) return;
@@ -754,10 +708,6 @@ public partial class MainWindow : Window
         finally { _moveOperationInProgress = false; UpdateInteractiveState(); }
     }
 
-    // ═══════════════════════════════════════════════════
-    //  布局模板编辑器入口
-    // ═══════════════════════════════════════════════════
-
     private void OpenTemplateEditor_Click(object sender, RoutedEventArgs e)
     {
         if (IsAnyOperationInProgress)
@@ -788,10 +738,6 @@ public partial class MainWindow : Window
         editor.ShowDialog();
     }
 
-    // ═══════════════════════════════════════════════════
-    //  布局预览入口
-    // ═══════════════════════════════════════════════════
-
     private void OpenLayoutPreview_Click(object sender, RoutedEventArgs e)
     {
         if (IsAnyOperationInProgress || _activeMoveSession is not null || _layoutRestoreRequiresAttention)
@@ -813,11 +759,9 @@ public partial class MainWindow : Window
         };
         window.ShowDialog();
 
-        // ═══ M2-04B: 接收子窗口的人工处理锁状态 ═══
         if (window.RequiresManualRecovery)
         {
             _layoutRestoreRequiresAttention = true;
-            // 始终同步本次结果和诊断 — 不得保留上一次陈旧值
             _lastLayoutExecutionResult = window.LastExecutionResult;
             _layoutRestoreEscapedException = window.EscapedException;
 
@@ -826,16 +770,11 @@ public partial class MainWindow : Window
         }
         else
         {
-            // 正常关闭 — 清除可能残留的陈旧诊断状态
             _lastLayoutExecutionResult = null;
             _layoutRestoreEscapedException = null;
         }
         UpdateInteractiveState();
     }
-
-    // ═══════════════════════════════════════════════════
-    //  窗口关闭保护
-    // ═══════════════════════════════════════════════════
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
@@ -889,10 +828,6 @@ public partial class MainWindow : Window
         if (result != MessageBoxResult.Yes) e.Cancel = true;
     }
 
-    // ═══════════════════════════════════════════════════
-    //  行模型
-    // ═══════════════════════════════════════════════════
-
     private sealed record DisplayRow(
         string DeviceName, bool IsPrimary, string BoundsText, string WorkAreaText,
         string DpiText, string ScaleText, string TargetMarker)
@@ -928,10 +863,6 @@ public partial class MainWindow : Window
             s.ConnectionMethod.ToString(), s.FormatVersion);
     }
 
-    // ═══════════════════════════════════════════════════
-    //  M1-05C-B 布局恢复
-    // ═══════════════════════════════════════════════════
-
     private sealed record LayoutRestorePreviewSession(
         Guid SnapshotId,
         string TargetDeviceName,
@@ -939,8 +870,6 @@ public partial class MainWindow : Window
         TargetDisplayLayoutRestorePlan SourceRestorePlan,
         TargetDisplayLayoutExecutionPlan PreviewExecutionPlan,
         TargetDisplayLayoutExecutionScopeGate.GateResult GateResult);
-
-    // ═══════════════════════════════ 跨重启恢复 ═══════════════════════════════
 
     private async Task CheckRecoveryStateAsync()
     {
@@ -959,7 +888,7 @@ public partial class MainWindow : Window
                     $"状态: {s.Lifecycle}\r\n" +
                     $"Forward完成: {s.CompletedForwardStepIndexes.Count}\r\n" +
                     $"Rollback完成: {s.CompletedRollbackSourceStepIndexes.Count}\r\n" +
-                    $"位置不确定: {s.IsPositionUncertain}";
+                    $"位置不确定: {s.GetDisposition().IsPositionUncertain}";
                 RecoveryBorder.Visibility = System.Windows.Visibility.Visible;
             }
         }
@@ -999,7 +928,6 @@ public partial class MainWindow : Window
                 await _recoveryCoordinator.RecoverAsync(session);
             }
 
-            // 恢复后重新查询
             var after = await _recoveryCoordinator.ListUnresolvedAsync();
             if (after.Count == 0)
             {
@@ -1041,7 +969,6 @@ public partial class MainWindow : Window
 
     private async void PreviewLayoutRestore_Click(object sender, RoutedEventArgs e)
     {
-        // 前置条件验证（在第一个 await 前冻结局部值）
         if (IsAnyOperationInProgress) return;
         if (_activeMoveSession is not null)
         {
@@ -1065,11 +992,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 冻结局部值，整个预览过程只使用这两个
         var snapshotId = row.SnapshotId;
         var targetDeviceName = _currentTarget.DeviceName;
 
-        // 清除旧预览，设置 busy
         InvalidateLayoutRestorePreview("开始新预览。");
         _layoutRestoreOperationInProgress = true;
         UpdateInteractiveState();
@@ -1165,7 +1090,6 @@ public partial class MainWindow : Window
 
     private async void ExecuteLayoutRestore_Click(object sender, RoutedEventArgs e)
     {
-        // ═══ 完整前置条件验证 ═══
         if (IsAnyOperationInProgress) return;
         if (_activeMoveSession is not null)
         {
@@ -1203,7 +1127,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 重新调用闸门（不信任按钮状态）
         var reGate = TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove(
             _layoutRestorePreview.SourceRestorePlan, _layoutRestorePreview.PreviewExecutionPlan);
         if (!reGate.IsAllowed)
@@ -1213,10 +1136,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 保存到局部变量
         var preview = _layoutRestorePreview;
 
-        // 二次确认
         TargetDisplayLayoutRestorePlanItem moveItem;
         TargetDisplayLayoutExecutionStep step;
         {
@@ -1251,7 +1172,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        // 立即使旧预览失效
         InvalidateLayoutRestorePreview("正在执行，旧预览已失效。");
         _layoutRestoreOperationInProgress = true;
         UpdateInteractiveState();
@@ -1288,7 +1208,6 @@ public partial class MainWindow : Window
             foreach (var a in result.RollbackAttempts)
                 AppendAttempt(sb, a);
 
-            // 状态处理
             switch (result.Status)
             {
                 case TargetDisplayLayoutExecutionRunStatus.Completed:
@@ -1308,7 +1227,6 @@ public partial class MainWindow : Window
                         sb.AppendLine("\nWriter 未开始，没有副作用。");
                     }
                     _layoutRestoreRequiresAttention = false;
-                    // 预览已失效，用户只能重新预览
                     break;
                 case TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack:
                     sb.AppendLine("\n正向失败但已确认回滚，没有残留副作用。");
@@ -1328,7 +1246,6 @@ public partial class MainWindow : Window
                 IconStatsText.Text = "桌面图标已变更。请重新读取。";
             }
 
-            // 刷新快照列表（新安全快照）
             try { await RefreshSnapshotsAsync(); UpdateSnapshotStats(); }
             catch (Exception ex) { sb.AppendLine($"刷新快照列表失败: {ex.Message}"); }
 
@@ -1336,7 +1253,6 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            // 无法确定异常发生在 Writer 前还是后 — 进入人工处理锁
             _layoutRestoreRequiresAttention = true;
             _layoutRestoreEscapedException = $"{ex.GetType().Name}: {ex.Message}";
             _lastLayoutExecutionResult = null;
