@@ -14,8 +14,8 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
     [Fact]
     public async Task ListUnresolvedAsync_ResolvedStoreCandidate_IsFilteredAtInteropBoundary()
     {
-        var completed = Make(RecoverySessionLifecycle.Completed, false, false);
-        var executing = Make(RecoverySessionLifecycle.Executing, false, false);
+        var completed = Make(RecoverySessionLifecycle.Completed);
+        var executing = Make(RecoverySessionLifecycle.Executing);
         var store = new CandidateStore(completed, executing);
         var coordinator = CreateCoordinator(store);
 
@@ -27,10 +27,9 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
     }
 
     [Fact]
-    public async Task ListUnresolvedAsync_CompatibilityDrift_ThrowsCorruption()
+    public async Task ListUnresolvedAsync_NullCandidate_ThrowsCorruption()
     {
-        var drifted = Make(RecoverySessionLifecycle.Completed, true, false);
-        var coordinator = CreateCoordinator(new CandidateStore(drifted));
+        var coordinator = CreateCoordinator(new CandidateStore(null!));
 
         await Assert.ThrowsAsync<InvalidDataException>(
             () => coordinator.ListUnresolvedAsync());
@@ -39,15 +38,14 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
     [Fact]
     public async Task HasUnresolvedAsync_DoesNotLetResolvedFirstCandidateHideLaterUnresolved()
     {
-        var completed = Make(RecoverySessionLifecycle.Completed, false, false);
-        var executing = Make(RecoverySessionLifecycle.Executing, false, false);
+        var completed = Make(RecoverySessionLifecycle.Completed);
+        var executing = Make(RecoverySessionLifecycle.Executing);
         var store = new CandidateStore(completed, executing);
         var coordinator = CreateCoordinator(store);
 
         var result = await coordinator.HasUnresolvedAsync();
 
         Assert.True(result);
-        // 权威投影前不能用 limit=1 提前截断。
         Assert.Equal(50, store.LastRequestedLimit);
     }
 
@@ -56,18 +54,16 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
     {
         var coordinator = CreateCoordinator(
             new CandidateStore(
-                Make(RecoverySessionLifecycle.Completed, false, false),
-                Make(RecoverySessionLifecycle.FailedAndRolledBack, false, false)));
+                Make(RecoverySessionLifecycle.Completed),
+                Make(RecoverySessionLifecycle.FailedAndRolledBack)));
 
         Assert.False(await coordinator.HasUnresolvedAsync());
     }
 
     [Fact]
-    public async Task HasUnresolvedAsync_CompatibilityDrift_FailsClosed()
+    public async Task HasUnresolvedAsync_NullCandidate_FailsClosed()
     {
-        var coordinator = CreateCoordinator(
-            new CandidateStore(
-                Make(RecoverySessionLifecycle.PositionUncertain, true, false)));
+        var coordinator = CreateCoordinator(new CandidateStore(null!));
 
         Assert.True(await coordinator.HasUnresolvedAsync());
     }
@@ -89,15 +85,10 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
             new NeverCalledWriter(),
             new StaThreadExecutor());
 
-    private static RecoverySessionRecord Make(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain) =>
+    private static RecoverySessionRecord Make(RecoverySessionLifecycle lifecycle) =>
         new()
         {
             Lifecycle = lifecycle,
-            RequiresManualRecovery = requiresManualRecovery,
-            IsPositionUncertain = isPositionUncertain,
         };
 
     private sealed class CandidateStore : IRecoverySessionStore
