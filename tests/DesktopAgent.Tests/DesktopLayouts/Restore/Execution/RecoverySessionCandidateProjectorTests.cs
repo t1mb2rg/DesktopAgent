@@ -17,10 +17,7 @@ public sealed class RecoverySessionCandidateProjectorTests
     [Fact]
     public void ResolvedCandidate_IsFilteredOut()
     {
-        var completed = Make(
-            RecoverySessionLifecycle.Completed,
-            requiresManualRecovery: false,
-            isPositionUncertain: false);
+        var completed = Make(RecoverySessionLifecycle.Completed);
 
         var result = RecoverySessionCandidateProjector.Project([completed]);
 
@@ -29,15 +26,13 @@ public sealed class RecoverySessionCandidateProjectorTests
     }
 
     [Theory]
-    [InlineData(RecoverySessionLifecycle.Executing, false, false)]
-    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete, true, false)]
-    [InlineData(RecoverySessionLifecycle.PositionUncertain, true, true)]
+    [InlineData(RecoverySessionLifecycle.Executing)]
+    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete)]
+    [InlineData(RecoverySessionLifecycle.PositionUncertain)]
     public void UnresolvedDisposition_IsPreserved(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain)
+        RecoverySessionLifecycle lifecycle)
     {
-        var record = Make(lifecycle, requiresManualRecovery, isPositionUncertain);
+        var record = Make(lifecycle);
 
         var result = RecoverySessionCandidateProjector.Project([record]);
 
@@ -49,10 +44,10 @@ public sealed class RecoverySessionCandidateProjectorTests
     [Fact]
     public void MixedCandidates_PreservesInputOrderOfAuthoritativeUnresolved()
     {
-        var completed = Make(RecoverySessionLifecycle.Completed, false, false);
-        var executing = Make(RecoverySessionLifecycle.Executing, false, false);
-        var restored = Make(RecoverySessionLifecycle.FailedAndRolledBack, false, false);
-        var manual = Make(RecoverySessionLifecycle.FailedRollbackIncomplete, true, false);
+        var completed = Make(RecoverySessionLifecycle.Completed);
+        var executing = Make(RecoverySessionLifecycle.Executing);
+        var restored = Make(RecoverySessionLifecycle.FailedAndRolledBack);
+        var manual = Make(RecoverySessionLifecycle.FailedRollbackIncomplete);
 
         var result = RecoverySessionCandidateProjector.Project(
             [completed, executing, restored, manual]);
@@ -63,19 +58,10 @@ public sealed class RecoverySessionCandidateProjectorTests
         Assert.Same(manual, result.Unresolved[1]);
     }
 
-    [Theory]
-    [InlineData(RecoverySessionLifecycle.Completed, true, false)]
-    [InlineData(RecoverySessionLifecycle.Executing, true, false)]
-    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete, false, false)]
-    [InlineData(RecoverySessionLifecycle.PositionUncertain, true, false)]
-    public void CompatibilityDrift_IsCorruption_NotAnotherBusinessState(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain)
+    [Fact]
+    public void NullCandidate_IsCorruption()
     {
-        var drifted = Make(lifecycle, requiresManualRecovery, isPositionUncertain);
-
-        var result = RecoverySessionCandidateProjector.Project([drifted]);
+        var result = RecoverySessionCandidateProjector.Project([null!]);
 
         Assert.True(result.HasCorruption);
         Assert.Empty(result.Unresolved);
@@ -84,10 +70,9 @@ public sealed class RecoverySessionCandidateProjectorTests
     [Fact]
     public void Corruption_DiscardsEarlierProjectedResults()
     {
-        var executing = Make(RecoverySessionLifecycle.Executing, false, false);
-        var drifted = Make(RecoverySessionLifecycle.Completed, true, false);
+        var executing = Make(RecoverySessionLifecycle.Executing);
 
-        var result = RecoverySessionCandidateProjector.Project([executing, drifted]);
+        var result = RecoverySessionCandidateProjector.Project([executing, null!]);
 
         Assert.True(result.HasCorruption);
         Assert.Empty(result.Unresolved);
@@ -96,7 +81,7 @@ public sealed class RecoverySessionCandidateProjectorTests
     [Fact]
     public void Result_DefensivelyCopiesInputList()
     {
-        var executing = Make(RecoverySessionLifecycle.Executing, false, false);
+        var executing = Make(RecoverySessionLifecycle.Executing);
         var source = new List<RecoverySessionRecord> { executing };
 
         var result = RecoverySessionCandidateProjector.Project(source);
@@ -107,13 +92,9 @@ public sealed class RecoverySessionCandidateProjectorTests
     }
 
     private static RecoverySessionRecord Make(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain) =>
+        RecoverySessionLifecycle lifecycle) =>
         new()
         {
             Lifecycle = lifecycle,
-            RequiresManualRecovery = requiresManualRecovery,
-            IsPositionUncertain = isPositionUncertain,
         };
 }
