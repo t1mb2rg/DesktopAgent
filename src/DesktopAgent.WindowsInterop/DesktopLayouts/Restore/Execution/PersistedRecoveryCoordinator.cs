@@ -541,8 +541,6 @@ public sealed class PersistedRecoveryCoordinator
         return PersistTerminalAsync(
             currentCp,
             final,
-            isNoOp ? TargetDisplayLayoutExecutionRunStatus.CompletedNoOp : TargetDisplayLayoutExecutionRunStatus.Completed,
-            isSuccess: true,
             isNoOp,
             rollbackAttempts,
             "CompletedTerminalPersistFailed",
@@ -572,8 +570,6 @@ public sealed class PersistedRecoveryCoordinator
         return PersistTerminalAsync(
             currentCp,
             final,
-            TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack,
-            isSuccess: false,
             isNoOp: false,
             rollbackAttempts,
             "RestoredTerminalPersistFailed",
@@ -627,23 +623,8 @@ public sealed class PersistedRecoveryCoordinator
                 $"{recoveryFailureType} 后终态持久化/readback 失败。");
         }
 
-        var fresh = persisted.Fresh;
-        return new TargetDisplayLayoutExecutionRunResult(
-            TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete,
-            false,
-            false,
-            null,
-            fresh.SafetySnapshotId,
-            fresh.ForwardAttempts,
-            fresh.RollbackAttempts,
-            null,
-            true,
-            false,
-            fresh.ForwardFailureType,
-            fresh.ForwardFailureMessage,
-            fresh.RecoveryFailureType,
-            fresh.RecoveryFailureMessage,
-            fresh.VerificationResult);
+        return TargetDisplayLayoutExecutionRunResult.FromPersistedRecoveryTerminal(
+            persisted.Fresh);
     }
 
     private async Task<TargetDisplayLayoutExecutionRunResult> PersistPositionUncertainAsync(
@@ -680,30 +661,13 @@ public sealed class PersistedRecoveryCoordinator
                 $"{recoveryFailureType} 后 PositionUncertain 持久化/readback 失败。");
         }
 
-        var fresh = persisted.Fresh;
-        return new TargetDisplayLayoutExecutionRunResult(
-            TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
-            false,
-            false,
-            null,
-            fresh.SafetySnapshotId,
-            fresh.ForwardAttempts,
-            fresh.RollbackAttempts,
-            null,
-            true,
-            true,
-            fresh.ForwardFailureType,
-            fresh.ForwardFailureMessage,
-            fresh.RecoveryFailureType,
-            fresh.RecoveryFailureMessage,
-            fresh.VerificationResult);
+        return TargetDisplayLayoutExecutionRunResult.FromPersistedRecoveryTerminal(
+            persisted.Fresh);
     }
 
     private async Task<TargetDisplayLayoutExecutionRunResult> PersistTerminalAsync(
         RecoverySessionRecord currentCp,
         RecoverySessionRecord final,
-        TargetDisplayLayoutExecutionRunStatus status,
-        bool isSuccess,
         bool isNoOp,
         IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> rollbackAttempts,
         string persistFailureType,
@@ -719,23 +683,9 @@ public sealed class PersistedRecoveryCoordinator
                 "安全终态持久化或 readback 失败。");
         }
 
-        var fresh = persisted.Fresh;
-        return new TargetDisplayLayoutExecutionRunResult(
-            status,
-            isSuccess,
-            isNoOp,
-            null,
-            fresh.SafetySnapshotId,
-            fresh.ForwardAttempts,
-            fresh.RollbackAttempts,
-            null,
-            false,
-            false,
-            fresh.ForwardFailureType,
-            fresh.ForwardFailureMessage,
-            fresh.RecoveryFailureType,
-            fresh.RecoveryFailureMessage,
-            fresh.VerificationResult);
+        return TargetDisplayLayoutExecutionRunResult.FromPersistedRecoveryTerminal(
+            persisted.Fresh,
+            isNoOp);
     }
 
     private async Task<(bool Ok, RecoverySessionRecord? Fresh)> TryPersistAndReadbackAsync(
