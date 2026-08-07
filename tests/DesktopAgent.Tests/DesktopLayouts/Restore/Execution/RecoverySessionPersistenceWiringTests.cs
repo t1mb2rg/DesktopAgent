@@ -325,8 +325,8 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         var unresolved = await freshStore.ListUnresolvedAsync();
         Assert.Single(unresolved);
         Assert.Equal(RecoverySessionLifecycle.PositionUncertain, unresolved[0].Lifecycle);
-        Assert.True(unresolved[0].RequiresManualRecovery);
-        Assert.True(unresolved[0].IsPositionUncertain);
+        Assert.True(unresolved[0].GetDisposition().RequiresManualRecovery);
+        Assert.True(unresolved[0].GetDisposition().IsPositionUncertain);
     }
 
     // ═══════════ 6. StableIdMismatch_PersistsPositionUncertain ═══════════
@@ -725,8 +725,8 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         var unresolved = await freshStore.ListUnresolvedAsync();
         Assert.Single(unresolved);
         Assert.Equal(RecoverySessionLifecycle.FailedRollbackIncomplete, unresolved[0].Lifecycle);
-        Assert.True(unresolved[0].RequiresManualRecovery);
-        Assert.False(unresolved[0].IsPositionUncertain);
+        Assert.True(unresolved[0].GetDisposition().RequiresManualRecovery);
+        Assert.False(unresolved[0].GetDisposition().IsPositionUncertain);
     }
 
     // ═══════════ 17. RollbackVerificationTerminalMapping ═══════════
@@ -801,8 +801,8 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
         var record = await freshStore.GetAsync(sessionId);
         Assert.NotNull(record);
         Assert.Equal(expectedLifecycle, record.Lifecycle);
-        Assert.Equal(expectedManual, record.RequiresManualRecovery);
-        Assert.Equal(expectedUncertain, record.IsPositionUncertain);
+        Assert.Equal(expectedManual, record.GetDisposition().RequiresManualRecovery);
+        Assert.Equal(expectedUncertain, record.GetDisposition().IsPositionUncertain);
         Assert.NotNull(record.VerificationResult);
         Assert.Equal(verifyStatus, record.VerificationResult.Status);
         // CompletedRollbackSourceStepIndexes 包含两个回滚步骤
