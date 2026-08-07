@@ -138,7 +138,7 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
         var result = await coordinator.RecoverAsync(seed);
 
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.Equal("RecoveryObservationNeedsAttention", result.RecoveryFailureType);
+        Assert.Equal("RecoveryObservationNotStable", result.RecoveryFailureType);
         Assert.DoesNotContain(events, e => e.StartsWith("Writer:", StringComparison.Ordinal));
     }
 
