@@ -29,7 +29,8 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
     [Fact]
     public async Task ListUnresolvedAsync_NullCandidate_ThrowsCorruption()
     {
-        var coordinator = CreateCoordinator(new CandidateStore(null!));
+        var coordinator = CreateCoordinator(
+            new CandidateStore(new RecoverySessionRecord[] { null! }));
 
         await Assert.ThrowsAsync<InvalidDataException>(
             () => coordinator.ListUnresolvedAsync());
@@ -63,7 +64,8 @@ public sealed class PersistedRecoveryCoordinatorAuthorityTests
     [Fact]
     public async Task HasUnresolvedAsync_NullCandidate_FailsClosed()
     {
-        var coordinator = CreateCoordinator(new CandidateStore(null!));
+        var coordinator = CreateCoordinator(
+            new CandidateStore(new RecoverySessionRecord[] { null! }));
 
         Assert.True(await coordinator.HasUnresolvedAsync());
     }
