@@ -31,10 +31,17 @@ public interface IRecoverySessionStore
     Task<RecoverySessionRecord?> GetAsync(Guid sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 查询所有未解决的恢复记录。
-    /// Core 语义以 RecoverySessionDisposition.IsUnresolved 为准：
+    /// 查询未解决恢复记录的持久化候选。
+    ///
+    /// “是否未解决”的唯一业务定义是 RecoverySessionDisposition.IsUnresolved：
     /// Executing 需要 AutomaticReconciliation；KnownIncomplete / PositionUncertain
-    /// 需要 ManualIntervention。旧 SQLite Schema 中的两个 bool 仅为兼容投影，不是独立真相。
+    /// 需要 ManualIntervention。
+    ///
+    /// 旧 SQLite Schema 中的 requires_manual_recovery / is_position_uncertain 仅为
+    /// Lifecycle 投影的兼容校验位。实现可以读取它们来发现数据损坏，但不得让它们
+    /// 独立覆盖 Disposition 的业务判断。
+    ///
+    /// 调用方仍应在 Core 边界重新投影候选，避免持久化实现获得最终行为解释权。
     /// 按 StartedAtUtc 降序排列。
     /// </summary>
     Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
