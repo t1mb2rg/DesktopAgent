@@ -44,31 +44,20 @@ public sealed class RecoveryOrchestrator
     }
 
     /// <summary>
-    /// 尝试解决（resolve）一个恢复会话。
-    /// 返回 true 表示已成功解决（持久化为终态），false 表示仍需人工处理。
+    /// 判断一个恢复会话在持久化语义上是否已经无需后续处理。
+    ///
+    /// 本方法不观察真实桌面，也不执行 Writer。Executing 仍需进入外部 observation-first
+    /// 恢复流程；ManualIntervention 则保持锁定。只有 Handling=None 才视为已解决。
     /// </summary>
-    public async Task<bool> TryResolveAsync(
+    public Task<bool> TryResolveAsync(
         RecoverySessionRecord record,
         CancellationToken ct = default)
     {
-        // 检查是否可以自动解决
-        if (record.Lifecycle == RecoverySessionLifecycle.PositionUncertain
-            || record.Lifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete)
-        {
-            // 这些状态需要人工处理，不能自动关闭
-            return false;
-        }
+        ArgumentNullException.ThrowIfNull(record);
+        ct.ThrowIfCancellationRequested();
 
-        if (record.Lifecycle == RecoverySessionLifecycle.Executing)
-        {
-            // Executing 状态表示崩溃残留，需要恢复流程（由外部 Writer 调用方处理）
-            // 此处只标记为仍需处理
-            return false;
-        }
-
-        // Completed 或 FailedAndRolledBack 已经是终态，不需要额外操作
-        // 但如果还出现在 unresolved 列表中，说明有问题要手动处理
-        return false;
+        var disposition = record.GetDisposition();
+        return Task.FromResult(disposition.Handling == RecoverySessionHandling.None);
     }
 
     /// <summary>持久化恢复完成后的终态。</summary>
@@ -90,6 +79,16 @@ public sealed class RecoveryOrchestrator
     {
         try
         {
+            var disposition = RecoverySessionDisposition.FromLifecycle(finalLifecycle);
+
+            // 旧调用签名暂时保留两个 bool 以兼容现有调用方，但它们不再是独立真相。
+            // 若调用方传入与 Lifecycle 投影矛盾的组合，fail-closed，不让三联状态继续漂移。
+            if (requiresManualRecovery != disposition.RequiresManualRecovery
+                || isPositionUncertain != disposition.IsPositionUncertain)
+            {
+                return false;
+            }
+
             var updated = new RecoverySessionRecord
             {
                 SessionId = record.SessionId,
@@ -99,8 +98,8 @@ public sealed class RecoveryOrchestrator
                 SourceRestorePlan = record.SourceRestorePlan,
                 ExecutionPlan = record.ExecutionPlan,
                 Lifecycle = finalLifecycle,
-                RequiresManualRecovery = requiresManualRecovery,
-                IsPositionUncertain = isPositionUncertain,
+                RequiresManualRecovery = disposition.RequiresManualRecovery,
+                IsPositionUncertain = disposition.IsPositionUncertain,
                 LastFailedStepIndex = record.LastFailedStepIndex,
                 ForwardAttempts = forwardAttempts,
                 RollbackAttempts = rollbackAttempts,
@@ -115,7 +114,7 @@ public sealed class RecoveryOrchestrator
                 UpdatedAtUtc = DateTimeOffset.UtcNow,
             };
             updated.Validate();
-            await _store.UpdateAsync(updated);
+            await _store.UpdateAsync(updated, ct);
             return true;
         }
         catch
