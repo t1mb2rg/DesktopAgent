@@ -4,48 +4,38 @@ namespace DesktopAgent.Persistence.Database;
 
 /// <summary>
 /// 共享数据库 Schema 管理器。所有 Store 的 InitializeAsync 都必须调用此初始化器。
-/// 统一管理 user_version：v1=快照表，v2=模板表。不得由单个 Store 各自设置 PRAGMA user_version。
+/// 统一管理 user_version，不得由单个 Store 各自设置 PRAGMA user_version。
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 4;
+    internal const int CurrentVersion = 5;
 
     /// <summary>
     /// 初始化或升级数据库。幂等。始终在事务内确保所有表和索引存在。
-    /// v2 版本标记仍会重新验证完整 Schema。
+    /// 即使版本标记已是当前版本，也会重新验证完整 Schema。
     /// </summary>
     public static void Initialize(SqliteConnection connection, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        // 读取当前版本
         using var readVersion = connection.CreateCommand();
         readVersion.CommandText = "PRAGMA user_version;";
         var version = (int)(long)readVersion.ExecuteScalar()!;
 
-        // 未来版本拒绝（在任何 DDL 前）
         if (version > CurrentVersion)
             throw new InvalidOperationException(
                 $"数据库 user_version={version}，超过当前支持的最高版本 {CurrentVersion}。");
 
-        // 始终开启事务，即使 version == CurrentVersion 也要确保完整 Schema
         using var tx = connection.BeginTransaction();
 
         try
         {
-            // 确保 v1 Schema
             EnsureV1Schema(connection, tx);
-
-            // 确保 v2 Schema
             EnsureV2Schema(connection, tx);
-
-            // 确保 v3 Schema
             EnsureV3Schema(connection, tx);
-
-            // 确保 v4 Schema
             EnsureV4Schema(connection, tx);
+            EnsureV5Schema(connection, tx);
 
-            // 更新版本标记
             if (version < CurrentVersion)
             {
                 using var setVersion = connection.CreateCommand();
@@ -59,7 +49,6 @@ internal static class SqliteDesktopAgentSchema
         }
         catch
         {
-            // 事务自动回滚，user_version 不变
             throw;
         }
     }
@@ -159,11 +148,6 @@ internal static class SqliteDesktopAgentSchema
         cmd.Transaction = transaction;
         // DesktopLayoutIconRuleKind enum values:
         //   Exclude = 0, Pin = 1, ZoneOverride = 2
-        // CHECK 约束使用枚举整数值，保证数据库只接受合法 Kind。
-        // Exclude(0) / Pin(1) 时 target_zone_id 必须为 NULL。
-        // ZoneOverride(2) 时 target_zone_id 必须非 NULL。
-        // stable_id 不允许空字符串。
-        // 不做 TRIM 检查 — StableId 语义明确不 Trim。
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS desktop_layout_template_icon_rules (
                 template_id     TEXT NOT NULL,
@@ -194,6 +178,10 @@ internal static class SqliteDesktopAgentSchema
         //   Ready=0, Executing=1, Completed=2, FailedAndRolledBack=3,
         //   FailedRollbackIncomplete=4, PositionUncertain=5
         // AttemptPhase: Forward=0, Rollback=1
+        //
+        // 注意：v4 历史 Schema 包含 requires_manual_recovery / is_position_uncertain。
+        // Fresh DB 也先建立该历史形态，再由 EnsureV5Schema 幂等迁移到当前形态，
+        // 从而让 v0→v5 与 v4→v5 共用同一条迁移路径。
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS desktop_layout_recovery_sessions (
                 session_id                  TEXT PRIMARY KEY NOT NULL,
@@ -258,5 +246,50 @@ internal static class SqliteDesktopAgentSchema
                     (lifecycle, started_at_utc DESC);
         ";
         cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV5Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        // v5 删除两个可完全由 Lifecycle → Disposition 推导出的冗余持久化列。
+        // 旧列没有独立事实权；保留它们只会制造可漂移的重复状态。
+        DropColumnIfExists(connection, transaction,
+            "desktop_layout_recovery_sessions", "requires_manual_recovery");
+        DropColumnIfExists(connection, transaction,
+            "desktop_layout_recovery_sessions", "is_position_uncertain");
+    }
+
+    private static void DropColumnIfExists(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName,
+        string columnName)
+    {
+        if (!ColumnExists(connection, transaction, tableName, columnName))
+            return;
+
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = $"ALTER TABLE {tableName} DROP COLUMN {columnName};";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static bool ColumnExists(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableName,
+        string columnName)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = $"PRAGMA table_info({tableName});";
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 }
