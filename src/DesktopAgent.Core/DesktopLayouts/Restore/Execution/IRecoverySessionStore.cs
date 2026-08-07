@@ -32,8 +32,9 @@ public interface IRecoverySessionStore
 
     /// <summary>
     /// 查询所有未解决的恢复记录。
-    /// 未解决定义：RequiresManualRecovery=true 或 IsPositionUncertain=true
-    /// 或 Lifecycle=Executing（崩溃残留）。
+    /// Core 语义以 RecoverySessionDisposition.IsUnresolved 为准：
+    /// Executing 需要 AutomaticReconciliation；KnownIncomplete / PositionUncertain
+    /// 需要 ManualIntervention。旧 SQLite Schema 中的两个 bool 仅为兼容投影，不是独立真相。
     /// 按 StartedAtUtc 降序排列。
     /// </summary>
     Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
