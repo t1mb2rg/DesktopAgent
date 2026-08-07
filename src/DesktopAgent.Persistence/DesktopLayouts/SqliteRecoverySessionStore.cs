@@ -582,13 +582,11 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 $"ListUnresolved 检测到 {corruptedIds.Count} 条损坏记录：" +
                 string.Join("; ", corruptedIds));
 
-        // 阶段 2：全表可信 → 分类、排序、limit
+        // 阶段 2：全表可信 → 只按 Core Disposition 分类，再排序和 limit。
+        // 旧兼容 bool 已由 GetInternal + Validate 证明只是 Lifecycle 的一致性影子，
+        // 这里不得再次读取它们生成另一套 unresolved 规则。
         return cleanRecords
-            .Where(r => r.Lifecycle == RecoverySessionLifecycle.Executing
-                        || r.Lifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete
-                        || r.Lifecycle == RecoverySessionLifecycle.PositionUncertain
-                        || r.RequiresManualRecovery
-                        || r.IsPositionUncertain)
+            .Where(r => r.GetDisposition().IsUnresolved)
             .OrderByDescending(r => r.StartedAtUtc)
             .ThenByDescending(r => r.SessionId)
             .Take(limit)
@@ -632,14 +630,16 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                  @rev, @uat,
                  @fac, @rac);
         ";
+        var disposition = record.GetDisposition();
+
         ins.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
         ins.Parameters.AddWithValue("@ssid", record.SafetySnapshotId.ToString("D"));
         ins.Parameters.AddWithValue("@tdn", record.TargetDeviceName);
         ins.Parameters.AddWithValue("@sat",
             record.StartedAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         ins.Parameters.AddWithValue("@lc", (int)record.Lifecycle);
-        ins.Parameters.AddWithValue("@rmr", record.RequiresManualRecovery ? 1 : 0);
-        ins.Parameters.AddWithValue("@ipu", record.IsPositionUncertain ? 1 : 0);
+        ins.Parameters.AddWithValue("@rmr", disposition.RequiresManualRecovery ? 1 : 0);
+        ins.Parameters.AddWithValue("@ipu", disposition.IsPositionUncertain ? 1 : 0);
         ins.Parameters.AddWithValue("@lfsi", (object?)record.LastFailedStepIndex ?? DBNull.Value);
 
         ins.Parameters.AddWithValue("@srpj",
@@ -692,9 +692,11 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 rollback_attempt_count = @rac
             WHERE session_id = @sid AND revision = @expectedRev;
         ";
+        var disposition = record.GetDisposition();
+
         upd.Parameters.AddWithValue("@lc", (int)record.Lifecycle);
-        upd.Parameters.AddWithValue("@rmr", record.RequiresManualRecovery ? 1 : 0);
-        upd.Parameters.AddWithValue("@ipu", record.IsPositionUncertain ? 1 : 0);
+        upd.Parameters.AddWithValue("@rmr", disposition.RequiresManualRecovery ? 1 : 0);
+        upd.Parameters.AddWithValue("@ipu", disposition.IsPositionUncertain ? 1 : 0);
         upd.Parameters.AddWithValue("@lfsi", (object?)record.LastFailedStepIndex ?? DBNull.Value);
 
         upd.Parameters.AddWithValue("@cfwdj", SerializeIntList(record.CompletedForwardStepIndexes));
