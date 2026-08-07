@@ -99,6 +99,38 @@ public sealed class RecoverySessionDispositionTests
     }
 
     [Fact]
+    public void WithProjectedLifecycle_SynchronizesLegacyCompatibilityFlags()
+    {
+        var source = new RecoverySessionRecord
+        {
+            Lifecycle = RecoverySessionLifecycle.Completed,
+            RequiresManualRecovery = false,
+            IsPositionUncertain = false,
+        };
+
+        var updated = source.WithProjectedLifecycle(
+            RecoverySessionLifecycle.PositionUncertain);
+
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, updated.Lifecycle);
+        Assert.True(updated.RequiresManualRecovery);
+        Assert.True(updated.IsPositionUncertain);
+        Assert.True(updated.HasConsistentCompatibilityFlags());
+    }
+
+    [Fact]
+    public void HasConsistentCompatibilityFlags_DetectsLegacyTripletDrift()
+    {
+        var drifted = new RecoverySessionRecord
+        {
+            Lifecycle = RecoverySessionLifecycle.FailedRollbackIncomplete,
+            RequiresManualRecovery = false,
+            IsPositionUncertain = false,
+        };
+
+        Assert.False(drifted.HasConsistentCompatibilityFlags());
+    }
+
+    [Fact]
     public void UnknownLifecycle_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
