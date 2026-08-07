@@ -112,6 +112,8 @@ public sealed record RecoverySessionRecord
     /// <summary>
     /// 从现有 RecoverySession 和 RunResult 创建完整持久化聚合。
     /// 所有集合深度复制。
+    ///
+    /// Lifecycle 是兼容状态字段的唯一来源；RunResult 上的旧 bool 不再拥有独立持久化解释权。
     /// </summary>
     public static RecoverySessionRecord FromExecutionResult(
         TargetDisplayLayoutRecoverySession session,
@@ -121,6 +123,7 @@ public sealed record RecoverySessionRecord
         ArgumentNullException.ThrowIfNull(result);
 
         var lifecycle = DeriveLifecycle(result.Status);
+        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
 
         return new RecoverySessionRecord
         {
@@ -129,8 +132,8 @@ public sealed record RecoverySessionRecord
             TargetDeviceName = session.TargetDeviceName,
             StartedAtUtc = session.StartedAtUtc,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = result.RequiresManualRecovery,
-            IsPositionUncertain = result.IsPositionUncertain,
+            RequiresManualRecovery = disposition.RequiresManualRecovery,
+            IsPositionUncertain = disposition.IsPositionUncertain,
             LastFailedStepIndex = result.FailedStepIndex,
             SourceRestorePlan = session.SourceRestorePlan,
             ExecutionPlan = session.ExecutionPlan,
@@ -220,7 +223,8 @@ public sealed record RecoverySessionRecord
         }
 
         // ── Lifecycle 枚举 ──
-        if (!Enum.IsDefined(Lifecycle))
+        var lifecycleIsDefined = Enum.IsDefined(Lifecycle);
+        if (!lifecycleIsDefined)
             errors.Add($"无效的 Lifecycle 值：{(int)Lifecycle}。");
 
         // ── Revision ──
@@ -440,38 +444,17 @@ public sealed record RecoverySessionRecord
         }
 
         // ── 状态标志一致性 ──
-        if (Lifecycle == RecoverySessionLifecycle.Ready
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("Ready 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.Executing)
+        if (lifecycleIsDefined)
         {
-            if (RequiresManualRecovery)
-                errors.Add("Executing 状态下 RequiresManualRecovery 必须为 false。");
-            if (IsPositionUncertain)
-                errors.Add("Executing 状态下 IsPositionUncertain 必须为 false。");
-        }
-
-        if (Lifecycle == RecoverySessionLifecycle.Completed
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("Completed 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.FailedAndRolledBack
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("FailedAndRolledBack 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete)
-        {
-            if (!RequiresManualRecovery)
-                errors.Add("FailedRollbackIncomplete 状态下 RequiresManualRecovery 必须为 true。");
-            if (IsPositionUncertain)
-                errors.Add("FailedRollbackIncomplete 状态下 IsPositionUncertain 必须为 false。");
-        }
-
-        if (Lifecycle == RecoverySessionLifecycle.PositionUncertain)
-        {
-            if (!RequiresManualRecovery || !IsPositionUncertain)
-                errors.Add("PositionUncertain 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须都为 true。");
+            var disposition = RecoverySessionDisposition.FromLifecycle(Lifecycle);
+            if (RequiresManualRecovery != disposition.RequiresManualRecovery
+                || IsPositionUncertain != disposition.IsPositionUncertain)
+            {
+                errors.Add(
+                    $"兼容状态字段与 Lifecycle={Lifecycle} 的 Disposition 投影不一致：" +
+                    $"RequiresManualRecovery={RequiresManualRecovery}，期望={disposition.RequiresManualRecovery}；" +
+                    $"IsPositionUncertain={IsPositionUncertain}，期望={disposition.IsPositionUncertain}。");
+            }
         }
 
         // ── 失败证据 ──
