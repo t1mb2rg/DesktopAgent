@@ -347,11 +347,14 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 allAttempts.Add(excAttempt);
                 var fwdOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
                 var rbOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
+                var completedFwd = fwdOnly
+                    .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                    .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList();
 
                 if (currentCheckpoint is not null)
                 {
                     var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session, fwdOnly, rbOnly,
-                        Array.Empty<int>(), Array.Empty<int>(),
+                        completedFwd, Array.Empty<int>(),
                         RecoverySessionLifecycle.PositionUncertain, true, true, i,
                         ex.GetType().Name, $"步骤 #{i} Writer 异常：{ex.Message}",
                         null, null, null, currentCheckpoint);
@@ -390,10 +393,16 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
                 if (currentCheckpoint is not null)
                 {
+                    var mismatchFwdOnly = allAttempts
+                        .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
+                    var mismatchRbOnly = allAttempts
+                        .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
+                    var mismatchCompletedFwd = mismatchFwdOnly
+                        .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                        .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList();
                     var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session,
-                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
-                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
-                        Array.Empty<int>(), Array.Empty<int>(),
+                        mismatchFwdOnly, mismatchRbOnly,
+                        mismatchCompletedFwd, Array.Empty<int>(),
                         RecoverySessionLifecycle.PositionUncertain, true, true, i,
                         "StableIdMismatch",
                         $"步骤 #{i} StableId \"{moveResult.StableId}\" ≠ \"{step.StableId}\"。",
@@ -422,10 +431,16 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
                 if (currentCheckpoint is not null)
                 {
+                    var mismatchFwdOnly = allAttempts
+                        .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
+                    var mismatchRbOnly = allAttempts
+                        .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
+                    var mismatchCompletedFwd = mismatchFwdOnly
+                        .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
+                        .Select(a => a.SourceStepIndex).Distinct().OrderBy(x => x).ToList();
                     var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session,
-                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList(),
-                        allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList(),
-                        Array.Empty<int>(), Array.Empty<int>(),
+                        mismatchFwdOnly, mismatchRbOnly,
+                        mismatchCompletedFwd, Array.Empty<int>(),
                         RecoverySessionLifecycle.PositionUncertain, true, true, i,
                         "PreviousPositionMismatch",
                         $"步骤 #{i} PreviousPosition mismatch。",
