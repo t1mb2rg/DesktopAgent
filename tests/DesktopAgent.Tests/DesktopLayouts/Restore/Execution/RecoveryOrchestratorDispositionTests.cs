@@ -79,8 +79,6 @@ public sealed class RecoveryOrchestratorDispositionTests
             new RecoverySessionRecord
             {
                 Lifecycle = RecoverySessionLifecycle.Completed,
-                RequiresManualRecovery = false,
-                IsPositionUncertain = false,
             });
         var orchestrator = new RecoveryOrchestrator(store);
 
@@ -97,8 +95,6 @@ public sealed class RecoveryOrchestratorDispositionTests
             new RecoverySessionRecord
             {
                 Lifecycle = RecoverySessionLifecycle.FailedAndRolledBack,
-                RequiresManualRecovery = false,
-                IsPositionUncertain = false,
             });
         var orchestrator = new RecoveryOrchestrator(store);
 
@@ -109,19 +105,15 @@ public sealed class RecoveryOrchestratorDispositionTests
     }
 
     [Theory]
-    [InlineData(RecoverySessionLifecycle.Executing, false, false)]
-    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete, true, false)]
-    [InlineData(RecoverySessionLifecycle.PositionUncertain, true, true)]
+    [InlineData(RecoverySessionLifecycle.Executing)]
+    [InlineData(RecoverySessionLifecycle.FailedRollbackIncomplete)]
+    [InlineData(RecoverySessionLifecycle.PositionUncertain)]
     public async Task GetUnresolvedInfoAsync_AuthoritativeDisposition_KeepsUnresolved(
-        RecoverySessionLifecycle lifecycle,
-        bool requiresManualRecovery,
-        bool isPositionUncertain)
+        RecoverySessionLifecycle lifecycle)
     {
         var record = new RecoverySessionRecord
         {
             Lifecycle = lifecycle,
-            RequiresManualRecovery = requiresManualRecovery,
-            IsPositionUncertain = isPositionUncertain,
         };
         var store = new CandidateStore(record);
         var orchestrator = new RecoveryOrchestrator(store);
@@ -132,42 +124,6 @@ public sealed class RecoveryOrchestratorDispositionTests
         Assert.Single(sessions);
         Assert.Same(record, sessions[0]);
         Assert.True(sessions[0].GetDisposition().IsUnresolved);
-    }
-
-    [Fact]
-    public async Task HasUnresolvedSessionsAsync_CompatibilityFlagDrift_IsCorruptionNotBusinessState()
-    {
-        var store = new CandidateStore(
-            new RecoverySessionRecord
-            {
-                Lifecycle = RecoverySessionLifecycle.Completed,
-                RequiresManualRecovery = true,
-                IsPositionUncertain = false,
-            });
-        var orchestrator = new RecoveryOrchestrator(store);
-
-        var hasUnresolved = await orchestrator.HasUnresolvedSessionsAsync();
-
-        // fail-closed：锁定是因为数据损坏，不是因为旧 bool 获得了业务解释权。
-        Assert.True(hasUnresolved);
-    }
-
-    [Fact]
-    public async Task GetUnresolvedInfoAsync_CompatibilityFlagDrift_ReportsCorruption()
-    {
-        var store = new CandidateStore(
-            new RecoverySessionRecord
-            {
-                Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-                RequiresManualRecovery = true,
-                IsPositionUncertain = false,
-            });
-        var orchestrator = new RecoveryOrchestrator(store);
-
-        var (sessions, hasCorruption) = await orchestrator.GetUnresolvedInfoAsync();
-
-        Assert.True(hasCorruption);
-        Assert.Empty(sessions);
     }
 
     [Fact]
