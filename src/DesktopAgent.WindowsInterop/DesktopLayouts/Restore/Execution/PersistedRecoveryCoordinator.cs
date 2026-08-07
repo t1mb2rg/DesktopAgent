@@ -500,11 +500,9 @@ public sealed class PersistedRecoveryCoordinator
         IReadOnlyCollection<int> completedRollbackIndexes,
         CancellationToken ct)
     {
-        var checkpoint = currentCp with
+        var checkpoint = currentCp
+            .WithProjectedLifecycle(RecoverySessionLifecycle.Executing) with
         {
-            Lifecycle = RecoverySessionLifecycle.Executing,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -527,11 +525,9 @@ public sealed class PersistedRecoveryCoordinator
         CancellationToken ct)
     {
         var verification = TargetDisplayLayoutExecutionVerificationResult.ForwardPassed(DateTimeOffset.UtcNow);
-        var final = currentCp with
+        var final = currentCp
+            .WithProjectedLifecycle(RecoverySessionLifecycle.Completed) with
         {
-            Lifecycle = RecoverySessionLifecycle.Completed,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -560,11 +556,9 @@ public sealed class PersistedRecoveryCoordinator
         CancellationToken ct)
     {
         var verification = TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(DateTimeOffset.UtcNow);
-        var final = currentCp with
+        var final = currentCp
+            .WithProjectedLifecycle(RecoverySessionLifecycle.FailedAndRolledBack) with
         {
-            Lifecycle = RecoverySessionLifecycle.FailedAndRolledBack,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -607,11 +601,9 @@ public sealed class PersistedRecoveryCoordinator
             issues,
             DateTimeOffset.UtcNow);
 
-        var final = currentCp with
+        var final = currentCp
+            .WithProjectedLifecycle(RecoverySessionLifecycle.FailedRollbackIncomplete) with
         {
-            Lifecycle = RecoverySessionLifecycle.FailedRollbackIncomplete,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -662,11 +654,9 @@ public sealed class PersistedRecoveryCoordinator
         string recoveryFailureMessage,
         CancellationToken ct)
     {
-        var final = currentCp with
+        var final = currentCp
+            .WithProjectedLifecycle(RecoverySessionLifecycle.PositionUncertain) with
         {
-            Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
