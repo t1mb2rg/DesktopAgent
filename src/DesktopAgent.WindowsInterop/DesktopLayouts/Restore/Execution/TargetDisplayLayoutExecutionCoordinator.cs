@@ -330,12 +330,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                         "OperationCanceledException", "步骤间取消。",
                         null, null, cancellationToken, currentCheckpoint);
                 }
-                // 无副作用 → 返回 FailedBeforeWrite，不抛出 OCE 逃逸到 UI
                 return FailedBeforeWriteS("OperationCanceledBeforeWrite",
                     "Writer 未启动即取消。");
             }
 
-            // 调用 Writer（不取消等待）
             DesktopIconMoveResult moveResult;
             try
             {
@@ -344,7 +342,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
             catch (Exception ex)
             {
-                // Writer 异常 → 副作用未知，禁止回滚 → 持久化 PositionUncertain
                 var excAttempt = TargetDisplayLayoutExecutionAttemptResult.FromWriterException(
                     attemptIndex, i, step, ex);
                 allAttempts.Add(excAttempt);
@@ -378,7 +375,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     null, null);
             }
 
-            // Writer 返回了结果 — 记录
             var forwardAttempt = moveResult.IsExact
                 ? TargetDisplayLayoutExecutionAttemptResult.FromExactForward(attemptIndex, i, step, moveResult)
                 : TargetDisplayLayoutExecutionAttemptResult.FromInexactForward(attemptIndex, i, step, moveResult);
@@ -386,14 +382,12 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             attemptIndex++;
             allAttempts.Add(forwardAttempt);
 
-            // 验证 StableId
             if (!string.Equals(moveResult.StableId, step.StableId, StringComparison.Ordinal))
             {
                 var mismatchAttempt = TargetDisplayLayoutExecutionAttemptResult.FromStableIdMismatch(
                     attemptIndex - 1, i, step, moveResult);
                 allAttempts[allAttempts.Count - 1] = mismatchAttempt;
 
-                // 持久化 PositionUncertain 终态
                 if (currentCheckpoint is not null)
                 {
                     var (persisted, _) = await TryUpdateAndGetVerifiedAsync(session,
@@ -420,7 +414,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     null, null);
             }
 
-            // 验证 PreviousPosition
             if (moveResult.PreviousPosition != step.FromPosition)
             {
                 var ppAttempt = TargetDisplayLayoutExecutionAttemptResult.FromPreviousPositionMismatch(
@@ -454,7 +447,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     null, null);
             }
 
-            // 非精确 → 不进入 Rollback Writer（持久化模式）或保持旧行为（非持久化模式）
             if (!moveResult.IsExact)
             {
                 allAttempts[allAttempts.Count - 1] = TargetDisplayLayoutExecutionAttemptResult.FromInexactForward(
@@ -493,7 +485,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                         null, null);
                 }
 
-                // 非持久化旧模式：仍然进入 RollbackKnownS 尝试回滚
                 return await RollbackKnownS(
                     session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
                     "InexactPosition",
@@ -503,7 +494,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     cancellationToken);
             }
 
-            // ── 持久化 Forward checkpoint ──
             if (currentCheckpoint is not null)
             {
                 var fwdOnly = allAttempts
@@ -529,10 +519,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 currentCheckpoint = newCp;
             }
 
-            // 精确成功 — 检查后续步骤是否应继续
             if (cancellationToken.IsCancellationRequested && i + 1 < executionPlan.Steps.Count)
             {
-                // 已完成步骤 i，但还有后续步骤且 token 已取消 → 回滚已知步骤
                 return await RollbackKnownS(
                     session, i, allAttempts, executionPlan, safetySnapshotId, attemptIndex,
                     "OperationCanceledException", "Writer 完成后检测到取消。",
@@ -541,14 +529,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
         }
 
-        // ═══ 全部成功 → 独立最终验证 ═══
         var forwardOnly = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var completedFwd = forwardOnly
             .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
             .Select(a => a.SourceStepIndex).ToList();
 
-        // 使用 CancellationToken.None — Writer 已发生，验证不可被 UI 取消
-        // 验证异常不得逃出 Coordinator → 转化为 PositionUncertain
         TargetDisplayLayoutExecutionVerificationResult verificationResult;
         try
         {
@@ -563,7 +548,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
                     0, new[] { issue }, DateTimeOffset.UtcNow);
 
-            // 持久化 ForwardUncertain VerificationResult
             var veCompletedFwd = forwardOnly
                 .Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                 .Select(a => a.SourceStepIndex).ToList();
@@ -608,8 +592,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 uncertainVerification);
         }
 
-        // 非 Passed 验证 → 同时设置 RequiresManualRecovery=true, IsPositionUncertain=true
-        // Session 与 RunResult 保持含义一致
         var nonPassed = verificationResult.Status != ExecutionVerificationStatus.Passed;
         var successSession = BuildSession(session, forwardOnly,
             Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
@@ -623,7 +605,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             nonPassed, nonPassed,
             nonPassed ? "PositionUncertain" : "Completed");
 
-        // ── 持久化终态 ──
         var terminalPersisted = true;
         if (_recoveryStore is not null && currentCheckpoint is not null)
         {
@@ -644,8 +625,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             terminalPersisted = ok;
         }
 
-        // 终态持久化硬门槛：只要存在 recoveryStore/currentCheckpoint 且 terminalPersisted == false，
-        // 无论验证状态如何都返回 PositionUncertain
         if (_recoveryStore is not null && currentCheckpoint is not null && !terminalPersisted)
         {
             return new TargetDisplayLayoutExecutionRunResult(
@@ -683,10 +662,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
     }
 
-    // ═══════════════════════════════════════════════
-    //  回滚（不使用 WaitAsync(token)，使用 CancellationToken.None）
-    // ═══════════════════════════════════════════════
-
     private async Task<TargetDisplayLayoutExecutionRunResult> RollbackKnownS(
         TargetDisplayLayoutRecoverySession session,
         int failedStepIndex,
@@ -701,13 +676,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         CancellationToken _,
         RecoverySessionRecord? currentCheckpoint = null)
     {
-        // ── 非持久化旧模式：保持原两步行为（current failed step + prior steps）──
         if (currentCheckpoint is null)
             return await RollbackKnownS_Legacy(session, failedStepIndex, allAttempts,
                 executionPlan, safetySnapshotId, attemptIndex,
                 forwardFailureType, forwardFailureMessage, recoveryFailureType, recoveryFailureMessage);
 
-        // ── 统一候选列表：ExactSuccess Forward，按 SourceStepIndex 降序，去重 ──
         var candidates = allAttempts
             .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
                      && a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
@@ -725,7 +698,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             var rollbackTarget = step.FromPosition;
             var expectedPrevious = step.ToPosition;
 
-            // ── 调用 Rollback Writer ──
             DesktopIconMoveResult rbResult;
             try
             {
@@ -759,7 +731,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     "RollbackWriterException", $"回滚步骤 #{si} Writer 异常：{ex.Message}");
             }
 
-            // 验证 StableId
             if (!string.Equals(rbResult.StableId, step.StableId, StringComparison.Ordinal))
             {
                 allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackStableIdMismatch(
@@ -789,7 +760,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     $"回滚步骤 #{si} StableId \"{rbResult.StableId}\" ≠ 期望 \"{step.StableId}\"。");
             }
 
-            // 验证 PreviousPosition（使用 step.ToPosition 作为期望值）
             if (rbResult.PreviousPosition != expectedPrevious)
             {
                 allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromRollbackPreviousPositionMismatch(
@@ -819,7 +789,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     $"回滚步骤 #{si} PreviousPosition ({rbResult.PreviousPosition.X},{rbResult.PreviousPosition.Y}) ≠ 期望 ({expectedPrevious.X},{expectedPrevious.Y})。");
             }
 
-            // 非精确
             if (!rbResult.IsExact)
             {
                 allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromInexactRollback(
@@ -849,13 +818,11 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     $"回滚步骤 #{si} 非精确：Actual=({rbResult.ActualPosition.X},{rbResult.ActualPosition.Y}), Target=({rollbackTarget.X},{rollbackTarget.Y})。");
             }
 
-            // ExactSuccess
             allAttempts.Add(TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
                 attemptIndex, si, step, rollbackTarget, expectedPrevious, rbResult));
             attemptIndex++;
             rbSourceIndexes.Add(si);
 
-            // 持久化 ExactSuccess checkpoint
             if (currentCheckpoint is not null)
             {
                 var (ok, newCp) = await PersistRollbackCheckpointAsync(
@@ -876,7 +843,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
         }
 
-        // ═══ 全部 ExactSuccess Rollback 完成 → 独立验证 + 终态持久化 ═══
         var allForward = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var allRollback = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
         var rollbackSourceIndexes = allRollback
@@ -928,7 +894,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 uncertainVerification);
         }
 
-        // 终态持久化（按验证状态映射 lifecycle）
         var (rbLifecycle, rbManual, rbUncertain, rbRecoveryType, rbRecoveryMsg) = rbVerification.Status switch
         {
             ExecutionVerificationStatus.Passed =>
@@ -983,10 +948,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             rbVerification);
     }
 
-    // ═══════════════════════════════════════════════
-    //  RollbackKnownS 旧版（非持久化模式）
-    // ═══════════════════════════════════════════════
-
     private async Task<TargetDisplayLayoutExecutionRunResult> RollbackKnownS_Legacy(
         TargetDisplayLayoutRecoverySession session,
         int failedStepIndex,
@@ -999,7 +960,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         string? recoveryFailureType,
         string? recoveryFailureMessage)
     {
-        // Step 1: 回滚当前失败步骤
         var currentAttempt = allAttempts.Last(a =>
             a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
             && a.SourceStepIndex == failedStepIndex);
@@ -1066,7 +1026,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             attemptIndex++;
         }
 
-        // Step 2: 逆序回滚之前的精确成功步骤
         var priorSteps = allAttempts
             .Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward
                      && a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess
@@ -1134,7 +1093,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             attemptIndex++;
         }
 
-        // 全部精确回滚 → 独立回滚验证
         var allForward = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward).ToList();
         var allRollback = allAttempts.Where(a => a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Rollback).ToList();
         var rollbackSourceIndexes = allRollback
@@ -1202,7 +1160,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     rbVerification);
             }
 
-            default: // Failed
+            default:
             {
                 var failedSession = BuildSession(session, allForward, allRollback,
                     failedStepIndex, true, false, "FailedRollbackIncomplete");
@@ -1219,18 +1177,13 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
     }
 
-    // ═══════════════════════════════════════════════
-    //  执行计划结构验证（内部可测试）
-    // ═══════════════════════════════════════════════
-
-    /// <summary>验证执行计划结构。返回 null 表示通过，非 null 为错误描述。</summary>
     internal static (string ErrorType, string ErrorMessage)? ValidateExecutionPlanStructure(
         TargetDisplayLayoutExecutionPlan plan)
     {
         if (!plan.IsExecutable)
             return ("PlanNotExecutable", "计划不可执行。");
         if (plan.IsNoOp)
-            return null; // NoOp 不需要步骤
+            return null;
 
         if (plan.Steps.Count == 0)
             return ("EmptySteps", "可执行非 NoOp 计划的 Steps 不能为空。");
@@ -1250,10 +1203,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
         return null;
     }
-
-    // ═══════════════════════════════════════════════
-    //  快照验证
-    // ═══════════════════════════════════════════════
 
     private static string? VerifySafetySnapshot(
         DesktopLayoutSnapshot original, DesktopLayoutSnapshot readBack)
@@ -1285,10 +1234,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         }
         return null;
     }
-
-    // ═══════════════════════════════════════════════
-    //  结果工厂
-    // ═══════════════════════════════════════════════
 
     private static TargetDisplayLayoutExecutionRunResult FailedBeforeWriteS(
         string type, string msg) =>
@@ -1346,10 +1291,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 .Select(a => a.SourceStepIndex).ToList(),
             failedStepIndex, requiresManual, isPositionUncertain, status);
 
-    // ═══════════════════════════════════════════════
-    //  独立最终验证（Forward / Rollback）
-    // ═══════════════════════════════════════════════
-
     private async Task<TargetDisplayLayoutExecutionVerificationResult> VerifyForwardAsync(
         TargetDisplayLayoutExecutionPlan executionPlan,
         TargetDisplayLayoutRecoverySession session,
@@ -1358,14 +1299,12 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         var verifiedAt = DateTimeOffset.UtcNow;
         var targetDeviceName = executionPlan.TargetDeviceName;
 
-        // 执行完整桌面重读
         DesktopIconReadResult currentRead;
         IReadOnlyList<DisplayDescriptor> currentDisplays;
         try
         {
             currentDisplays = _topologyReader.GetDisplays();
             var rawRead = await _staExecutor.RunAsync(() => _iconReader.ReadDesktopIcons());
-            // 不使用 WaitAsync(token) — Writer 已发生，必须完成验证
             var assignedIcons = rawRead.Icons.Select(icon =>
             {
                 var monitor = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, currentDisplays);
@@ -1384,7 +1323,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
 
         var issues = new List<string>();
 
-        // FailedItemCount 检查
         if (currentRead.FailedItemCount != 0)
         {
             issues.Add($"FailedItemCount = {currentRead.FailedItemCount}，读取不完整。");
@@ -1392,7 +1330,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 currentRead.FailedItemCount, issues, verifiedAt);
         }
 
-        // StableId 唯一性
         var sidSet = new HashSet<string>(StringComparer.Ordinal);
         foreach (var icon in currentRead.Icons)
         {
@@ -1403,12 +1340,10 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             return TargetDisplayLayoutExecutionVerificationResult.ForwardUncertain(
                 0, issues, verifiedAt);
 
-        // 建立当前 StableId → 图标 映射
         var currentBySid = new Dictionary<string, DesktopIconDescriptor>(StringComparer.Ordinal);
         foreach (var icon in currentRead.Icons)
             currentBySid[icon.StableId] = icon;
 
-        // 验证 RestorePlan 中应在目标显示器的所有目标项
         var missingCount = 0;
         foreach (var item in session.SourceRestorePlan.Items)
         {
@@ -1422,7 +1357,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 continue;
             }
 
-            // 已在目标显示器上 — 验证位置
             if (string.Equals(currentIcon.MonitorDeviceName ?? "", targetDeviceName, StringComparison.Ordinal))
             {
                 if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired)
@@ -1447,14 +1381,12 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             }
             else
             {
-                // 不在目标显示器上 — 报告显示器不一致
                 if (item.State == TargetDisplayLayoutRestoreItemState.MoveRequired
                     || item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
                 {
                     issues.Add($"\"{item.StableId}\" Forward 验证显示器 " +
                         $"\"{currentIcon.MonitorDeviceName}\" ≠ 目标 \"{targetDeviceName}\"。");
                 }
-                // AlreadyAtTarget 不在目标显示器上时仍验证位置（应与快照目标一致）
                 if (item.State == TargetDisplayLayoutRestoreItemState.AlreadyAtTarget)
                 {
                     if (currentIcon.PixelPosition != item.SnapshotTargetPosition)
@@ -1485,8 +1417,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
     {
         var verifiedAt = DateTimeOffset.UtcNow;
 
-        // 以冻结的 SourceRestorePlan 原始状态作为唯一恢复证据。
-        // 不能只依赖 ExecutionStep.FromPosition，因为回滚还必须证明原显示器归属。
         var rollbackTargets =
             new Dictionary<string, TargetDisplayLayoutRestorePlanItem>(StringComparer.Ordinal);
         foreach (var step in executionPlan.Steps)
@@ -1552,7 +1482,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             return TargetDisplayLayoutExecutionVerificationResult.RollbackUncertain(
                 0, issues, verifiedAt);
 
-        // 验证每个被回滚的图标
         var notRestored = 0;
         foreach (var (sid, sourceItem) in rollbackTargets)
         {
@@ -1574,8 +1503,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 itemNotRestored = true;
             }
 
-            // 无条件与原始显示器比较，使用 Ordinal，并保留 null 的直接比较语义。
-            // 特别覆盖：原显示器 != 目标显示器，但回滚后错误地仍停留在目标显示器。
             if (!string.Equals(
                     currentIcon.MonitorDeviceName,
                     sourceItem.CurrentMonitorDeviceName,
@@ -1602,7 +1529,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         return TargetDisplayLayoutExecutionVerificationResult.RollbackPassed(verifiedAt);
     }
 
-    /// <summary>Rollback 每步检查点：合并 Attempts → Update → Get → 完整比较。</summary>
     private async Task<(bool Ok, RecoverySessionRecord? NewCp)> PersistRollbackCheckpointAsync(
         TargetDisplayLayoutRecoverySession session,
         List<TargetDisplayLayoutExecutionAttemptResult> allAttempts,
@@ -1628,11 +1554,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             currentCheckpoint);
     }
 
-    // ═══════════════════════════════════════════════════
-    //  持久化检查点（仅在 _recoveryStore != null 时生效）
-    // ═══════════════════════════════════════════════════
-
-    /// <summary>初始持久化：Save → Get → 完整 readback 验证。</summary>
     private async Task<(bool Ok, RecoverySessionRecord? Record)> TrySaveInitialCheckpointAsync(
         TargetDisplayLayoutRecoverySession session,
         TargetDisplayLayoutExecutionPlan executionPlan,
@@ -1648,8 +1569,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 TargetDeviceName = session.TargetDeviceName,
                 StartedAtUtc = session.StartedAtUtc,
                 Lifecycle = RecoverySessionLifecycle.Executing,
-                RequiresManualRecovery = false,
-                IsPositionUncertain = false,
                 LastFailedStepIndex = null,
                 SourceRestorePlan = session.SourceRestorePlan,
                 ExecutionPlan = executionPlan,
@@ -1663,24 +1582,19 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             record.Validate();
             await _recoveryStore.SaveAsync(record);
             var readback = await _recoveryStore.GetAsync(record.SessionId);
-            // 完整 readback 验证
             if (readback is null) return (false, null);
             if (!RecordsAreEquivalent(record, readback)) return (false, null);
-            // 额外显式确认初始状态
             if (readback.Lifecycle != RecoverySessionLifecycle.Executing) return (false, null);
             if (readback.Revision != 1) return (false, null);
             if (readback.ForwardAttempts.Count != 0) return (false, null);
             if (readback.RollbackAttempts.Count != 0) return (false, null);
             if (readback.CompletedForwardStepIndexes.Count != 0) return (false, null);
             if (readback.CompletedRollbackSourceStepIndexes.Count != 0) return (false, null);
-            if (readback.RequiresManualRecovery) return (false, null);
-            if (readback.IsPositionUncertain) return (false, null);
             return (true, readback);
         }
         catch { return (false, null); }
     }
 
-    /// <summary>执行 UpdateAsync → GetAsync → 完整比较 → 返回新记录。</summary>
     private async Task<(bool Ok, RecoverySessionRecord? Record)> TryUpdateAndGetVerifiedAsync(
         TargetDisplayLayoutRecoverySession session,
         IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> forwardAttempts,
@@ -1710,8 +1624,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 SourceRestorePlan = session.SourceRestorePlan,
                 ExecutionPlan = session.ExecutionPlan,
                 Lifecycle = lifecycle,
-                RequiresManualRecovery = requiresManualRecovery,
-                IsPositionUncertain = isPositionUncertain,
                 LastFailedStepIndex = lastFailedStepIndex,
                 ForwardAttempts = forwardAttempts,
                 RollbackAttempts = rollbackAttempts,
@@ -1728,7 +1640,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             record.Validate();
             var updated = await _recoveryStore.UpdateAsync(record);
             var fresh = await _recoveryStore.GetAsync(record.SessionId);
-            // 完整比较 Update 返回值与 fresh Get
             if (fresh is null || !RecordsAreEquivalent(updated, fresh))
                 return (false, null);
             return (true, fresh);
@@ -1736,41 +1647,32 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         catch { return (false, null); }
     }
 
-    /// <summary>逐字段完整比较两个 RecoverySessionRecord。</summary>
     internal static bool RecordsAreEquivalent(RecoverySessionRecord a, RecoverySessionRecord b)
     {
         if (a is null || b is null) return false;
         if (ReferenceEquals(a, b)) return true;
 
-        // Header
         if (a.SessionId != b.SessionId) return false;
         if (a.SafetySnapshotId != b.SafetySnapshotId) return false;
         if (!string.Equals(a.TargetDeviceName, b.TargetDeviceName, StringComparison.Ordinal)) return false;
         if (a.StartedAtUtc != b.StartedAtUtc) return false;
         if (a.UpdatedAtUtc != b.UpdatedAtUtc) return false;
 
-        // Lifecycle & flags
         if (a.Lifecycle != b.Lifecycle) return false;
-        if (a.RequiresManualRecovery != b.RequiresManualRecovery) return false;
-        if (a.IsPositionUncertain != b.IsPositionUncertain) return false;
         if (a.LastFailedStepIndex != b.LastFailedStepIndex) return false;
         if (a.Revision != b.Revision) return false;
 
-        // Failure evidence
         if (!string.Equals(a.ForwardFailureType, b.ForwardFailureType, StringComparison.Ordinal)) return false;
         if (!string.Equals(a.ForwardFailureMessage, b.ForwardFailureMessage, StringComparison.Ordinal)) return false;
         if (!string.Equals(a.RecoveryFailureType, b.RecoveryFailureType, StringComparison.Ordinal)) return false;
         if (!string.Equals(a.RecoveryFailureMessage, b.RecoveryFailureMessage, StringComparison.Ordinal)) return false;
 
-        // Completed indexes
         if (!a.CompletedForwardStepIndexes.SequenceEqual(b.CompletedForwardStepIndexes)) return false;
         if (!a.CompletedRollbackSourceStepIndexes.SequenceEqual(b.CompletedRollbackSourceStepIndexes)) return false;
 
-        // ForwardAttempts — 逐字段 + 顺序
         if (!AttemptListsMatch(a.ForwardAttempts, b.ForwardAttempts)) return false;
         if (!AttemptListsMatch(a.RollbackAttempts, b.RollbackAttempts)) return false;
 
-        // VerificationResult
         if (a.VerificationResult is null != b.VerificationResult is null) return false;
         if (a.VerificationResult is not null && b.VerificationResult is not null)
         {
@@ -1781,10 +1683,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (!a.VerificationResult.Issues.SequenceEqual(b.VerificationResult.Issues, StringComparer.Ordinal)) return false;
         }
 
-        // SourceRestorePlan
         if (!RestorePlansMatch(a.SourceRestorePlan, b.SourceRestorePlan)) return false;
-
-        // ExecutionPlan
         if (!ExecPlansMatch(a.ExecutionPlan, b.ExecutionPlan)) return false;
 
         return true;
@@ -1830,7 +1729,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         if (a.HasBlockingErrors != b.HasBlockingErrors) return false;
         if (a.RequiresTemporaryStaging != b.RequiresTemporaryStaging) return false;
         if (a.IsNoOp != b.IsNoOp) return false;
-        // Items
         if (a.Items.Count != b.Items.Count) return false;
         for (int i = 0; i < a.Items.Count; i++)
         {
@@ -1845,20 +1743,17 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (ai.IsSystemItem != bi.IsSystemItem) return false;
             if (!string.Equals(ai.BlockReason, bi.BlockReason, StringComparison.Ordinal)) return false;
         }
-        // Dependencies
         if (a.Dependencies.Count != b.Dependencies.Count) return false;
         for (int i = 0; i < a.Dependencies.Count; i++)
         {
             if (!string.Equals(a.Dependencies[i].DependsOn, b.Dependencies[i].DependsOn, StringComparison.Ordinal)) return false;
             if (!string.Equals(a.Dependencies[i].ActionItem, b.Dependencies[i].ActionItem, StringComparison.Ordinal)) return false;
         }
-        // Cycles
         if (a.Cycles.Count != b.Cycles.Count) return false;
         for (int i = 0; i < a.Cycles.Count; i++)
         {
             if (!a.Cycles[i].StableIds.SequenceEqual(b.Cycles[i].StableIds, StringComparer.Ordinal)) return false;
         }
-        // Issues
         if (a.Issues.Count != b.Issues.Count) return false;
         for (int i = 0; i < a.Issues.Count; i++)
         {
@@ -1866,7 +1761,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (!string.Equals(a.Issues[i].Message, b.Issues[i].Message, StringComparison.Ordinal)) return false;
             if (!string.Equals(a.Issues[i].RelatedStableId, b.Issues[i].RelatedStableId, StringComparison.Ordinal)) return false;
         }
-        // MoveExecutionOrder
         if ((a.MoveExecutionOrder is null) != (b.MoveExecutionOrder is null)) return false;
         if (a.MoveExecutionOrder is not null && b.MoveExecutionOrder is not null)
         {
@@ -1884,7 +1778,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         if (a.DirectMoveStepCount != b.DirectMoveStepCount) return false;
         if (a.StagingMoveStepCount != b.StagingMoveStepCount) return false;
         if (a.TargetMoveStepCount != b.TargetMoveStepCount) return false;
-        // Steps
         if (a.Steps.Count != b.Steps.Count) return false;
         for (int i = 0; i < a.Steps.Count; i++)
         {
@@ -1898,7 +1791,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (!string.Equals(sa.ExpectedMonitorDeviceName, sb.ExpectedMonitorDeviceName, StringComparison.Ordinal)) return false;
             if (sa.StagingSequence != sb.StagingSequence) return false;
         }
-        // StagingAssignments
         if (a.StagingAssignments.Count != b.StagingAssignments.Count) return false;
         for (int i = 0; i < a.StagingAssignments.Count; i++)
         {
@@ -1908,7 +1800,6 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             if (sa.EnterStepIndex != sb.EnterStepIndex) return false;
             if (sa.ExitStepIndex != sb.ExitStepIndex) return false;
         }
-        // Issues
         if (a.Issues.Count != b.Issues.Count) return false;
         for (int i = 0; i < a.Issues.Count; i++)
         {
