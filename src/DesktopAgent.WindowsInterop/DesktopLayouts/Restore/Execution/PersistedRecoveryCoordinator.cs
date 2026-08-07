@@ -12,6 +12,8 @@ namespace DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 /// </summary>
 public sealed class PersistedRecoveryCoordinator
 {
+    private const int UnresolvedCandidateLimit = 50;
+
     private readonly IRecoverySessionStore _store;
     private readonly IDesktopIconPositionWriter _positionWriter;
     private readonly StaThreadExecutor _staExecutor;
@@ -32,13 +34,38 @@ public sealed class PersistedRecoveryCoordinator
         _stateObserver = new RecoveryDesktopStateObserver(topologyReader, iconReader, staExecutor);
     }
 
-    public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(CancellationToken ct = default)
-        => _store.ListUnresolvedAsync(limit: 50, ct);
+    /// <summary>
+    /// 返回经过 Core 权威投影后的未解决会话。
+    /// Store 只提供候选；兼容字段漂移属于 corruption，不允许形成独立业务状态。
+    /// </summary>
+    public async Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
+        CancellationToken ct = default)
+    {
+        var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
+        var projection = RecoverySessionCandidateProjector.Project(candidates);
+        if (projection.HasCorruption)
+        {
+            throw new InvalidDataException(
+                "恢复候选中的兼容状态字段与 Lifecycle 投影不一致。");
+        }
+
+        return projection.Unresolved;
+    }
 
     public async Task<bool> HasUnresolvedAsync(CancellationToken ct = default)
     {
-        try { return (await _store.ListUnresolvedAsync(limit: 1, ct)).Count > 0; }
-        catch (InvalidDataException) { return true; }
+        try
+        {
+            // 不能在权威投影前用 limit=1 截断候选，否则一个被过滤的 resolved 候选
+            // 可能遮住后续真正 unresolved 的记录。
+            var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
+            var projection = RecoverySessionCandidateProjector.Project(candidates);
+            return projection.HasCorruption || projection.Unresolved.Count > 0;
+        }
+        catch (InvalidDataException)
+        {
+            return true;
+        }
     }
 
     public async Task<TargetDisplayLayoutExecutionRunResult> RecoverAsync(
