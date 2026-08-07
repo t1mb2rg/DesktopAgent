@@ -331,7 +331,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             throw new InvalidDataException(
                 $"会话 {sessionId:D} Lifecycle 值无效：{lifecycleVal}。");
         var lifecycle = (RecoverySessionLifecycle)lifecycleVal;
-        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
 
         var lastFailedStepIndex = reader.IsDBNull(5) ? (int?)null : reader.GetInt32(5);
         var sourceRestorePlanJson = reader.GetString(6);
@@ -440,8 +439,6 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             TargetDeviceName = targetDeviceName,
             StartedAtUtc = startedAtUtc,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = disposition.RequiresManualRecovery,
-            IsPositionUncertain = disposition.IsPositionUncertain,
             LastFailedStepIndex = lastFailedStepIndex,
             SourceRestorePlan = sourceRestorePlan,
             ExecutionPlan = executionPlan,
