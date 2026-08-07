@@ -76,3 +76,44 @@ public readonly record struct RecoverySessionDisposition(
                 nameof(lifecycle), lifecycle, $"未定义的 RecoverySessionLifecycle 值：{(int)lifecycle}。"),
         };
 }
+
+/// <summary>
+/// RecoverySessionRecord 的行为投影与兼容字段同步入口。
+///
+/// requires_manual_recovery / is_position_uncertain 仍保留在旧 SQLite Schema 中，
+/// 但它们只应作为 Lifecycle 投影的兼容影子存在，不应成为新的独立决策来源。
+/// </summary>
+public static class RecoverySessionDispositionExtensions
+{
+    public static RecoverySessionDisposition GetDisposition(this RecoverySessionRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        return RecoverySessionDisposition.FromLifecycle(record.Lifecycle);
+    }
+
+    public static bool HasConsistentCompatibilityFlags(this RecoverySessionRecord record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        var disposition = record.GetDisposition();
+        return record.RequiresManualRecovery == disposition.RequiresManualRecovery
+            && record.IsPositionUncertain == disposition.IsPositionUncertain;
+    }
+
+    /// <summary>
+    /// 变更 Lifecycle 时同步旧 Schema 中的两个兼容 bool，避免调用方手工拼三联状态。
+    /// </summary>
+    public static RecoverySessionRecord WithProjectedLifecycle(
+        this RecoverySessionRecord record,
+        RecoverySessionLifecycle lifecycle)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
+
+        return record with
+        {
+            Lifecycle = lifecycle,
+            RequiresManualRecovery = disposition.RequiresManualRecovery,
+            IsPositionUncertain = disposition.IsPositionUncertain,
+        };
+    }
+}
