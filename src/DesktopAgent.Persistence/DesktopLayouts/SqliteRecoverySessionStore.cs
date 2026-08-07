@@ -582,13 +582,11 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                 $"ListUnresolved 检测到 {corruptedIds.Count} 条损坏记录：" +
                 string.Join("; ", corruptedIds));
 
-        // 阶段 2：全表可信 → 分类、排序、limit
+        // 阶段 2：全表可信 → Disposition 权威分类、排序、limit。
+        // 旧兼容 bool 已在 GetInternal → record.Validate() 中完成完整性校验，
+        // 此处没有资格再作为 unresolved 的独立业务条件。
         return cleanRecords
-            .Where(r => r.Lifecycle == RecoverySessionLifecycle.Executing
-                        || r.Lifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete
-                        || r.Lifecycle == RecoverySessionLifecycle.PositionUncertain
-                        || r.RequiresManualRecovery
-                        || r.IsPositionUncertain)
+            .Where(r => r.GetDisposition().IsUnresolved)
             .OrderByDescending(r => r.StartedAtUtc)
             .ThenByDescending(r => r.SessionId)
             .Take(limit)
