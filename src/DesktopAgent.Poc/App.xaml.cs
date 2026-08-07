@@ -8,6 +8,7 @@ using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
+using DesktopAgent.Poc.Acceptance;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.Displays;
@@ -25,6 +26,36 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+#if DEBUG
+        AcceptanceFaultInjectionOptions acceptanceFaultOptions;
+        try
+        {
+            acceptanceFaultOptions = AcceptanceFaultInjectionOptions.FromEnvironment();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"M2 acceptance fault injection 配置无效，应用将 fail-closed 退出。\n\n{ex.Message}",
+                "DesktopAgent - Fault Injection 配置错误",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown(-1);
+            return;
+        }
+
+        if (acceptanceFaultOptions.IsEnabled)
+        {
+            MessageBox.Show(
+                "FAULT INJECTION ENABLED\n\n" +
+                "这是 M2 实机验收专用 Debug 模式。命中配置的 Exact Writer 调用后，" +
+                "DesktopAgent 会在调用方持久化 checkpoint 之前立即终止进程。\n\n" +
+                acceptanceFaultOptions.Describe(),
+                "DesktopAgent - M2 Acceptance Fault Injection",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+#endif
+
         _host = Host.CreateDefaultBuilder()
             .ConfigureLogging(logging =>
             {
@@ -35,7 +66,18 @@ public partial class App : Application
             {
                 services.AddSingleton<IDisplayTopologyReader, NativeDisplayTopologyReader>();
                 services.AddSingleton<IDesktopIconReader, DesktopShellIconReader>();
-                services.AddSingleton<IDesktopIconPositionWriter, DesktopShellIconPositionWriter>();
+                services.AddSingleton<DesktopShellIconPositionWriter>();
+#if DEBUG
+                services.AddSingleton<IDesktopIconPositionWriter>(sp =>
+                    acceptanceFaultOptions.IsEnabled
+                        ? new AcceptanceFaultInjectingDesktopIconPositionWriter(
+                            sp.GetRequiredService<DesktopShellIconPositionWriter>(),
+                            acceptanceFaultOptions)
+                        : sp.GetRequiredService<DesktopShellIconPositionWriter>());
+#else
+                services.AddSingleton<IDesktopIconPositionWriter>(sp =>
+                    sp.GetRequiredService<DesktopShellIconPositionWriter>());
+#endif
                 services.AddSingleton<StaThreadExecutor>();
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
                 services.AddSingleton<IRecoverySessionStore>(
