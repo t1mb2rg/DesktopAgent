@@ -6,6 +6,8 @@ namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 /// </summary>
 public sealed class RecoveryOrchestrator
 {
+    private const int UnresolvedCandidateLimit = 50;
+
     private readonly IRecoverySessionStore _store;
 
     public RecoveryOrchestrator(IRecoverySessionStore store)
@@ -13,12 +15,23 @@ public sealed class RecoveryOrchestrator
         _store = store ?? throw new ArgumentNullException(nameof(store));
     }
 
-    /// <summary>检查是否存在未解决会话。损坏数据也算未解决。</summary>
+    /// <summary>
+    /// 检查是否存在未解决会话。损坏数据也算未解决。
+    ///
+    /// Store 返回的是持久化候选；真正的行为判定权属于 RecoverySessionDisposition。
+    /// 旧兼容 bool 只能作为一致性校验位，不能独立把一个 resolved 生命周期升级为 unresolved。
+    /// </summary>
     public async Task<bool> HasUnresolvedSessionsAsync(CancellationToken ct = default)
     {
         try
         {
-            var unresolved = await _store.ListUnresolvedAsync(limit: 1, ct);
+            var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
+            if (!TryProjectAuthoritativeUnresolved(candidates, out var unresolved))
+            {
+                // 兼容字段与 Lifecycle 投影不一致 = 持久化数据损坏。
+                return true;
+            }
+
             return unresolved.Count > 0;
         }
         catch (InvalidDataException)
@@ -28,13 +41,19 @@ public sealed class RecoveryOrchestrator
         }
     }
 
-    /// <summary>获取未解决会话列表（用于 UI 展示）。损坏时返回空列表 + 标记。</summary>
+    /// <summary>
+    /// 获取未解决会话列表（用于 UI 展示）。损坏时返回空列表 + 标记。
+    /// 返回列表会再次按照 RecoverySessionDisposition 投影，Store 的历史兼容筛选没有最终解释权。
+    /// </summary>
     public async Task<(IReadOnlyList<RecoverySessionRecord> Sessions, bool HasCorruption)>
         GetUnresolvedInfoAsync(CancellationToken ct = default)
     {
         try
         {
-            var unresolved = await _store.ListUnresolvedAsync(limit: 50, ct);
+            var candidates = await _store.ListUnresolvedAsync(UnresolvedCandidateLimit, ct);
+            if (!TryProjectAuthoritativeUnresolved(candidates, out var unresolved))
+                return (Array.Empty<RecoverySessionRecord>(), true);
+
             return (unresolved, false);
         }
         catch (InvalidDataException)
@@ -121,5 +140,34 @@ public sealed class RecoveryOrchestrator
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 将 Store 返回的候选重新投影为 Core 权威的 unresolved 列表。
+    ///
+    /// 返回 false 表示至少一条候选的旧兼容字段与 Lifecycle 投影冲突；
+    /// 这种冲突属于数据完整性错误，而不是一个新的业务状态。
+    /// </summary>
+    private static bool TryProjectAuthoritativeUnresolved(
+        IReadOnlyList<RecoverySessionRecord> candidates,
+        out IReadOnlyList<RecoverySessionRecord> unresolved)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        var authoritative = new List<RecoverySessionRecord>(candidates.Count);
+        foreach (var record in candidates)
+        {
+            if (record is null || !record.HasConsistentCompatibilityFlags())
+            {
+                unresolved = Array.Empty<RecoverySessionRecord>();
+                return false;
+            }
+
+            if (record.GetDisposition().IsUnresolved)
+                authoritative.Add(record);
+        }
+
+        unresolved = authoritative.AsReadOnly();
+        return true;
     }
 }
