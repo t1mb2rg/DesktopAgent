@@ -38,8 +38,8 @@ public enum RecoverySessionSafetyClass
 /// <summary>
 /// 将持久化 Lifecycle 投影为彼此正交的“处理方式 + 安全分类”。
 ///
-/// Lifecycle 继续承担历史摘要兼容；业务层判断是否未解决、是否需要人工、
-/// 是否属于位置不确定时，应使用本投影，而不是同时读取多个冗余字段。
+/// Lifecycle 是持久化语义源；业务层判断是否未解决、是否需要人工、
+/// 是否属于位置不确定时，应使用本投影，而不是持久化第二份布尔状态。
 /// </summary>
 public readonly record struct RecoverySessionDisposition(
     RecoverySessionHandling Handling,
@@ -52,16 +52,6 @@ public readonly record struct RecoverySessionDisposition(
 
     public bool IsPositionUncertain =>
         SafetyClass == RecoverySessionSafetyClass.PositionUncertain;
-
-    /// <summary>
-    /// 检查旧 Schema 兼容 bool 是否只是本 Disposition 的正确投影。
-    /// 这是完整性判断，不赋予兼容字段任何独立业务解释权。
-    /// </summary>
-    public bool MatchesCompatibilityFlags(
-        bool requiresManualRecovery,
-        bool isPositionUncertain) =>
-        requiresManualRecovery == RequiresManualRecovery
-        && isPositionUncertain == IsPositionUncertain;
 
     public static RecoverySessionDisposition FromLifecycle(RecoverySessionLifecycle lifecycle) =>
         lifecycle switch
@@ -88,10 +78,9 @@ public readonly record struct RecoverySessionDisposition(
 }
 
 /// <summary>
-/// RecoverySessionRecord 的行为投影与兼容字段同步入口。
+/// RecoverySessionRecord 的行为投影入口。
 ///
-/// requires_manual_recovery / is_position_uncertain 仍保留在旧 SQLite Schema 中，
-/// 但它们只应作为 Lifecycle 投影的兼容影子存在，不应成为新的独立决策来源。
+/// Record 只持久化 Lifecycle；Handling / SafetyClass 以及相关布尔摘要都在读取时现场投影。
 /// </summary>
 public static class RecoverySessionDispositionExtensions
 {
@@ -101,30 +90,19 @@ public static class RecoverySessionDispositionExtensions
         return RecoverySessionDisposition.FromLifecycle(record.Lifecycle);
     }
 
-    public static bool HasConsistentCompatibilityFlags(this RecoverySessionRecord record)
-    {
-        ArgumentNullException.ThrowIfNull(record);
-        var disposition = record.GetDisposition();
-        return disposition.MatchesCompatibilityFlags(
-            record.RequiresManualRecovery,
-            record.IsPositionUncertain);
-    }
-
     /// <summary>
-    /// 变更 Lifecycle 时同步旧 Schema 中的两个兼容 bool，避免调用方手工拼三联状态。
+    /// 只变更权威 Lifecycle。派生处置语义由 GetDisposition() 现场计算。
     /// </summary>
     public static RecoverySessionRecord WithProjectedLifecycle(
         this RecoverySessionRecord record,
         RecoverySessionLifecycle lifecycle)
     {
         ArgumentNullException.ThrowIfNull(record);
-        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
+        _ = RecoverySessionDisposition.FromLifecycle(lifecycle);
 
         return record with
         {
             Lifecycle = lifecycle,
-            RequiresManualRecovery = disposition.RequiresManualRecovery,
-            IsPositionUncertain = disposition.IsPositionUncertain,
         };
     }
 }
