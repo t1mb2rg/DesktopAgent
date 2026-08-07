@@ -23,7 +23,7 @@
             <RowDefinition Height="200" />     <!-- 14 状态栏 -->
         </Grid.RowDefinitions>
 
-        <!-- ── 0 标题栏 ── -->
+        <!-- 0 标题栏 -->
         <DockPanel Grid.Row="0" LastChildFill="False">
             <StackPanel DockPanel.Dock="Left">
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="DesktopAgent PoC — M1-05C-B" />
@@ -38,7 +38,7 @@
                     Click="OpenLayoutPreview_Click" Content="布局预览" />
         </DockPanel>
 
-        <!-- ── 2 显示器拓扑 ── -->
+        <!-- 2 显示器拓扑 -->
         <DockPanel Grid.Row="2">
             <StackPanel DockPanel.Dock="Top" Margin="0,0,0,6">
                 <DockPanel>
@@ -70,7 +70,7 @@
             </DataGrid>
         </DockPanel>
 
-        <!-- ── 4 图标标题 ── -->
+        <!-- 4 图标标题 -->
         <DockPanel Grid.Row="4">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="桌面图标" />
@@ -84,7 +84,7 @@
             </StackPanel>
         </DockPanel>
 
-        <!-- ── 6 图标列表 ── -->
+        <!-- 6 图标列表 -->
         <DataGrid x:Name="IconsGrid" Grid.Row="6" AutoGenerateColumns="False" CanUserAddRows="False"
                   IsReadOnly="True" SelectionMode="Single" RowHeight="26"
                   SelectionChanged="IconsGrid_SelectionChanged">
@@ -109,7 +109,7 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <!-- ── 8 TabControl ── -->
+        <!-- 8 TabControl -->
         <TabControl Grid.Row="8">
             <TabItem Header="M1-04B 单图标移动">
                 <DockPanel Margin="4">
@@ -155,7 +155,7 @@
             </TabItem>
         </TabControl>
 
-        <!-- ── 10 快照标题 ── -->
+        <!-- 10 快照标题 -->
         <DockPanel Grid.Row="10">
             <StackPanel DockPanel.Dock="Left" VerticalAlignment="Center">
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="布局快照" />
@@ -167,7 +167,7 @@
                     Content="刷新列表" IsEnabled="False" />
         </DockPanel>
 
-        <!-- ── 12 快照列表 ── -->
+        <!-- 12 快照列表 -->
         <DataGrid x:Name="SnapshotsGrid" Grid.Row="12" AutoGenerateColumns="False"
                   CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single" RowHeight="26"
                   SelectionChanged="SnapshotsGrid_SelectionChanged">
@@ -181,7 +181,7 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <!-- ── 14 状态栏 ── -->
+        <!-- 14 状态栏 -->
         <Border Grid.Row="14" Padding="8,6" Background="#F3F3F3" CornerRadius="4">
             <Grid>
                 <Grid.RowDefinitions>
@@ -209,18 +209,62 @@
             </Grid>
         </Border>
 
-        <!-- ═══ 跨重启恢复状态区域 ═══ -->
-        <Border Grid.Row="12" Margin="10,5,10,0" Padding="8" CornerRadius="4"
+        <!-- 跨重启恢复状态区域 -->
+        <Border Grid.Row="12" Grid.RowSpan="3" Panel.ZIndex="20"
+                Margin="0" Padding="12" CornerRadius="6"
                 Background="#FFF8E1" BorderBrush="#FFB74D" BorderThickness="1"
-                x:Name="RecoveryBorder" Visibility="Collapsed">
-            <StackPanel>
-                <TextBlock FontWeight="SemiBold" FontSize="13" Foreground="#E65100"
-                           Text="检测到未解决的恢复会话" />
-                <TextBlock x:Name="RecoveryStatusText" Margin="0,4,0,0" FontSize="12"
-                           TextWrapping="Wrap" />
-                <Button x:Name="RecoveryRestoreButton" Width="120" Height="28" Margin="0,8,0,0"
-                        Content="检查并恢复" Click="RecoveryRestore_Click" />
-            </StackPanel>
+                x:Name="RecoveryBorder" Visibility="Collapsed"
+                IsVisibleChanged="RecoveryBorder_IsVisibleChanged">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <DockPanel Grid.Row="0" LastChildFill="True">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button x:Name="RecoveryRefreshButton" Width="90" Height="28" Margin="0,0,8,0"
+                                Content="重新检查" Click="RecoveryRefresh_Click" />
+                        <Button x:Name="RecoveryCopyDiagnosticsButton" Width="110" Height="28"
+                                Content="复制恢复诊断" Click="RecoveryCopyDiagnostics_Click" />
+                    </StackPanel>
+                    <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="#E65100"
+                               VerticalAlignment="Center" Text="检测到未解决的恢复会话" />
+                </DockPanel>
+
+                <TextBlock x:Name="RecoveryStatusText" Grid.Row="1" Margin="0,6,0,8" FontSize="12"
+                           Foreground="#6D4C41" TextWrapping="Wrap" />
+
+                <DataGrid x:Name="RecoverySessionsGrid" Grid.Row="2"
+                          AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                          SelectionMode="Single" SelectionUnit="FullRow" RowHeight="27"
+                          SelectionChanged="RecoverySessionsGrid_SelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="会话" Width="80" Binding="{Binding SessionIdShort}" />
+                        <DataGridTextColumn Header="显示器" Width="120" Binding="{Binding TargetDeviceName}" />
+                        <DataGridTextColumn Header="开始时间" Width="150" Binding="{Binding StartedAtLocal}" />
+                        <DataGridTextColumn Header="Lifecycle" Width="150" Binding="{Binding Lifecycle}" />
+                        <DataGridTextColumn Header="处置" Width="110" Binding="{Binding Handling}" />
+                        <DataGridTextColumn Header="安全分类" Width="*" Binding="{Binding Safety}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <TextBox x:Name="RecoverySessionDetailsText" Grid.Row="3" Margin="0,8,0,8"
+                         MinHeight="72" MaxHeight="105" IsReadOnly="True" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto" Background="#FFFFF8" BorderBrush="#E0C080"
+                         Padding="6" Text="请选择一个恢复会话。" />
+
+                <DockPanel Grid.Row="4">
+                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="#795548"
+                               Text="一次只处理一个会话；每次处理前都会重新读取当前持久化状态和真实桌面。" />
+                    <Button x:Name="RecoveryRestoreButton" DockPanel.Dock="Right"
+                            Width="165" Height="30" Margin="12,0,0,0" IsEnabled="False"
+                            Content="检查并恢复选中会话" Click="RecoveryRestoreSelected_Click" />
+                </DockPanel>
+            </Grid>
         </Border>
     </Grid>
 </Window>
