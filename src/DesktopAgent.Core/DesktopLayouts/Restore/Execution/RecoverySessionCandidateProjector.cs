@@ -3,8 +3,8 @@ namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 /// <summary>
 /// 持久化恢复候选经过 Core 权威解释后的结果。
 ///
-/// HasCorruption=true 表示候选中至少一条记录的旧兼容字段与 Lifecycle 投影冲突；
-/// 此时 Unresolved 必须为空，调用方应 fail-closed，而不是尝试从冲突字段猜业务语义。
+/// HasCorruption=true 表示候选集合本身包含非法条目；
+/// 此时 Unresolved 必须为空，调用方应 fail-closed。
 /// </summary>
 public sealed record RecoverySessionCandidateProjectionResult
 {
@@ -47,10 +47,8 @@ public sealed record RecoverySessionCandidateProjectionResult
 ///
 /// 权限边界：
 /// - Lifecycle / Disposition 负责业务解释；
-/// - RequiresManualRecovery / IsPositionUncertain 仅负责兼容一致性校验；
-/// - 兼容字段与投影冲突时只允许得出 corruption，不允许生成新的业务状态。
-///
-/// 本类型不读取桌面、不访问 Store、不执行 Writer，也不修改输入顺序。
+/// - Store 只负责提供候选；
+/// - 本类型不读取桌面、不访问 Store、不执行 Writer，也不修改输入顺序。
 /// </summary>
 public static class RecoverySessionCandidateProjector
 {
@@ -62,7 +60,7 @@ public static class RecoverySessionCandidateProjector
         var unresolved = new List<RecoverySessionRecord>(candidates.Count);
         foreach (var record in candidates)
         {
-            if (record is null || !record.HasConsistentCompatibilityFlags())
+            if (record is null)
                 return RecoverySessionCandidateProjectionResult.Corrupted();
 
             if (record.GetDisposition().IsUnresolved)
