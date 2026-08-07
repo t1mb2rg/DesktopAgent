@@ -36,7 +36,7 @@ public sealed class PersistedRecoveryCoordinator
 
     /// <summary>
     /// 返回经过 Core 权威投影后的未解决会话。
-    /// Store 只提供候选；兼容字段漂移属于 corruption，不允许形成独立业务状态。
+    /// Store 只提供候选；Lifecycle / Disposition 拥有最终业务解释权。
     /// </summary>
     public async Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
         CancellationToken ct = default)
@@ -46,7 +46,7 @@ public sealed class PersistedRecoveryCoordinator
         if (projection.HasCorruption)
         {
             throw new InvalidDataException(
-                "恢复候选中的兼容状态字段与 Lifecycle 投影不一致。");
+                "恢复候选集合包含无法由 Core 安全解释的损坏记录。");
         }
 
         return projection.Unresolved;
@@ -503,8 +503,6 @@ public sealed class PersistedRecoveryCoordinator
         var checkpoint = currentCp with
         {
             Lifecycle = RecoverySessionLifecycle.Executing,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -530,8 +528,6 @@ public sealed class PersistedRecoveryCoordinator
         var final = currentCp with
         {
             Lifecycle = RecoverySessionLifecycle.Completed,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -563,8 +559,6 @@ public sealed class PersistedRecoveryCoordinator
         var final = currentCp with
         {
             Lifecycle = RecoverySessionLifecycle.FailedAndRolledBack,
-            RequiresManualRecovery = false,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -610,8 +604,6 @@ public sealed class PersistedRecoveryCoordinator
         var final = currentCp with
         {
             Lifecycle = RecoverySessionLifecycle.FailedRollbackIncomplete,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = false,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
@@ -665,8 +657,6 @@ public sealed class PersistedRecoveryCoordinator
         var final = currentCp with
         {
             Lifecycle = RecoverySessionLifecycle.PositionUncertain,
-            RequiresManualRecovery = true,
-            IsPositionUncertain = true,
             LastFailedStepIndex = null,
             RollbackAttempts = rollbackAttempts.OrderBy(a => a.AttemptIndex).ToArray(),
             CompletedRollbackSourceStepIndexes = completedRollbackIndexes.OrderBy(x => x).ToArray(),
