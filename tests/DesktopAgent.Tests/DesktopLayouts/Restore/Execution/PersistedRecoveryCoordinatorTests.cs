@@ -1,8 +1,6 @@
 using DesktopAgent.Core.DesktopIcons;
-using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
-using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.WindowsInterop.DesktopIcons;
@@ -14,665 +12,665 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
 {
     private readonly string _tempDir;
     private readonly string _dbPath;
-    private static readonly string TD = @"\\.\DISPLAY1";
+
+    private const string TD = @"\\.\DISPLAY1";
     private static readonly PixelRect WA = new(0, 0, 1920, 1080);
+    private static readonly PixelPoint A0 = new(160, 80);
+    private static readonly PixelPoint A1 = new(240, 80);
+    private static readonly PixelPoint B0 = new(160, 160);
+    private static readonly PixelPoint B1 = new(240, 160);
+    private static readonly PixelPoint C0 = new(160, 240);
+    private static readonly PixelPoint C1 = new(240, 240);
 
     public PersistedRecoveryCoordinatorTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"Tests.B0.{Guid.NewGuid():N}");
+        _tempDir = Path.Combine(Path.GetTempPath(), $"Tests.RecoveryR2.{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
         _dbPath = Path.Combine(_tempDir, "test.db");
     }
-    public void Dispose() { try { Directory.Delete(_tempDir, true); } catch { } }
 
-    private SqliteRecoverySessionStore CreateStore() => new(_dbPath);
-
-    // ═══════════ Helpers ═══════════
-
-    private static TargetDisplayLayoutExecutionStep MakeStep(int idx, string sid, int fx, int fy, int tx, int ty)
-        => new(idx, sid, $"N_{sid}", new PixelPoint(fx, fy), new PixelPoint(tx, ty),
-            TargetDisplayLayoutExecutionStepKind.MoveToTarget, TD);
-
-    private static TargetDisplayLayoutExecutionPlan MakeExecPlan(params TargetDisplayLayoutExecutionStep[] steps)
-        => new(TD, true, false, steps,
-            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
-            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
-
-    private static TargetDisplayLayoutRestorePlan MakeRestorePlan(
-        string sid, int fx, int fy, int tx, int ty, string targetDevice)
+    public void Dispose()
     {
-        var snapId = Guid.NewGuid();
-        var snaps = new DesktopIconSnapshotItem[]
-        {
-            new(0, sid, $"N_{sid}", null, ItemKind.File, new PixelPoint(tx, ty), targetDevice, false, true)
-        };
-        var lives = new DesktopIconDescriptor[]
-        {
-            new(sid, $"N_{sid}", null, ItemKind.File, new PixelPoint(fx, fy), targetDevice, false, true)
-        };
-        var ss = new DesktopLayoutSnapshot(snapId, DateTimeOffset.UtcNow, targetDevice,
-            ConnectionMethod.FindWindowSW, 1, snaps);
-        var r = new DesktopIconReadResult(lives, 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        return TargetDisplayLayoutRestorePlanner.CreatePlan(ss, r,
-            new[] { new DisplayDescriptor(targetDevice, new PixelRect(0, 0, 1920, 1080), WA, 96, 96, true) },
-            new DesktopIconPositioningCapabilities(false, new PixelPoint(80, 80), ConnectionMethod.FindWindowSW, null),
-            targetDevice);
+        try { Directory.Delete(_tempDir, recursive: true); }
+        catch { }
     }
 
-    private static TargetDisplayLayoutExecutionAttemptResult MakeFwdAttempt(
-        int attemptIdx, int stepIdx, string sid, int fx, int fy, int tx, int ty)
-        => TargetDisplayLayoutExecutionAttemptResult.FromExactForward(
-            attemptIdx, stepIdx,
-            MakeStep(stepIdx, sid, fx, fy, tx, ty),
-            new DesktopIconMoveResult(sid, new PixelPoint(fx, fy), new PixelPoint(tx, ty), new PixelPoint(tx, ty),
-                ConnectionMethod.FindWindowSW, null));
-
-    private static DisplayDescriptor MakeDisplay()
-        => new(TD, new PixelRect(0, 0, 1920, 1080), WA, 96, 96, true);
-
-    /// <summary>Seeds a session record into the store and returns it.</summary>
-    private async Task<RecoverySessionRecord> SeedAsync(
-        SqliteRecoverySessionStore store,
-        RecoverySessionLifecycle lifecycle,
-        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> fwdAttempts,
-        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult> rbAttempts,
-        int[] completedFwd,
-        int[] completedRb,
-        string? fwdFailType = null,
-        string? fwdFailMsg = null)
-    {
-        await store.InitializeAsync();
-        var plan = MakeRestorePlan("a", 160, 80, 240, 80, TD);
-        var execPlan = MakeExecPlan(MakeStep(0, "a", 160, 80, 240, 80));
-        var record = new RecoverySessionRecord
-        {
-            SessionId = Guid.NewGuid(),
-            SafetySnapshotId = Guid.NewGuid(),
-            TargetDeviceName = TD,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            SourceRestorePlan = plan,
-            ExecutionPlan = execPlan,
-            Lifecycle = lifecycle,
-            RequiresManualRecovery = lifecycle is RecoverySessionLifecycle.FailedRollbackIncomplete or RecoverySessionLifecycle.PositionUncertain,
-            IsPositionUncertain = lifecycle == RecoverySessionLifecycle.PositionUncertain,
-            ForwardAttempts = fwdAttempts,
-            RollbackAttempts = rbAttempts,
-            CompletedForwardStepIndexes = completedFwd,
-            CompletedRollbackSourceStepIndexes = completedRb,
-            ForwardFailureType = fwdFailType,
-            ForwardFailureMessage = fwdFailMsg,
-            Revision = 1,
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-        };
-        record.Validate();
-        await store.SaveAsync(record);
-        var fresh = await store.GetAsync(record.SessionId);
-        return fresh!;
-    }
-
-    // ═══════════ Spy infrastructure ═══════════
-
-    private sealed class EventStore : IRecoverySessionStore
-    {
-        private readonly SqliteRecoverySessionStore _inner;
-        public List<string> Events { get; }
-        public bool FailUpdate;
-        public int FailUpdateAfterCount = -1;
-        private int _updateCallCount;
-
-        public EventStore(string dbPath, List<string>? events = null)
-        { _inner = new SqliteRecoverySessionStore(dbPath); Events = events ?? new List<string>(); }
-        public Task InitializeAsync(CancellationToken ct = default) => _inner.InitializeAsync(ct);
-
-        public async Task SaveAsync(RecoverySessionRecord r, CancellationToken ct = default)
-        {
-            Events.Add("Save");
-            await _inner.SaveAsync(r, ct);
-        }
-        public async Task<RecoverySessionRecord> UpdateAsync(RecoverySessionRecord r, CancellationToken ct = default)
-        {
-            Events.Add($"Update:{r.Lifecycle}:Revision{r.Revision}");
-            _updateCallCount++;
-            if (FailUpdateAfterCount >= 0 && _updateCallCount > FailUpdateAfterCount)
-                throw new InvalidOperationException("injected Update failure");
-            if (FailUpdate) throw new InvalidOperationException("injected Update failure");
-            return await _inner.UpdateAsync(r, ct);
-        }
-        public async Task<RecoverySessionRecord?> GetAsync(Guid sid, CancellationToken ct = default)
-        {
-            Events.Add("Get");
-            return await _inner.GetAsync(sid, ct);
-        }
-        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(int limit = 50, CancellationToken ct = default)
-            => _inner.ListUnresolvedAsync(limit, ct);
-    }
-
-    private sealed class SpyWriter : IDesktopIconPositionWriter
-    {
-        private readonly string _sid;
-        private readonly PixelPoint _from, _to;
-        private int _callCount;
-        public List<string> Events { get; }
-        public bool FailMove;
-
-        public SpyWriter(List<string> events, string sid, PixelPoint from, PixelPoint to)
-        { Events = events; _sid = sid; _from = from; _to = to; }
-
-        public DesktopIconPositioningCapabilities GetCapabilities()
-            => new(false, new PixelPoint(80, 80), ConnectionMethod.FindWindowSW, null);
-
-        public DesktopIconMoveResult MoveDesktopIcon(string sid, PixelPoint target)
-        {
-            Events.Add($"Writer:{_callCount++}");
-            if (FailMove) throw new InvalidOperationException("Writer BOMB");
-            return new DesktopIconMoveResult(sid, _from, target, target, ConnectionMethod.FindWindowSW, null);
-        }
-    }
-
-    /// <summary>Verification reader that emits an event on each read.</summary>
-    private sealed class EventReader : IDesktopIconReader
-    {
-        private readonly List<string> _events;
-        private readonly DesktopIconDescriptor _icon;
-        public EventReader(List<string> events, DesktopIconDescriptor icon) { _events = events; _icon = icon; }
-        public DesktopIconReadResult ReadDesktopIcons()
-        {
-            _events.Add("VerificationRead");
-            return new DesktopIconReadResult(
-                new List<DesktopIconDescriptor> { _icon }, 0, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        }
-    }
-
-    /// <summary>Delegates to first reader, then second reader.</summary>
-    private sealed class CompositeReader : IDesktopIconReader
-    {
-        private readonly IDesktopIconReader _first;
-        private readonly IDesktopIconReader _second;
-        private int _callCount;
-        public CompositeReader(IDesktopIconReader first, IDesktopIconReader second) { _first = first; _second = second; }
-        public DesktopIconReadResult ReadDesktopIcons()
-            => (_callCount++ == 0 ? _first : _second).ReadDesktopIcons();
-    }
-
-    // ═══════════════════════════════════════════════
-    // 1. Recovery_UsesLatestRevisionForTerminalAfterCheckpoint
-    // ═══════════════════════════════════════════════
     [Fact]
-    public async Task Recovery_UsesLatestRevisionForTerminalAfterCheckpoint()
+    public async Task ObservedDesired_WithoutForwardCheckpoint_CommitsWithoutWriter()
     {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
+        var step = Step(0, "a", A0, A1);
+        var seed = await SeedAsync(Plan(step));
 
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        // Verification reader that emits to shared event stream
-        var verifyReader = new EventReader(sharedEvents,
-            new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(160, 80), TD, false, true));
-        // Environment check: icon at ToPosition (240,80) — precondition passes
-        var envReader = new ScriptedDesktopIconReader();
-        envReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1));
+        var writer = new MutableWriter(events, desktop);
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
 
-        // Compose: first read from envReader, second from verifyReader
-        var compositeReader = new CompositeReader(envReader, verifyReader);
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, compositeReader, writer, new StaThreadExecutor());
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+        Assert.True(result.IsSuccess);
+        Assert.DoesNotContain(events, e => e.StartsWith("Writer:", StringComparison.Ordinal));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.Completed, fresh.Lifecycle);
+        Assert.Empty(fresh.ForwardAttempts);
+        Assert.Empty(fresh.CompletedForwardStepIndexes);
+        Assert.NotNull(fresh.VerificationResult);
+        Assert.Equal(ExecutionVerificationPhase.Forward, fresh.VerificationResult.Phase);
+        Assert.Equal(ExecutionVerificationStatus.Passed, fresh.VerificationResult.Status);
+    }
+
+    [Fact]
+    public async Task ObservedOriginal_WithStaleForwardCheckpoint_RestoresWithoutWriter()
+    {
+        var step = Step(0, "a", A0, A1);
+        var fwd = TargetDisplayLayoutExecutionAttemptResult.FromExactForward(
+            0,
+            0,
+            step,
+            Move("a", A0, A1));
+
+        var seed = await SeedAsync(
+            Plan(step),
+            forwardAttempts: new[] { fwd },
+            completedForward: new[] { 0 },
+            forwardFailureType: "Interrupted",
+            forwardFailureMessage: "crash");
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A0));
+        var writer = new MutableWriter(events, desktop);
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
 
         var result = await coordinator.RecoverAsync(seed);
 
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
-        // Precise event sequence: Get(initial), Writer:0, Update:Executing(Rev1), Get,
-        // VerificationRead, Update:FailedAndRolledBack(Rev2), Get
-        var expected = new[]
-        {
-            "Get", "Writer:0",
-            "Update:Executing:Revision1", "Get",
-            "VerificationRead",
-            "Update:FailedAndRolledBack:Revision2", "Get"
-        };
-        Assert.Equal(expected, sharedEvents);
-        // Fresh store verification
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.FailedAndRolledBack, record.Lifecycle);
-        Assert.Equal(3, record.Revision);
+        Assert.DoesNotContain(events, e => e.StartsWith("Writer:", StringComparison.Ordinal));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.FailedAndRolledBack, fresh.Lifecycle);
+        Assert.Empty(fresh.RollbackAttempts);
+        Assert.Empty(fresh.CompletedRollbackSourceStepIndexes);
+        Assert.Equal(ExecutionVerificationPhase.Rollback, fresh.VerificationResult?.Phase);
+        Assert.Equal(ExecutionVerificationStatus.Passed, fresh.VerificationResult?.Status);
     }
 
-    // ═══════════════════════════════════════════════
-    // 2. Recovery_ZeroPendingSteps_PersistsSafeTerminal
-    // ═══════════════════════════════════════════════
     [Fact]
-    public async Task Recovery_ZeroPendingSteps_PersistsSafeTerminal()
+    public async Task ObservedThirdPosition_PersistsPositionUncertainWithoutWriter()
     {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var rbAttempt = TargetDisplayLayoutExecutionAttemptResult.FromExactRollback(
-            1, 0,
-            MakeStep(0, "a", 160, 80, 240, 80),
-            new PixelPoint(160, 80), new PixelPoint(240, 80),
-            new DesktopIconMoveResult("a", new PixelPoint(240, 80), new PixelPoint(160, 80), new PixelPoint(160, 80),
-                ConnectionMethod.FindWindowSW, null));
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, new[] { rbAttempt },
-            new[] { 0 }, new[] { 0 },
-            "TestInterrupted", "测试中断。");
+        var seed = await SeedAsync(Plan(Step(0, "a", A0, A1)));
 
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        var iconReader = new ScriptedDesktopIconReader();
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", new PixelPoint(999, 999)));
+        var writer = new MutableWriter(events, desktop);
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.RequiresManualRecovery);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("RecoveryObservationNeedsAttention", result.RecoveryFailureType);
+        Assert.DoesNotContain(events, e => e.StartsWith("Writer:", StringComparison.Ordinal));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, fresh.Lifecycle);
+        Assert.Equal("RecoveryObservationNeedsAttention", fresh.RecoveryFailureType);
+    }
+
+    [Fact]
+    public async Task IncompleteRead_PersistsPositionUncertainWithoutWriter()
+    {
+        var seed = await SeedAsync(Plan(Step(0, "a", A0, A1)));
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1))
+        {
+            FailedItemCount = 1,
+        };
+        var writer = new MutableWriter(events, desktop);
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("RecoveryObservationNeedsAttention", result.RecoveryFailureType);
+        Assert.DoesNotContain(events, e => e.StartsWith("Writer:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task MixedKnown_RollsBackOnlyObservedDesired_ThenRestores()
+    {
+        var plan = Plan(
+            Step(0, "a", A0, A1),
+            Step(1, "b", B0, B1));
+        var seed = await SeedAsync(plan);
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1), ("b", B0));
+        var writer = new MutableWriter(events, desktop);
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
 
         var result = await coordinator.RecoverAsync(seed);
 
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
-        // 0 pending → 0 Writer calls, 1 terminal Update (Revision=1→2)
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
-        Assert.Contains("Update:FailedAndRolledBack:Revision1", sharedEvents);
-        Assert.Equal(0, result.RollbackAttempts.Count - seed.RollbackAttempts.Count); // no new attempts
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.FailedAndRolledBack, record.Lifecycle);
-        Assert.Equal(2, record.Revision);
+        Assert.Equal(new[] { "a" }, writer.WrittenStableIds);
+        Assert.Equal(A0, desktop.GetPosition("a"));
+        Assert.Equal(B0, desktop.GetPosition("b"));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.FailedAndRolledBack, fresh.Lifecycle);
+        var attempt = Assert.Single(fresh.RollbackAttempts);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess, attempt.Outcome);
+        Assert.Equal(new[] { 0 }, fresh.CompletedRollbackSourceStepIndexes);
     }
 
-    // ═══════════════════════════════════════════════
-    // 3. Recovery_FailedVerification_PersistsLegalTerminal
-    // ═══════════════════════════════════════════════
     [Fact]
-    public async Task Recovery_FailedVerification_PersistsLegalTerminal()
+    public async Task WriterThrowsAfterSideEffect_ObservationWinsAndRestores()
     {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
+        var plan = Plan(
+            Step(0, "a", A0, A1),
+            Step(1, "b", B0, B1));
+        var seed = await SeedAsync(plan);
 
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        var iconReader = new ScriptedDesktopIconReader();
-        // Environment check: icon at ToPosition (240,80)
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
-        // Independent verification: icon STILL at ToPosition — NOT restored
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1), ("b", B0));
+        var writer = new MutableWriter(events, desktop)
+        {
+            Behavior = WriterBehavior.ThrowAfterMove,
+        };
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
 
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
+        Assert.False(result.IsPositionUncertain);
+        Assert.Equal(A0, desktop.GetPosition("a"));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.FailedAndRolledBack, fresh.Lifecycle);
+        var attempt = Assert.Single(fresh.RollbackAttempts);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.WriterException, attempt.Outcome);
+        Assert.Empty(fresh.CompletedRollbackSourceStepIndexes);
+    }
+
+    [Fact]
+    public async Task WriterThrowsBeforeSideEffect_RemainsKnownIncompleteNotUncertain()
+    {
+        var plan = Plan(
+            Step(0, "a", A0, A1),
+            Step(1, "b", B0, B1));
+        var seed = await SeedAsync(plan);
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1), ("b", B0));
+        var writer = new MutableWriter(events, desktop)
+        {
+            Behavior = WriterBehavior.ThrowBeforeMove,
+        };
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
 
         var result = await coordinator.RecoverAsync(seed);
 
         Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete, result.Status);
         Assert.True(result.RequiresManualRecovery);
         Assert.False(result.IsPositionUncertain);
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.FailedRollbackIncomplete, record.Lifecycle);
-        Assert.True(record.RequiresManualRecovery);
-        Assert.False(record.IsPositionUncertain);
-        Assert.False(string.IsNullOrWhiteSpace(record.ForwardFailureType));
-        Assert.False(string.IsNullOrWhiteSpace(record.ForwardFailureMessage));
-        Assert.Equal("RecoveryVerificationFailed", record.RecoveryFailureType);
-        Assert.False(string.IsNullOrWhiteSpace(record.RecoveryFailureMessage));
-        Assert.NotNull(record.VerificationResult);
-        Assert.Equal(ExecutionVerificationStatus.Failed, record.VerificationResult.Status);
+        Assert.Equal("RecoveryWriteDidNotRestore", result.RecoveryFailureType);
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.FailedRollbackIncomplete, fresh.Lifecycle);
+        Assert.False(fresh.IsPositionUncertain);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.WriterException,
+            Assert.Single(fresh.RollbackAttempts).Outcome);
     }
 
-    // ═══════════════════════════════════════════════
-    // 4. Recovery_StableIdMissing_NoWriter_NoAttempt
-    // ═══════════════════════════════════════════════
     [Fact]
-    public async Task Recovery_StableIdMissing_NoWriter_NoAttempt()
+    public async Task WriterStableIdMismatch_FailsClosedEvenIfPlannedPositionsLookRestored()
     {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
+        var plan = Plan(
+            Step(0, "a", A0, A1),
+            Step(1, "b", B0, B1));
+        var seed = await SeedAsync(plan);
 
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        // Environment check: "a" NOT present → StableId missing
-        var iconReader = new ScriptedDesktopIconReader();
-        iconReader.Enqueue([new DesktopIconDescriptor("b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
-
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
-
-        var beforeRbCount = seed.RollbackAttempts.Count;
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.True(result.RequiresManualRecovery);
-        Assert.True(result.IsPositionUncertain);
-        // 0 Writer calls
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
-        // RollbackAttempts count unchanged
-        Assert.Equal(beforeRbCount, result.RollbackAttempts.Count);
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
-        Assert.Equal("RecoveryStableIdMissing", record.RecoveryFailureType);
-    }
-
-    // ═══════════════════════════════════════════════
-    // 5. Recovery_PreconditionPositionMismatch_NoWriter_NoAttempt
-    // ═══════════════════════════════════════════════
-    [Fact]
-    public async Task Recovery_PreconditionPositionMismatch_NoWriter_NoAttempt()
-    {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
-
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        // Environment check: "a" at wrong position (999,999) — precondition mismatch
-        var iconReader = new ScriptedDesktopIconReader();
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(999, 999), TD, false, true)]);
-
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
-
-        var beforeRbCount = seed.RollbackAttempts.Count;
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        // 0 Writer calls
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
-        // RollbackAttempts unchanged — no fake PreviousPositionMismatch Attempt
-        Assert.Equal(beforeRbCount, result.RollbackAttempts.Count);
-        Assert.DoesNotContain(result.RollbackAttempts,
-            a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.PreviousPositionMismatch);
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
-        Assert.Equal("RecoveryPreconditionPositionMismatch", record.RecoveryFailureType);
-    }
-
-    // ═══════════════════════════════════════════════
-    // 6. Recovery_InvalidStepIndex_NoWriter_NoAttempt
-    // ═══════════════════════════════════════════════
-    [Fact]
-    public async Task Recovery_InvalidStepIndex_NoWriter_NoAttempt()
-    {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
-
-        var sharedEvents = new List<string>();
-        // TamperGet returns record with out-of-range pending step index
-        // The corrupted record triggers InvalidStepIndex → PersistPreWriteFailureAsync →
-        // Validate fails (data inconsistent) → TerminalPersistFailed.
-        // DB stays at Executing (defensive path against corruption).
-        var tampered = seed with { CompletedForwardStepIndexes = new[] { 99 } };
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var wrapperStore = new TamperGetStore(estore, tampered);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        var iconReader = new ScriptedDesktopIconReader();
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(wrapperStore, topoReader, iconReader, writer, new StaThreadExecutor());
-
-        var beforeRbCount = seed.RollbackAttempts.Count;
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        // 0 Writer calls — the InvalidStepIndex is detected before any Writer
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
-        // Attempt count unchanged (no fake Attempts)
-        Assert.Equal(beforeRbCount, result.RollbackAttempts.Count);
-        // DB stays at Executing — corrupted record prevents valid persist
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.Executing, record.Lifecycle);
-        // RunResult carries TerminalPersistFailed
-        Assert.Equal("TerminalPersistFailed", result.ForwardFailureType);
-    }
-
-    private sealed class TamperGetStore : IRecoverySessionStore
-    {
-        private readonly IRecoverySessionStore _inner;
-        private readonly RecoverySessionRecord _tampered;
-        public TamperGetStore(IRecoverySessionStore inner, RecoverySessionRecord tampered)
-        { _inner = inner; _tampered = tampered; }
-        public Task InitializeAsync(CancellationToken ct = default) => _inner.InitializeAsync(ct);
-        public Task SaveAsync(RecoverySessionRecord r, CancellationToken ct = default) => _inner.SaveAsync(r, ct);
-        public Task<RecoverySessionRecord> UpdateAsync(RecoverySessionRecord r, CancellationToken ct = default) => _inner.UpdateAsync(r, ct);
-        public async Task<RecoverySessionRecord?> GetAsync(Guid sid, CancellationToken ct = default)
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1), ("b", B0));
+        var writer = new MutableWriter(events, desktop)
         {
-            var r = await _inner.GetAsync(sid, ct);
-            if (r is not null && r.SessionId == _tampered.SessionId) return _tampered;
-            return r;
+            Behavior = WriterBehavior.WrongStableIdAfterMove,
+        };
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.True(result.IsPositionUncertain);
+        Assert.Equal("RollbackStableIdMismatch", result.RecoveryFailureType);
+        Assert.Equal(A0, desktop.GetPosition("a"));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, fresh.Lifecycle);
+        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch,
+            Assert.Single(fresh.RollbackAttempts).Outcome);
+    }
+
+    [Fact]
+    public async Task AutoArrangeEnabled_LeavesMixedStateKnownAndDoesNotWrite()
+    {
+        var plan = Plan(
+            Step(0, "a", A0, A1),
+            Step(1, "b", B0, B1));
+        var seed = await SeedAsync(plan);
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1), ("b", B0));
+        var writer = new MutableWriter(events, desktop)
+        {
+            IsAutoArrangeEnabled = true,
+        };
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete, result.Status);
+        Assert.False(result.IsPositionUncertain);
+        Assert.Equal("RecoveryAutoArrangeEnabled", result.RecoveryFailureType);
+        Assert.Empty(writer.WrittenStableIds);
+    }
+
+    [Fact]
+    public async Task MultipleDesiredItems_CheckpointsBetweenWritesUsingFreshRevision()
+    {
+        var plan = Plan(
+            Step(0, "a", A0, A1),
+            Step(1, "b", B0, B1),
+            Step(2, "c", C0, C1));
+        var seed = await SeedAsync(plan);
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(
+            events,
+            ("a", A1),
+            ("b", B1),
+            ("c", C0));
+        var writer = new MutableWriter(events, desktop);
+        var store = new EventStore(_dbPath, events);
+        var coordinator = Coordinator(store, desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack, result.Status);
+        Assert.Equal(new[] { "b", "a" }, writer.WrittenStableIds);
+        Assert.Contains("Update:Executing:Revision1", events);
+        Assert.Contains("Update:FailedAndRolledBack:Revision2", events);
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(3, fresh.Revision);
+        Assert.Equal(2, fresh.RollbackAttempts.Count);
+        Assert.Equal(new[] { 0, 1 }, fresh.CompletedRollbackSourceStepIndexes);
+    }
+
+    [Fact]
+    public async Task SafeTerminalPersistFailure_ReturnsUnpersistedPositionUncertain()
+    {
+        var seed = await SeedAsync(Plan(Step(0, "a", A0, A1)));
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1));
+        var writer = new MutableWriter(events, desktop);
+        var store = new EventStore(_dbPath, events)
+        {
+            FailUpdate = true,
+        };
+        var coordinator = Coordinator(store, desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("CompletedTerminalPersistFailed", result.RecoveryFailureType);
+        Assert.DoesNotContain(events, e => e.StartsWith("Writer:", StringComparison.Ordinal));
+
+        var fresh = await CreateStore().GetAsync(seed.SessionId);
+        Assert.NotNull(fresh);
+        Assert.Equal(RecoverySessionLifecycle.Executing, fresh.Lifecycle);
+    }
+
+    [Fact]
+    public async Task StagingPlan_FailsClosedWithoutWriter()
+    {
+        var staging = new PixelPoint(600, 500);
+        var steps = new[]
+        {
+            new TargetDisplayLayoutExecutionStep(
+                0, "a", "N_a", A0, staging,
+                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 0),
+            new TargetDisplayLayoutExecutionStep(
+                1, "a", "N_a", staging, A1,
+                TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD, 0),
+        };
+        var execPlan = new TargetDisplayLayoutExecutionPlan(
+            TD,
+            true,
+            false,
+            steps,
+            new[] { new TargetDisplayLayoutStagingAssignment("a", staging, 0, 1) },
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+        var seed = await SeedAsync(execPlan);
+
+        var events = new List<string>();
+        var desktop = new MutableDesktopReader(events, ("a", A1));
+        var writer = new MutableWriter(events, desktop);
+        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
+
+        var result = await coordinator.RecoverAsync(seed);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
+        Assert.Equal("RecoveryStagingNotSupported", result.RecoveryFailureType);
+        Assert.Empty(writer.WrittenStableIds);
+    }
+
+    private PersistedRecoveryCoordinator Coordinator(
+        IRecoverySessionStore store,
+        IDesktopIconReader reader,
+        IDesktopIconPositionWriter writer)
+        => new(
+            store,
+            new FakeDisplayTopologyReader(TD, WA),
+            reader,
+            writer,
+            new StaThreadExecutor());
+
+    private SqliteRecoverySessionStore CreateStore() => new(_dbPath);
+
+    private async Task<RecoverySessionRecord> SeedAsync(
+        TargetDisplayLayoutExecutionPlan executionPlan,
+        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult>? forwardAttempts = null,
+        IReadOnlyList<TargetDisplayLayoutExecutionAttemptResult>? rollbackAttempts = null,
+        IReadOnlyList<int>? completedForward = null,
+        IReadOnlyList<int>? completedRollback = null,
+        string? forwardFailureType = null,
+        string? forwardFailureMessage = null)
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var record = new RecoverySessionRecord
+        {
+            SessionId = Guid.NewGuid(),
+            SafetySnapshotId = Guid.NewGuid(),
+            TargetDeviceName = TD,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            SourceRestorePlan = RestorePlanFor(executionPlan),
+            ExecutionPlan = executionPlan,
+            Lifecycle = RecoverySessionLifecycle.Executing,
+            RequiresManualRecovery = false,
+            IsPositionUncertain = false,
+            ForwardAttempts = forwardAttempts ?? Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+            RollbackAttempts = rollbackAttempts ?? Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+            CompletedForwardStepIndexes = completedForward ?? Array.Empty<int>(),
+            CompletedRollbackSourceStepIndexes = completedRollback ?? Array.Empty<int>(),
+            ForwardFailureType = forwardFailureType,
+            ForwardFailureMessage = forwardFailureMessage,
+            Revision = 1,
+            UpdatedAtUtc = DateTimeOffset.UtcNow,
+        };
+
+        record.Validate();
+        await store.SaveAsync(record);
+        return (await store.GetAsync(record.SessionId))!;
+    }
+
+    private static TargetDisplayLayoutRestorePlan RestorePlanFor(
+        TargetDisplayLayoutExecutionPlan executionPlan)
+    {
+        var directItems = executionPlan.Steps
+            .Where(step => step.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTarget)
+            .Select(step => new TargetDisplayLayoutRestorePlanItem(
+                step.StableId,
+                step.DisplayName,
+                step.ToPosition,
+                step.FromPosition,
+                TD,
+                TargetDisplayLayoutRestoreItemState.MoveRequired,
+                true,
+                false))
+            .ToArray();
+
+        // Staging 测试只需要一个结构合法的 SourceRestorePlan；具体 staging 语义由 ExecutionPlan 冻结副本承担。
+        if (directItems.Length == 0 && executionPlan.Steps.Count > 0)
+        {
+            var first = executionPlan.Steps[0];
+            directItems =
+            [
+                new TargetDisplayLayoutRestorePlanItem(
+                    first.StableId,
+                    first.DisplayName,
+                    executionPlan.Steps[^1].ToPosition,
+                    first.FromPosition,
+                    TD,
+                    TargetDisplayLayoutRestoreItemState.MoveRequired,
+                    true,
+                    false)
+            ];
         }
-        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(int limit = 50, CancellationToken ct = default)
+
+        return new TargetDisplayLayoutRestorePlan(
+            TD,
+            snapshotTargetIconCount: directItems.Length,
+            alreadyAtTargetCount: 0,
+            moveRequiredCount: directItems.Length,
+            missingCount: 0,
+            blockedCount: 0,
+            hasBlockingErrors: false,
+            requiresTemporaryStaging: executionPlan.UsesTemporaryStaging,
+            isNoOp: directItems.Length == 0,
+            items: directItems,
+            dependencies: Array.Empty<TargetDisplayLayoutRestoreDependency>(),
+            cycles: Array.Empty<TargetDisplayLayoutRestoreCycle>(),
+            issues: Array.Empty<TargetDisplayLayoutRestorePlanIssue>(),
+            moveExecutionOrder: directItems.Select(item => item.StableId).ToArray());
+    }
+
+    private static TargetDisplayLayoutExecutionStep Step(
+        int index,
+        string stableId,
+        PixelPoint from,
+        PixelPoint to)
+        => new(
+            index,
+            stableId,
+            $"N_{stableId}",
+            from,
+            to,
+            TargetDisplayLayoutExecutionStepKind.MoveToTarget,
+            TD);
+
+    private static TargetDisplayLayoutExecutionPlan Plan(
+        params TargetDisplayLayoutExecutionStep[] steps)
+        => new(
+            TD,
+            true,
+            steps.Length == 0,
+            steps,
+            Array.Empty<TargetDisplayLayoutStagingAssignment>(),
+            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
+
+    private static DesktopIconMoveResult Move(
+        string stableId,
+        PixelPoint previous,
+        PixelPoint target)
+        => new(
+            stableId,
+            previous,
+            target,
+            target,
+            ConnectionMethod.FindWindowSW,
+            null);
+
+    private sealed class EventStore : IRecoverySessionStore
+    {
+        private readonly SqliteRecoverySessionStore _inner;
+        public List<string> Events { get; }
+        public bool FailUpdate { get; init; }
+
+        public EventStore(string dbPath, List<string> events)
+        {
+            _inner = new SqliteRecoverySessionStore(dbPath);
+            Events = events;
+        }
+
+        public Task InitializeAsync(CancellationToken ct = default)
+            => _inner.InitializeAsync(ct);
+
+        public Task SaveAsync(RecoverySessionRecord record, CancellationToken ct = default)
+            => _inner.SaveAsync(record, ct);
+
+        public async Task<RecoverySessionRecord> UpdateAsync(
+            RecoverySessionRecord record,
+            CancellationToken ct = default)
+        {
+            Events.Add($"Update:{record.Lifecycle}:Revision{record.Revision}");
+            if (FailUpdate)
+                throw new InvalidOperationException("injected update failure");
+
+            return await _inner.UpdateAsync(record, ct);
+        }
+
+        public async Task<RecoverySessionRecord?> GetAsync(
+            Guid sessionId,
+            CancellationToken ct = default)
+        {
+            Events.Add("Get");
+            return await _inner.GetAsync(sessionId, ct);
+        }
+
+        public Task<IReadOnlyList<RecoverySessionRecord>> ListUnresolvedAsync(
+            int limit = 50,
+            CancellationToken ct = default)
             => _inner.ListUnresolvedAsync(limit, ct);
     }
 
-    // ═══════════════════════════════════════════════
-    // 7. Recovery_IncompleteDesktopRead_NoWriter_NoAttempt
-    // ═══════════════════════════════════════════════
-    [Fact]
-    public async Task Recovery_IncompleteDesktopRead_NoWriter_NoAttempt()
+    private sealed class MutableDesktopReader : IDesktopIconReader
     {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
+        private readonly Dictionary<string, PixelPoint> _positions =
+            new(StringComparer.Ordinal);
+        private readonly List<string> _events;
 
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-        // Environment check: FailedItemCount=1 → incomplete read
-        var rawRead = new DesktopIconReadResult(
-            new List<DesktopIconDescriptor>(), 1, ConnectionMethod.FindWindowSW, TimeSpan.Zero, null);
-        var iconReader = new FuncDesktopIconReader(() => rawRead);
+        public int FailedItemCount { get; set; }
 
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
-
-        var beforeRbCount = seed.RollbackAttempts.Count;
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
-        Assert.Equal(beforeRbCount, result.RollbackAttempts.Count);
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
-        Assert.Equal("RecoveryDesktopReadIncomplete", record.RecoveryFailureType);
-    }
-
-    /// <summary>Simple IDesktopIconReader that returns a fixed result.</summary>
-    private sealed class FuncDesktopIconReader : IDesktopIconReader
-    {
-        private readonly Func<DesktopIconReadResult> _fn;
-        public FuncDesktopIconReader(Func<DesktopIconReadResult> fn) => _fn = fn;
-        public DesktopIconReadResult ReadDesktopIcons() => _fn();
-    }
-
-    // ═══════════════════════════════════════════════
-    // 8. Recovery_PreWriteFailurePersistFails_ReturnsTerminalPersistFailed
-    // ═══════════════════════════════════════════════
-    [Theory]
-    [InlineData("StableIdMissing")]
-    [InlineData("PositionMismatch")]
-    public async Task Recovery_PreWriteFailurePersistFails_ReturnsTerminalPersistFailed(string failureMode)
-    {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
-
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents) { FailUpdate = true };
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80));
-
-        IDesktopIconReader iconReader = failureMode switch
+        public MutableDesktopReader(
+            List<string> events,
+            params (string StableId, PixelPoint Position)[] items)
         {
-            "StableIdMissing" => new ScriptedDesktopIconReader(),
-            "PositionMismatch" => new ScriptedDesktopIconReader(),
-            _ => throw new ArgumentException(failureMode)
-        };
+            _events = events;
+            foreach (var item in items)
+                _positions[item.StableId] = item.Position;
+        }
 
-        if (failureMode == "StableIdMissing")
-            ((ScriptedDesktopIconReader)iconReader).Enqueue([new DesktopIconDescriptor("b", "N_b", null, ItemKind.File, new PixelPoint(0, 0), TD, false, true)]);
-        else
-            ((ScriptedDesktopIconReader)iconReader).Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(999, 999), TD, false, true)]);
+        public PixelPoint GetPosition(string stableId) => _positions[stableId];
 
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
+        public void SetPosition(string stableId, PixelPoint position)
+            => _positions[stableId] = position;
 
-        var beforeRbCount = seed.RollbackAttempts.Count;
-        var result = await coordinator.RecoverAsync(seed);
+        public DesktopIconReadResult ReadDesktopIcons()
+        {
+            _events.Add("Read");
+            var icons = _positions
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => new DesktopIconDescriptor(
+                    pair.Key,
+                    $"N_{pair.Key}",
+                    null,
+                    ItemKind.File,
+                    pair.Value,
+                    TD,
+                    false,
+                    true))
+                .ToArray();
 
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.True(result.RequiresManualRecovery);
-        Assert.True(result.IsPositionUncertain);
-        Assert.Contains("TerminalPersistFailed", result.ForwardFailureType);
-        // 0 Writer calls
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:"));
-        // Attempt count unchanged
-        Assert.Equal(beforeRbCount, result.RollbackAttempts.Count);
+            return new DesktopIconReadResult(
+                icons,
+                FailedItemCount,
+                ConnectionMethod.FindWindowSW,
+                TimeSpan.Zero,
+                null);
+        }
     }
 
-    // ═══════════════════════════════════════════════
-    // 9. Recovery_WriterException_UsesFreshCheckpointAndStops
-    // ═══════════════════════════════════════════════
-    [Fact]
-    public async Task Recovery_WriterException_UsesFreshCheckpointAndStops()
+    private enum WriterBehavior
     {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
-
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        var writer = new SpyWriter(sharedEvents, "a", new(240, 80), new(160, 80)) { FailMove = true };
-        var iconReader = new ScriptedDesktopIconReader();
-        // Environment check: icon at ToPosition
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
-
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
-
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.True(result.RequiresManualRecovery);
-        Assert.True(result.IsPositionUncertain);
-        // Writer called exactly once, then exception
-        Assert.Contains("Writer:0", sharedEvents);
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:1"));
-        // Single Update:PositionUncertain, then Get — no second terminal Update
-        Assert.Contains("Update:PositionUncertain:Revision1", sharedEvents);
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Update:FailedAndRolledBack"));
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Update:FailedRollbackIncomplete"));
-        // Fresh store: PositionUncertain + Revision increased once
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
-        Assert.True(record.RequiresManualRecovery);
-        Assert.True(record.IsPositionUncertain);
-        Assert.Equal(2, record.Revision); // 1→save, 2→WriterException persist
-        // Exactly one new RollbackAttempt: WriterException
-        Assert.Equal(seed.RollbackAttempts.Count + 1, record.RollbackAttempts.Count);
-        var rb = record.RollbackAttempts.Last();
-        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.WriterException, rb.Outcome);
+        Exact,
+        ThrowBeforeMove,
+        ThrowAfterMove,
+        WrongStableIdAfterMove,
     }
 
-    // ═══════════════════════════════════════════════
-    // 10. Recovery_WriterStableIdMismatch_UsesFreshCheckpointAndStops
-    // ═══════════════════════════════════════════════
-    [Fact]
-    public async Task Recovery_WriterStableIdMismatch_UsesFreshCheckpointAndStops()
-    {
-        var store = CreateStore();
-        var fwdAttempt = MakeFwdAttempt(0, 0, "a", 160, 80, 240, 80);
-        var seed = await SeedAsync(store, RecoverySessionLifecycle.Executing,
-            new[] { fwdAttempt }, Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            new[] { 0 }, Array.Empty<int>(),
-            "TestInterrupted", "测试中断。");
-
-        var sharedEvents = new List<string>();
-        var estore = new EventStore(_dbPath, sharedEvents);
-        // Writer returns wrong StableId
-        var writer = new WrongStableIdWriter(sharedEvents, "a", new(240, 80), new(160, 80), "WRONG");
-        var iconReader = new ScriptedDesktopIconReader();
-        // Environment check: icon at ToPosition
-        iconReader.Enqueue([new DesktopIconDescriptor("a", "N_a", null, ItemKind.File, new PixelPoint(240, 80), TD, false, true)]);
-
-        var topoReader = new FakeDisplayTopologyReader(TD, WA);
-        var coordinator = new PersistedRecoveryCoordinator(estore, topoReader, iconReader, writer, new StaThreadExecutor());
-
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.True(result.RequiresManualRecovery);
-        Assert.True(result.IsPositionUncertain);
-        Assert.Equal("RollbackStableIdMismatch", result.ForwardFailureType);
-        // Writer called exactly once
-        Assert.Contains(sharedEvents, e => e.StartsWith("Writer:"));
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Writer:1"));
-        // Single Update:PositionUncertain — no terminal Update
-        Assert.Contains("Update:PositionUncertain:Revision1", sharedEvents);
-        Assert.DoesNotContain(sharedEvents, e => e.StartsWith("Update:FailedAndRolledBack"));
-        // Fresh store
-        var freshStore = CreateStore();
-        var record = await freshStore.GetAsync(seed.SessionId);
-        Assert.NotNull(record);
-        Assert.Equal(RecoverySessionLifecycle.PositionUncertain, record.Lifecycle);
-        Assert.Equal("RollbackStableIdMismatch", record.RecoveryFailureType);
-        Assert.Equal(2, record.Revision);
-        Assert.Equal(seed.RollbackAttempts.Count + 1, record.RollbackAttempts.Count);
-        var rb = record.RollbackAttempts.Last();
-        Assert.Equal(TargetDisplayLayoutExecutionAttemptOutcome.StableIdMismatch, rb.Outcome);
-    }
-
-    private sealed class WrongStableIdWriter : IDesktopIconPositionWriter
+    private sealed class MutableWriter : IDesktopIconPositionWriter
     {
         private readonly List<string> _events;
-        private readonly string _sid;
-        private readonly PixelPoint _from, _to;
-        private readonly string _wrongSid;
-        private int _callCount;
-        public WrongStableIdWriter(List<string> events, string sid, PixelPoint from, PixelPoint to, string wrongSid)
-        { _events = events; _sid = sid; _from = from; _to = to; _wrongSid = wrongSid; }
-        public DesktopIconPositioningCapabilities GetCapabilities()
-            => new(false, new PixelPoint(80, 80), ConnectionMethod.FindWindowSW, null);
-        public DesktopIconMoveResult MoveDesktopIcon(string sid, PixelPoint target)
+        private readonly MutableDesktopReader _desktop;
+
+        public WriterBehavior Behavior { get; init; } = WriterBehavior.Exact;
+        public bool IsAutoArrangeEnabled { get; init; }
+        public List<string> WrittenStableIds { get; } = new();
+
+        public MutableWriter(List<string> events, MutableDesktopReader desktop)
         {
-            _events.Add($"Writer:{_callCount++}");
-            return new DesktopIconMoveResult(_wrongSid, _from, target, target, ConnectionMethod.FindWindowSW, null);
+            _events = events;
+            _desktop = desktop;
+        }
+
+        public DesktopIconPositioningCapabilities GetCapabilities()
+        {
+            _events.Add("Capabilities");
+            return new DesktopIconPositioningCapabilities(
+                IsAutoArrangeEnabled,
+                new PixelPoint(80, 80),
+                ConnectionMethod.FindWindowSW,
+                null);
+        }
+
+        public DesktopIconMoveResult MoveDesktopIcon(string stableId, PixelPoint target)
+        {
+            _events.Add($"Writer:{stableId}");
+            WrittenStableIds.Add(stableId);
+
+            var previous = _desktop.GetPosition(stableId);
+
+            if (Behavior == WriterBehavior.ThrowBeforeMove)
+                throw new InvalidOperationException("Writer failed before move");
+
+            _desktop.SetPosition(stableId, target);
+
+            if (Behavior == WriterBehavior.ThrowAfterMove)
+                throw new InvalidOperationException("Writer failed after move");
+
+            if (Behavior == WriterBehavior.WrongStableIdAfterMove)
+            {
+                return new DesktopIconMoveResult(
+                    "WRONG",
+                    previous,
+                    target,
+                    target,
+                    ConnectionMethod.FindWindowSW,
+                    null);
+            }
+
+            return new DesktopIconMoveResult(
+                stableId,
+                previous,
+                target,
+                target,
+                ConnectionMethod.FindWindowSW,
+                null);
         }
     }
 }
