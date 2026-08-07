@@ -121,6 +121,21 @@ public sealed record RecoverySessionRecord
         ArgumentNullException.ThrowIfNull(result);
 
         var lifecycle = DeriveLifecycle(result.Status);
+        var disposition = RecoverySessionDisposition.FromLifecycle(lifecycle);
+
+        // RunResult 是一次运行结果摘要，不拥有旧持久化兼容列的独立定义权。
+        // 如果它与 Lifecycle 的唯一投影冲突，应把这视为上游模型不一致，而不是静默写入漂移状态。
+        if (!disposition.MatchesCompatibilityFlags(
+                result.RequiresManualRecovery,
+                result.IsPositionUncertain))
+        {
+            throw new InvalidDataException(
+                $"RunResult 与 Lifecycle={lifecycle} 的持久化兼容投影冲突：" +
+                $"实际 RequiresManualRecovery={result.RequiresManualRecovery}, " +
+                $"IsPositionUncertain={result.IsPositionUncertain}；" +
+                $"预期 RequiresManualRecovery={disposition.RequiresManualRecovery}, " +
+                $"IsPositionUncertain={disposition.IsPositionUncertain}。");
+        }
 
         return new RecoverySessionRecord
         {
@@ -129,8 +144,8 @@ public sealed record RecoverySessionRecord
             TargetDeviceName = session.TargetDeviceName,
             StartedAtUtc = session.StartedAtUtc,
             Lifecycle = lifecycle,
-            RequiresManualRecovery = result.RequiresManualRecovery,
-            IsPositionUncertain = result.IsPositionUncertain,
+            RequiresManualRecovery = disposition.RequiresManualRecovery,
+            IsPositionUncertain = disposition.IsPositionUncertain,
             LastFailedStepIndex = result.FailedStepIndex,
             SourceRestorePlan = session.SourceRestorePlan,
             ExecutionPlan = session.ExecutionPlan,
@@ -220,7 +235,8 @@ public sealed record RecoverySessionRecord
         }
 
         // ── Lifecycle 枚举 ──
-        if (!Enum.IsDefined(Lifecycle))
+        var lifecycleIsDefined = Enum.IsDefined(Lifecycle);
+        if (!lifecycleIsDefined)
             errors.Add($"无效的 Lifecycle 值：{(int)Lifecycle}。");
 
         // ── Revision ──
@@ -439,39 +455,22 @@ public sealed record RecoverySessionRecord
             }
         }
 
-        // ── 状态标志一致性 ──
-        if (Lifecycle == RecoverySessionLifecycle.Ready
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("Ready 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.Executing)
+        // ── 兼容标志一致性 ──
+        // Lifecycle/Disposition 是唯一语义源；旧 bool 只能验证自己是否仍是正确投影。
+        if (lifecycleIsDefined)
         {
-            if (RequiresManualRecovery)
-                errors.Add("Executing 状态下 RequiresManualRecovery 必须为 false。");
-            if (IsPositionUncertain)
-                errors.Add("Executing 状态下 IsPositionUncertain 必须为 false。");
-        }
-
-        if (Lifecycle == RecoverySessionLifecycle.Completed
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("Completed 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.FailedAndRolledBack
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("FailedAndRolledBack 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete)
-        {
-            if (!RequiresManualRecovery)
-                errors.Add("FailedRollbackIncomplete 状态下 RequiresManualRecovery 必须为 true。");
-            if (IsPositionUncertain)
-                errors.Add("FailedRollbackIncomplete 状态下 IsPositionUncertain 必须为 false。");
-        }
-
-        if (Lifecycle == RecoverySessionLifecycle.PositionUncertain)
-        {
-            if (!RequiresManualRecovery || !IsPositionUncertain)
-                errors.Add("PositionUncertain 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须都为 true。");
+            var disposition = RecoverySessionDisposition.FromLifecycle(Lifecycle);
+            if (!disposition.MatchesCompatibilityFlags(
+                    RequiresManualRecovery,
+                    IsPositionUncertain))
+            {
+                errors.Add(
+                    $"Lifecycle={Lifecycle} 的兼容字段漂移：" +
+                    $"实际 RequiresManualRecovery={RequiresManualRecovery}, " +
+                    $"IsPositionUncertain={IsPositionUncertain}；" +
+                    $"预期 RequiresManualRecovery={disposition.RequiresManualRecovery}, " +
+                    $"IsPositionUncertain={disposition.IsPositionUncertain}。");
+            }
         }
 
         // ── 失败证据 ──
