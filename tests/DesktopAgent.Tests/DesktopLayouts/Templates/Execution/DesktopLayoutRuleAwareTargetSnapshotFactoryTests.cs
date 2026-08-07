@@ -63,7 +63,7 @@ public sealed class DesktopLayoutRuleAwareTargetSnapshotFactoryTests
         Assert.Equal(new PixelPoint(0, 0), snap.Icons[0].PixelPosition);
     }
 
-    [Fact] public void Exclude_KeepsCurrentPosition()
+    [Fact] public void Exclude_IsNotExecutionTarget()
     {
         var zid2 = Guid.NewGuid();
         var template = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1,
@@ -77,13 +77,14 @@ public sealed class DesktopLayoutRuleAwareTargetSnapshotFactoryTests
         var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
             template, ruleSet, new[] { _dd }, null, _spacing, icons);
         Assert.True(plan.IsComplete);
+
         var snap = DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
             plan, Read(icons), new DesktopLayoutSnapshotFactory());
-        var excludedIcon = snap.Icons.First(i => i.StableId == "a");
-        Assert.Equal(new PixelPoint(42, 42), excludedIcon.PixelPosition);
+
+        Assert.Empty(snap.Icons);
     }
 
-    [Fact] public void Pin_KeepsCurrentPosition()
+    [Fact] public void Pin_IsNotExecutionTarget()
     {
         var zid2 = Guid.NewGuid();
         var template = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1,
@@ -96,9 +97,36 @@ public sealed class DesktopLayoutRuleAwareTargetSnapshotFactoryTests
         var icons = new[] { I(0, "a", pos: new PixelPoint(100, 100)) };
         var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
             template, ruleSet, new[] { _dd }, null, _spacing, icons);
+
         var snap = DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
             plan, Read(icons), new DesktopLayoutSnapshotFactory());
-        Assert.Equal(new PixelPoint(100, 100), snap.Icons[0].PixelPosition);
+
+        Assert.Empty(snap.Icons);
+    }
+
+    [Fact] public void FixedRemoved_PreservesRemainingInputOrder()
+    {
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "T", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            new[] { new DesktopLayoutZone(Guid.NewGuid(), "Z",
+                new NormalizedRect(0, 0, 10000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, null) });
+        var icons = new[]
+        {
+            I(0, "fixed", pos: new PixelPoint(240, 0)),
+            I(1, "a", pos: new PixelPoint(80, 0)),
+            I(2, "b", pos: new PixelPoint(160, 0)),
+        };
+        var ruleSet = new DesktopLayoutIconRuleSet(template.TemplateId,
+            new[] { DesktopLayoutIconRule.ForExclude("fixed") });
+        var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, ruleSet, new[] { _dd }, null, _spacing, icons);
+
+        var snap = DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
+            plan, Read(icons), new DesktopLayoutSnapshotFactory());
+
+        Assert.Equal(new[] { "a", "b" }, snap.Icons.Select(i => i.StableId));
+        Assert.Equal(new[] { 0, 1 }, snap.Icons.Select(i => i.Ordinal));
     }
 
     [Fact] public void Unassigned_Throws()
