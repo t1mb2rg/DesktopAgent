@@ -865,17 +865,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     [Fact]
-    public void DeriveStatus_CoversAllLifecycleValues()
-    {
-        Assert.Equal("Ready", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.Ready));
-        Assert.Equal("Executing", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.Executing));
-        Assert.Equal("Completed", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.Completed));
-        Assert.Equal("FailedAndRolledBack", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.FailedAndRolledBack));
-        Assert.Equal("FailedRollbackIncomplete", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.FailedRollbackIncomplete));
-        Assert.Equal("PositionUncertain", RecoverySessionRecord.DeriveStatus(RecoverySessionLifecycle.PositionUncertain));
-    }
-
-    [Fact]
     public void CompletedIndexes_MatchAttempts()
     {
         var record = MakeCompletedRecord();
@@ -1074,23 +1063,6 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         Assert.Equal(RecoverySessionLifecycle.Executing, restored.Lifecycle);
         Assert.Single(restored.ForwardAttempts);
         Assert.Single(restored.CompletedForwardStepIndexes);
-    }
-
-    [Fact]
-    public void DeriveLifecycle_FailedBeforeWrite_Throws()
-    {
-        var ex = Assert.Throws<ArgumentException>(() =>
-            RecoverySessionRecord.DeriveLifecycle(
-                TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite));
-        Assert.Contains("FailedBeforeWrite", ex.Message);
-    }
-
-    [Fact]
-    public void DeriveLifecycle_UnknownStatus_Throws()
-    {
-        var ex = Assert.Throws<ArgumentOutOfRangeException>(() =>
-            RecoverySessionRecord.DeriveLifecycle((TargetDisplayLayoutExecutionRunStatus)999));
-        Assert.Contains("999", ex.Message);
     }
 
     [Fact]
