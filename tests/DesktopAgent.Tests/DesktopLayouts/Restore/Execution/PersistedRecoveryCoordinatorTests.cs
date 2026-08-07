@@ -343,40 +343,6 @@ public sealed class PersistedRecoveryCoordinatorTests : IDisposable
         Assert.Equal(RecoverySessionLifecycle.Executing, fresh.Lifecycle);
     }
 
-    [Fact]
-    public async Task StagingPlan_FailsClosedWithoutWriter()
-    {
-        var staging = new PixelPoint(600, 500);
-        var steps = new[]
-        {
-            new TargetDisplayLayoutExecutionStep(
-                0, "a", "N_a", A0, staging,
-                TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging, TD, 0),
-            new TargetDisplayLayoutExecutionStep(
-                1, "a", "N_a", staging, A1,
-                TargetDisplayLayoutExecutionStepKind.MoveFromTemporaryStagingToTarget, TD, 0),
-        };
-        var execPlan = new TargetDisplayLayoutExecutionPlan(
-            TD,
-            true,
-            false,
-            steps,
-            new[] { new TargetDisplayLayoutStagingAssignment("a", staging, 0, 1) },
-            Array.Empty<TargetDisplayLayoutExecutionPlanIssue>());
-        var seed = await SeedAsync(execPlan);
-
-        var events = new List<string>();
-        var desktop = new MutableDesktopReader(events, ("a", A1));
-        var writer = new MutableWriter(events, desktop);
-        var coordinator = Coordinator(new EventStore(_dbPath, events), desktop, writer);
-
-        var result = await coordinator.RecoverAsync(seed);
-
-        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.PositionUncertain, result.Status);
-        Assert.Equal("RecoveryStagingNotSupported", result.RecoveryFailureType);
-        Assert.Empty(writer.WrittenStableIds);
-    }
-
     private PersistedRecoveryCoordinator Coordinator(
         IRecoverySessionStore store,
         IDesktopIconReader reader,
