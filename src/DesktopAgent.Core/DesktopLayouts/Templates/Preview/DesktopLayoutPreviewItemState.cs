@@ -12,5 +12,8 @@ public enum DesktopLayoutPreviewItemState
     MoveRequired = 1,
 
     /// <summary>未分配（容量不足）。</summary>
-    Unassigned = 2
+    Unassigned = 2,
+
+    /// <summary>规则要求保持当前位置不参与目标分配（Exclude / Pin）。</summary>
+    Fixed = 3
 }
