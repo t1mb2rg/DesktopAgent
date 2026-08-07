@@ -92,13 +92,12 @@ public sealed class PersistedRecoveryCoordinator
 
         if (execPlan.UsesTemporaryStaging)
         {
-            return await PersistPositionUncertainAsync(
-                currentCp,
-                rollbackAttempts,
-                completedRollbackIndexes,
-                "RecoveryStagingNotSupported",
-                "跨重启恢复 R3 暂不支持含临时中转的执行计划。",
-                cancellationToken);
+            var stagingRecovery = new PersistedStagingRecoveryExecutor(
+                _store,
+                _positionWriter,
+                _staExecutor,
+                _stateObserver);
+            return await stagingRecovery.RecoverAsync(currentCp, cancellationToken);
         }
 
         // 防止外部变化造成同一 StableId 在一次恢复调用中被反复自动写。
