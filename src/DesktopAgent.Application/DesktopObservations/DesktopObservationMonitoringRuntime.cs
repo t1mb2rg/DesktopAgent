@@ -99,7 +99,7 @@ public sealed class DesktopObservationMonitoringRuntime
                 return _status;
             if (_hasStarted)
                 throw new InvalidOperationException(
-                    "DesktopObservationMonitoringRuntime 当前为单次 Host 生命周期对象，停止后不得重新启动。" );
+                    "DesktopObservationMonitoringRuntime 当前为单次 Host 生命周期对象，停止后不得重新启动。");
 
             _hasStarted = true;
             _isRunning = true;
@@ -132,12 +132,14 @@ public sealed class DesktopObservationMonitoringRuntime
 
         var activeSourceCount = sourceResults.Count(result => result.IsRunning);
         if (activeSourceCount == 0)
-            runtimeIssues.Add("没有真实 hint source 成功运行；后台仍可通过 Manual hint 进行 fresh observation。" );
+            runtimeIssues.Add("没有真实 hint source 成功运行；后台仍可通过 Manual hint 进行 fresh observation。");
 
         if (!_pump.TryPublishHint(DesktopObservationHintKind.Manual, StartupHintSource))
-            runtimeIssues.Add("启动 baseline hint 未能提交给 observation pump。" );
+            runtimeIssues.Add("启动 baseline hint 未能提交给 observation pump。");
 
-        var state = activeSourceCount > 0
+        var hasDegradation = runtimeIssues.Count != 0
+            || sourceResults.Any(result => !result.IsRunning || result.Issues.Count != 0);
+        var state = activeSourceCount > 0 && !hasDegradation
             ? DesktopObservationMonitoringState.Running
             : DesktopObservationMonitoringState.Degraded;
         var status = new DesktopObservationMonitoringStatus(
@@ -191,7 +193,7 @@ public sealed class DesktopObservationMonitoringRuntime
             {
                 await pumpTask.WaitAsync(ct);
             }
-            catch (OperationCanceledException) when (lifetimeCts?.IsCancellationRequested == true)
+            catch (OperationCanceledException) when (pumpTask.IsCanceled)
             {
             }
             catch (Exception ex)
