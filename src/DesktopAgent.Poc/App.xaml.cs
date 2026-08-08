@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
@@ -12,6 +13,7 @@ using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Poc.Acceptance;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
+using DesktopAgent.WindowsInterop.DesktopObservations;
 using DesktopAgent.WindowsInterop.Displays;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -72,6 +74,8 @@ public partial class App : Application
                 services.AddSingleton<IDisplayTopologyReader, NativeDisplayTopologyReader>();
                 services.AddSingleton<IDesktopIconReader, DesktopShellIconReader>();
                 services.AddSingleton<DesktopShellIconPositionWriter>();
+                services.AddSingleton<IDesktopIconPositioningCapabilitiesReader>(sp =>
+                    sp.GetRequiredService<DesktopShellIconPositionWriter>());
 #if DEBUG
                 services.AddSingleton<IDesktopIconPositionWriter>(sp =>
                     acceptanceFaultOptions.IsEnabled
@@ -87,6 +91,7 @@ public partial class App : Application
                     sp.GetRequiredService<DesktopShellIconPositionWriter>());
 #endif
                 services.AddSingleton<StaThreadExecutor>();
+                services.AddSingleton<IDesktopObservationSource, WindowsDesktopObservationSource>();
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
                 services.AddSingleton<IRecoverySessionStore>(
                     new SqliteRecoverySessionStore(
