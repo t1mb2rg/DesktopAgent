@@ -101,6 +101,9 @@ public partial class App : System.Windows.Application
                     new DesktopObservationHintBatchSettings(
                         TimeSpan.FromMilliseconds(700),
                         TimeSpan.FromSeconds(3)));
+                services.AddSingleton<
+                    IM3ReadOnlyMonitoringHintSourceFactory,
+                    DesktopFileSystemMonitoringHintSourceFactory>();
                 services.AddSingleton<M3ReadOnlyMonitoringSession>();
                 services.AddSingleton<M3DiagnosticsWindow>();
 
