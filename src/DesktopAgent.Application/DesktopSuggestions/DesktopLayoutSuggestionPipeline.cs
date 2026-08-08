@@ -99,7 +99,7 @@ public sealed record DesktopLayoutSuggestionPipelineResult
 }
 
 /// <summary>
-/// M3-03C 只读 Suggestion pipeline：解释 observation diagnostics，维护 suggestion lifecycle，
+/// M3-03C/03D 只读 Suggestion pipeline：解释 observation diagnostics，维护 suggestion lifecycle，
 /// 并在 ChangesDetected 时使用显式 binding 构建新 Suggestion。
 /// 不依赖 WPF、WindowsInterop、Writer 或 ExecutionCoordinator。
 /// </summary>
@@ -133,10 +133,6 @@ public sealed class DesktopLayoutSuggestionPipeline
     public DesktopLayoutSuggestionLifecycleSnapshot LifecycleSnapshot =>
         _lifecycle.Snapshot;
 
-    /// <summary>
-    /// 设置/清除当前进程内 Suggestion binding。
-    /// 值实际变化时 revision 单调递增，并立即退休旧 Suggestion。
-    /// </summary>
     public DesktopLayoutSuggestionBindingSnapshot SetBinding(
         DesktopLayoutSuggestionBinding? binding)
     {
@@ -149,11 +145,25 @@ public sealed class DesktopLayoutSuggestionPipeline
             _bindingRevision++;
 
             // 与 ProcessAsync 最终 publish 使用相同锁顺序：bindingGate -> lifecycle gate。
-            // 因此 binding 变化与旧 build 的 publish 不会穿插出 stale suggestion。
             _lifecycle.MarkBindingChanged();
             return CreateBindingSnapshot();
         }
     }
+
+    /// <summary>
+    /// UI 显式 Reset baseline 时立即退休旧建议；baseline store 的实际 Reset 由协调层同时执行。
+    /// </summary>
+    public DesktopLayoutSuggestionLifecycleSnapshot MarkBaselineReset() =>
+        _lifecycle.MarkBaselineReset();
+
+    /// <summary>
+    /// 02B run 连 diagnostics 都未能正常返回时，当前建议进入 Suspended。
+    /// </summary>
+    public DesktopLayoutSuggestionLifecycleSnapshot MarkObservationRunFailed() =>
+        _lifecycle.Suspend(DesktopLayoutSuggestionSuspensionReason.ObservationRunFailed);
+
+    public DesktopLayoutSuggestionLifecycleSnapshot DismissCurrent() =>
+        _lifecycle.DismissCurrent();
 
     public async Task<DesktopLayoutSuggestionPipelineResult> ProcessAsync(
         DesktopObservationDiagnosticsResult diagnostics,
