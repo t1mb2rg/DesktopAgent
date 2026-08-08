@@ -12,7 +12,7 @@ namespace DesktopAgent.Application.DesktopSuggestions;
 /// 把一份 current stable Observation + State Diff + 显式模板绑定转换为 M2 Candidate-backed Suggestion。
 /// 本类型只读：不依赖 Writer、ExecutionCoordinator、Recovery store 或 WPF。
 /// </summary>
-public sealed class DesktopLayoutSuggestionBuilder
+public sealed class DesktopLayoutSuggestionBuilder : IDesktopLayoutSuggestionBuilder
 {
     private readonly IDesktopLayoutTemplateStore _templateStore;
     private readonly IDesktopLayoutIconRuleStore _ruleStore;
