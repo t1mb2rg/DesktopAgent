@@ -37,6 +37,7 @@ public sealed class M3DiagnosticsBoundaryTests
                 typeof(DesktopObservationDiagnosticsRunner),
                 typeof(DesktopObservationHintBatchSettings),
                 typeof(IM3ReadOnlyMonitoringHintSourceFactory),
+                typeof(IPeriodicObservationHintSource),
             },
             parameterTypes);
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
