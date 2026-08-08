@@ -23,16 +23,55 @@ public sealed record M3ReadOnlyMonitoringStartResult(
 }
 
 /// <summary>
+/// PoC 组合层的最小 hint-source seam。
+/// 只暴露 Start/Stop/Dispose；事件 payload 仍由具体 source 在边界内丢弃。
+/// </summary>
+public interface IM3ReadOnlyMonitoringHintSource : IDisposable
+{
+    DesktopFileSystemHintSourceStartResult Start();
+    void Stop();
+}
+
+public interface IM3ReadOnlyMonitoringHintSourceFactory
+{
+    IM3ReadOnlyMonitoringHintSource Create(
+        Action<DesktopObservationHintKind, string> publishHint);
+}
+
+public sealed class DesktopFileSystemMonitoringHintSourceFactory
+    : IM3ReadOnlyMonitoringHintSourceFactory
+{
+    public IM3ReadOnlyMonitoringHintSource Create(
+        Action<DesktopObservationHintKind, string> publishHint) =>
+        new Adapter(publishHint);
+
+    private sealed class Adapter : IM3ReadOnlyMonitoringHintSource
+    {
+        private readonly DesktopFileSystemObservationHintSource _inner;
+
+        public Adapter(Action<DesktopObservationHintKind, string> publishHint)
+        {
+            _inner = new DesktopFileSystemObservationHintSource(publishHint);
+        }
+
+        public DesktopFileSystemHintSourceStartResult Start() => _inner.Start();
+
+        public void Stop() => _inner.Stop();
+
+        public void Dispose() => _inner.Dispose();
+    }
+}
+
+/// <summary>
 /// M3 PoC 的显式只读监控会话。
-/// 每次 Start 都创建新的 batcher / processor / pump / FileSystemWatcher source，
+/// 每次 Start 都创建新的 batcher / processor / pump / hint source，
 /// 因此 Stop 后可以重新 Start；会话内 baseline 仍由共享 DiagnosticsRunner 保持。
 /// </summary>
 public sealed class M3ReadOnlyMonitoringSession : IDisposable
 {
     private readonly DesktopObservationDiagnosticsRunner _runner;
     private readonly DesktopObservationHintBatchSettings _hintBatchSettings;
-    private readonly Func<Action<DesktopObservationHintKind, string>, IM3ReadOnlyMonitoringHintSource>
-        _hintSourceFactory;
+    private readonly IM3ReadOnlyMonitoringHintSourceFactory _hintSourceFactory;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
 
     private DesktopObservationBackgroundPump? _pump;
@@ -51,19 +90,8 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
 
     public M3ReadOnlyMonitoringSession(
         DesktopObservationDiagnosticsRunner runner,
-        DesktopObservationHintBatchSettings hintBatchSettings)
-        : this(
-            runner,
-            hintBatchSettings,
-            publish => new DesktopFileSystemMonitoringHintSourceAdapter(publish))
-    {
-    }
-
-    internal M3ReadOnlyMonitoringSession(
-        DesktopObservationDiagnosticsRunner runner,
         DesktopObservationHintBatchSettings hintBatchSettings,
-        Func<Action<DesktopObservationHintKind, string>, IM3ReadOnlyMonitoringHintSource>
-            hintSourceFactory)
+        IM3ReadOnlyMonitoringHintSourceFactory hintSourceFactory)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _hintBatchSettings = hintBatchSettings
@@ -100,7 +128,7 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             var batcher = new DesktopObservationHintBatcher(_hintBatchSettings);
             var processor = new DesktopObservationBatchProcessor(_runner);
             var pump = new DesktopObservationBackgroundPump(batcher, processor);
-            var source = _hintSourceFactory(
+            var source = _hintSourceFactory.Create(
                 (kind, provider) => pump.TryPublishHint(kind, provider));
 
             DesktopFileSystemHintSourceStartResult sourceResult;
@@ -333,28 +361,4 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             }
         }
     }
-}
-
-internal interface IM3ReadOnlyMonitoringHintSource : IDisposable
-{
-    DesktopFileSystemHintSourceStartResult Start();
-    void Stop();
-}
-
-internal sealed class DesktopFileSystemMonitoringHintSourceAdapter
-    : IM3ReadOnlyMonitoringHintSource
-{
-    private readonly DesktopFileSystemObservationHintSource _inner;
-
-    public DesktopFileSystemMonitoringHintSourceAdapter(
-        Action<DesktopObservationHintKind, string> publish)
-    {
-        _inner = new DesktopFileSystemObservationHintSource(publish);
-    }
-
-    public DesktopFileSystemHintSourceStartResult Start() => _inner.Start();
-
-    public void Stop() => _inner.Stop();
-
-    public void Dispose() => _inner.Dispose();
 }
