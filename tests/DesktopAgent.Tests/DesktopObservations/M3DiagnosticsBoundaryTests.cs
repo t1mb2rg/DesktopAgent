@@ -22,17 +22,42 @@ public sealed class M3DiagnosticsBoundaryTests
     }
 
     [Fact]
-    public void DiagnosticsWindow_DependsOnlyOnDiagnosticsRunner()
+    public void MonitoringSession_DependsOnReadOnlyDiagnosticsAndHintSettings()
     {
-        var parameters = typeof(M3DiagnosticsWindow)
+        var parameterTypes = typeof(M3ReadOnlyMonitoringSession)
             .GetConstructors()
             .Single()
-            .GetParameters();
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
 
-        var parameter = Assert.Single(parameters);
-        Assert.Equal(typeof(DesktopObservationDiagnosticsRunner), parameter.ParameterType);
-        Assert.DoesNotContain(
-            parameters,
-            item => item.ParameterType == typeof(IDesktopIconPositionWriter));
+        Assert.Equal(
+            new[]
+            {
+                typeof(DesktopObservationDiagnosticsRunner),
+                typeof(DesktopObservationHintBatchSettings),
+            },
+            parameterTypes);
+        Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
+    }
+
+    [Fact]
+    public void DiagnosticsWindow_DependsOnDiagnosticsRunnerAndReadOnlyMonitoringSession()
+    {
+        var parameterTypes = typeof(M3DiagnosticsWindow)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.Equal(
+            new[]
+            {
+                typeof(DesktopObservationDiagnosticsRunner),
+                typeof(M3ReadOnlyMonitoringSession),
+            },
+            parameterTypes);
+        Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
     }
 }
