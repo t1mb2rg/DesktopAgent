@@ -9,26 +9,40 @@ public sealed record M3PocNotificationSurfaceSnapshot(
     DateTimeOffset UpdatedAtUtc);
 
 /// <summary>
-/// M3-04B 的平台无关 PoC notification surface。
-/// 只在内存里记录当前通知并允许模拟 Open / Ignore action；不调用 Windows Toast。
+/// Notification diagnostics mirror。
+/// 04B 可独立作为纯内存 PoC sink；04C 可包装真实平台 sink。
+/// 只有 inner sink 成功后才更新镜像，因此 diagnostics 不会领先于真实平台副作用。
 /// </summary>
-public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificationSink
+public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificationSink, IDisposable
 {
     private readonly object _gate = new();
     private readonly TimeProvider _timeProvider;
+    private readonly IDesktopSuggestionNotificationSink? _inner;
 
     private long _revision;
     private DesktopSuggestionNotificationPayload? _current;
     private string _lastEvent = "Ready";
     private DateTimeOffset _updatedAtUtc;
+    private int _disposeStarted;
 
     public event Action<DesktopSuggestionNotificationInteraction>? InteractionReceived;
     public event Action<M3PocNotificationSurfaceSnapshot>? SurfaceChanged;
 
     public M3DiagnosticsNotificationSink(TimeProvider? timeProvider = null)
+        : this(null, timeProvider)
     {
+    }
+
+    public M3DiagnosticsNotificationSink(
+        IDesktopSuggestionNotificationSink? inner,
+        TimeProvider? timeProvider = null)
+    {
+        _inner = inner;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _updatedAtUtc = _timeProvider.GetUtcNow();
+
+        if (_inner is not null)
+            _inner.InteractionReceived += OnInnerInteractionReceived;
     }
 
     public M3PocNotificationSurfaceSnapshot Snapshot
@@ -40,12 +54,16 @@ public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificati
         }
     }
 
-    public Task PublishAsync(
+    public async Task PublishAsync(
         DesktopSuggestionNotificationPayload payload,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(payload);
+        ThrowIfDisposed();
         ct.ThrowIfCancellationRequested();
+
+        if (_inner is not null)
+            await _inner.PublishAsync(payload, ct);
 
         M3PocNotificationSurfaceSnapshot snapshot;
         lock (_gate)
@@ -58,14 +76,17 @@ public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificati
         }
 
         PublishSafely(SurfaceChanged, snapshot);
-        return Task.CompletedTask;
     }
 
-    public Task WithdrawAsync(Guid suggestionId, CancellationToken ct = default)
+    public async Task WithdrawAsync(Guid suggestionId, CancellationToken ct = default)
     {
         if (suggestionId == Guid.Empty)
             throw new ArgumentException("suggestionId 不能为空。", nameof(suggestionId));
+        ThrowIfDisposed();
         ct.ThrowIfCancellationRequested();
+
+        if (_inner is not null)
+            await _inner.WithdrawAsync(suggestionId, ct);
 
         M3PocNotificationSurfaceSnapshot? snapshot = null;
         lock (_gate)
@@ -82,12 +103,12 @@ public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificati
 
         if (snapshot is not null)
             PublishSafely(SurfaceChanged, snapshot);
-
-        return Task.CompletedTask;
     }
 
     public bool SimulateCurrentInteraction(DesktopSuggestionNotificationActionKind action)
     {
+        ThrowIfDisposed();
+
         DesktopSuggestionNotificationPayload? payload;
         lock (_gate)
             payload = _current;
@@ -107,11 +128,25 @@ public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificati
         Guid suggestionId,
         DesktopSuggestionNotificationActionKind action)
     {
+        ThrowIfDisposed();
         var interaction = new DesktopSuggestionNotificationInteraction(
             suggestionId,
             action);
         PublishSafely(InteractionReceived, interaction);
     }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+            return;
+
+        if (_inner is not null)
+            _inner.InteractionReceived -= OnInnerInteractionReceived;
+    }
+
+    private void OnInnerInteractionReceived(
+        DesktopSuggestionNotificationInteraction interaction) =>
+        PublishSafely(InteractionReceived, interaction);
 
     private M3PocNotificationSurfaceSnapshot CreateSnapshot() =>
         new(
@@ -119,6 +154,11 @@ public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificati
             _current,
             _lastEvent,
             _updatedAtUtc);
+
+    private void ThrowIfDisposed() =>
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposeStarted) != 0,
+            this);
 
     private static void PublishSafely<T>(Action<T>? handlers, T value)
     {
@@ -133,7 +173,7 @@ public sealed class M3DiagnosticsNotificationSink : IDesktopSuggestionNotificati
             }
             catch
             {
-                // PoC surface observer 不得反向破坏 notification sink。
+                // Diagnostics observer 不得反向破坏真实 notification sink。
             }
         }
     }
