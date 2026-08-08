@@ -5,6 +5,11 @@
     <IsTestProject>true</IsTestProject>
     <RootNamespace>DesktopAgent.Tests</RootNamespace>
     <AssemblyName>DesktopAgent.Tests</AssemblyName>
+
+    <!-- Tests exercise pure parsers/contracts only; the generic xUnit host must not start WinAppSDK. -->
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+    <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
   </PropertyGroup>
 
   <ItemGroup>
