@@ -22,7 +22,7 @@ public sealed class M3DiagnosticsBoundaryTests
     }
 
     [Fact]
-    public void MonitoringSession_DependsOnReadOnlyDiagnosticsAndHintSettings()
+    public void MonitoringSession_DependsOnlyOnReadOnlyMonitoringComponents()
     {
         var parameterTypes = typeof(M3ReadOnlyMonitoringSession)
             .GetConstructors()
@@ -36,6 +36,7 @@ public sealed class M3DiagnosticsBoundaryTests
             {
                 typeof(DesktopObservationDiagnosticsRunner),
                 typeof(DesktopObservationHintBatchSettings),
+                typeof(IM3ReadOnlyMonitoringHintSourceFactory),
             },
             parameterTypes);
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
