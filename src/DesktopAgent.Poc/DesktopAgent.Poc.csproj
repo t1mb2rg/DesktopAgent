@@ -21,8 +21,4 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
   </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="DesktopAgent.Tests" />
-  </ItemGroup>
 </Project>
