@@ -74,7 +74,7 @@ internal delegate Task DesktopSuggestionNotificationDelayAsync(
 /// 只保存最新 Suggestion lifecycle；到点后重新 Evaluate 最新 lifecycle，
 /// 不保存/重放旧 pending payload。
 /// </summary>
-public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
+public sealed class DesktopSuggestionNotificationScheduler : IDisposable, IAsyncDisposable
 {
     private readonly object _stateGate = new();
     private readonly SemaphoreSlim _reconcileGate = new(1, 1);
@@ -144,8 +144,11 @@ public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
         return await ReconcileGenerationAsync(
             generation,
             lifecycle,
-            ct);
+            ct).ConfigureAwait(false);
     }
+
+    public void Dispose() =>
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     public async ValueTask DisposeAsync()
     {
@@ -167,14 +170,14 @@ public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
 
         try
         {
-            await deferredTask;
+            await deferredTask.ConfigureAwait(false);
         }
         catch
         {
             // RunDeferredAsync 会收敛自身异常；这里只做最终资源回收兜底。
         }
 
-        await _reconcileGate.WaitAsync();
+        await _reconcileGate.WaitAsync().ConfigureAwait(false);
         _reconcileGate.Release();
         _reconcileGate.Dispose();
     }
@@ -184,7 +187,7 @@ public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
         DesktopLayoutSuggestionLifecycleSnapshot lifecycle,
         CancellationToken ct)
     {
-        await _reconcileGate.WaitAsync(ct);
+        await _reconcileGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (!IsCurrentGeneration(generation))
@@ -198,7 +201,7 @@ public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
                 return superseded;
             }
 
-            var dispatch = await _dispatcher.ReconcileAsync(lifecycle, ct);
+            var dispatch = await _dispatcher.ReconcileAsync(lifecycle, ct).ConfigureAwait(false);
 
             DesktopSuggestionNotificationSchedulerResult result;
             if (dispatch.Status == DesktopSuggestionNotificationDispatchStatus.Deferred
@@ -261,7 +264,10 @@ public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
         {
             var delay = dueUtc.ToUniversalTime() - _timeProvider.GetUtcNow();
             if (delay > TimeSpan.Zero)
-                await _delayAsync(delay, _timeProvider, cts.Token);
+            {
+                await _delayAsync(delay, _timeProvider, cts.Token)
+                    .ConfigureAwait(false);
+            }
 
             DesktopLayoutSuggestionLifecycleSnapshot? latest;
             lock (_stateGate)
@@ -285,7 +291,7 @@ public sealed class DesktopSuggestionNotificationScheduler : IAsyncDisposable
             await ReconcileGenerationAsync(
                 generation,
                 latest,
-                CancellationToken.None);
+                CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
