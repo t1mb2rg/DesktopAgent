@@ -33,11 +33,22 @@ public sealed class TimeProviderPeriodicObservationHintClock
 }
 
 /// <summary>
+/// 只读周期 hint source port。实现只能产生“值得重新观察”的 hint，
+/// 不得读取 Shell、更新 baseline 或获得 Writer。
+/// </summary>
+public interface IPeriodicObservationHintSource
+{
+    Task RunAsync(
+        Action<DesktopObservationHintKind, string> publishHint,
+        CancellationToken ct);
+}
+
+/// <summary>
 /// M3 的低频兜底 hint source。
 /// 它只负责周期性表达“即使没有可靠 Windows event，也值得重新 fresh-observe 一次”。
 /// 不读取 Shell、不产生 DesktopObservation、不接触 baseline / Writer。
 /// </summary>
-public sealed class PeriodicObservationHintSource
+public sealed class PeriodicObservationHintSource : IPeriodicObservationHintSource
 {
     public const string ProviderName = "PeriodicObservationFallback";
 
