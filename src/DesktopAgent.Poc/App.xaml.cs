@@ -27,10 +27,13 @@ namespace DesktopAgent.Poc;
 public partial class App : System.Windows.Application
 {
     private IHost? _host;
+    private WindowsAppSdkRuntimeBootstrapper? _windowsAppSdkRuntime;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        var enableWindowsAppNotifications = true;
 
 #if DEBUG
         AcceptanceFaultInjectionOptions acceptanceFaultOptions;
@@ -51,6 +54,8 @@ public partial class App : System.Windows.Application
 
         if (acceptanceFaultOptions.IsEnabled)
         {
+            enableWindowsAppNotifications = false;
+
             var behaviorDescription = acceptanceFaultOptions.WillTerminateProcess
                 ? "命中配置的 Exact Writer 调用后，DesktopAgent 会在调用方持久化 checkpoint 之前立即终止进程。"
                 : "命中配置的 Exact Writer 调用后，DesktopAgent 会在调用方持久化 checkpoint 之前抛出受控异常。应用不会退出；执行链会先 fail-closed，随后返回主界面。若真实写入已经发生，主界面会保持人工恢复锁。";
@@ -61,6 +66,30 @@ public partial class App : System.Windows.Application
                 behaviorDescription + "\n\n" +
                 acceptanceFaultOptions.Describe(),
                 "DesktopAgent - M2 Acceptance Fault Injection",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+#endif
+
+        WindowsAppSdkRuntimeInitializationResult runtimeInitialization =
+            new(false, null, "Windows App Notification disabled for this process.");
+
+        if (enableWindowsAppNotifications)
+        {
+            _windowsAppSdkRuntime = new WindowsAppSdkRuntimeBootstrapper();
+            runtimeInitialization = _windowsAppSdkRuntime.Start();
+        }
+
+        var windowsAppSdkReady = runtimeInitialization.IsInitialized;
+
+#if DEBUG
+        if (enableWindowsAppNotifications && !windowsAppSdkReady)
+        {
+            MessageBox.Show(
+                "Windows App SDK runtime / Singleton 初始化失败。DesktopAgent 会继续运行；"
+                + "Suggestion / Diff 不受影响，notification 会降级到 diagnostics-only surface。\n\n"
+                + runtimeInitialization.Failure,
+                "DesktopAgent - Windows App SDK unavailable",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }
@@ -141,16 +170,19 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<DesktopLayoutSuggestionPipeline>();
                 services.AddSingleton<M3SuggestionMonitoringCoordinator>();
 
-                // M3-04C：真实 Windows App Notification 作为平台 sink；
-                // diagnostics wrapper 只在平台操作成功后镜像 surface，并保留 PoC stale-action 模拟能力。
+                // M3-04C：runtime 初始化成功时使用真实 Windows App Notification sink；
+                // 初始化失败则 diagnostics wrapper 退回纯内存 surface，主程序继续运行。
                 services.AddSingleton(
                     new DesktopSuggestionNotificationPolicySettings(TimeSpan.FromSeconds(30)));
                 services.AddSingleton<DesktopSuggestionNotificationPolicy>();
                 services.AddSingleton<WindowsAppNotificationSink>();
                 services.AddSingleton(sp =>
-                    new M3DiagnosticsNotificationSink(
-                        sp.GetRequiredService<WindowsAppNotificationSink>(),
-                        sp.GetRequiredService<TimeProvider>()));
+                    windowsAppSdkReady
+                        ? new M3DiagnosticsNotificationSink(
+                            sp.GetRequiredService<WindowsAppNotificationSink>(),
+                            sp.GetRequiredService<TimeProvider>())
+                        : new M3DiagnosticsNotificationSink(
+                            sp.GetRequiredService<TimeProvider>()));
                 services.AddSingleton<IDesktopSuggestionNotificationSink>(sp =>
                     sp.GetRequiredService<M3DiagnosticsNotificationSink>());
                 services.AddSingleton<DesktopSuggestionNotificationDispatcher>();
@@ -164,16 +196,14 @@ public partial class App : System.Windows.Application
 
         _host.StartAsync().GetAwaiter().GetResult();
 
-#if DEBUG
-        // M2 crash-window acceptance 与 M3 notification 是不同验收场景。
-        // 故障注入启用时不注册 Windows App Notification，避免 COM activation / callback 干扰。
-        if (!acceptanceFaultOptions.IsEnabled)
+        if (windowsAppSdkReady)
         {
+#if DEBUG
             StartWindowsAppNotifications(showFailureDialog: true);
-        }
 #else
-        StartWindowsAppNotifications(showFailureDialog: false);
+            StartWindowsAppNotifications(showFailureDialog: false);
 #endif
+        }
 
         var mainWindow = _host.Services.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
@@ -278,6 +308,9 @@ public partial class App : System.Windows.Application
             _host.StopAsync().GetAwaiter().GetResult();
             _host.Dispose();
         }
+
+        _windowsAppSdkRuntime?.Dispose();
+        _windowsAppSdkRuntime = null;
 
         base.OnExit(e);
     }
