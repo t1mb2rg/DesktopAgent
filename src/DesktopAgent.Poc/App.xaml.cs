@@ -168,28 +168,19 @@ public partial class App : System.Windows.Application
                     new SqliteDesktopLayoutIconRuleStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
 
-                // M3-03 Suggestion：旧 Candidate 只作为证据；M3-B 永远通过 fresh rebuilder 重建。
+                // M3-03 Suggestion：旧 Candidate 只作为建议证据；M3-B 永远通过 fresh rebuilder 重建。
                 services.AddSingleton<DesktopLayoutSuggestionLifecycle>();
                 services.AddSingleton<IDesktopLayoutSuggestionBuilder, DesktopLayoutSuggestionBuilder>();
                 services.AddSingleton<DesktopLayoutSuggestionPipeline>();
                 services.AddSingleton<M3SuggestionMonitoringCoordinator>();
 
                 // M3-B05/B06 automation composition。
-                // 当前 PoC 永远使用 provisional-closed unattended gate：代码链存在，但默认不能到 Writer。
-                services.AddSingleton(
-                    new DesktopAutomationRuntimePolicySettings(
-                        executionCooldown: TimeSpan.FromSeconds(30),
-                        fuseFailureThreshold: 3));
+                // 普通 PoC 永远使用 M3AutomationPoCDefaults 的 provisional-closed gate。
+                services.AddSingleton(M3AutomationPoCDefaults.RuntimeSettings);
                 services.AddSingleton(sp =>
-                    new DesktopAutomationRuntimePolicy(
-                        sp.GetRequiredService<DesktopAutomationRuntimePolicySettings>(),
-                        DesktopAutomationUnattendedGate.M3AProvisionalClosed,
+                    M3AutomationPoCDefaults.CreateRuntimePolicy(
                         sp.GetRequiredService<TimeProvider>()));
-                services.AddSingleton(
-                    new DesktopAutomationCandidateRiskPolicySettings(
-                        maxMoveCount: 5,
-                        maxExecutionStepCount: 10,
-                        allowTemporaryStaging: false));
+                services.AddSingleton(M3AutomationPoCDefaults.RiskSettings);
                 services.AddSingleton<DesktopAutomationCandidateRiskPolicy>();
                 services.AddSingleton<IDesktopAutomationCandidateRiskPolicy>(sp =>
                     sp.GetRequiredService<DesktopAutomationCandidateRiskPolicy>());
