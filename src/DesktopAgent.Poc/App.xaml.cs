@@ -97,6 +97,11 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IStableDesktopObservationSource, StableDesktopObservationSource>();
                 services.AddSingleton<DesktopStateBaselineTracker>();
                 services.AddSingleton<DesktopObservationDiagnosticsRunner>();
+                services.AddSingleton(
+                    new DesktopObservationHintBatchSettings(
+                        TimeSpan.FromMilliseconds(700),
+                        TimeSpan.FromSeconds(3)));
+                services.AddSingleton<M3ReadOnlyMonitoringSession>();
                 services.AddSingleton<M3DiagnosticsWindow>();
 
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
