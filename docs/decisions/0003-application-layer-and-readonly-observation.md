@@ -53,9 +53,10 @@ M3 的只读感知路径使用 `IDesktopObservationSource`，成功结果为完�
 - 桌面读取不完整；
 - 显示器身份不唯一；
 - StableId 不唯一；
-- 图标无法归属于当前 topology；
 - topology 在一次 capture 前后发生变化；
 - 底层读取或模型构建失败。
+
+图标显示器归属继续复用 M1 已冻结的 `DisplayAssignmentService` 语义：坐标位于某个 `Bounds` 内时直接归属，否则归给距离最近的显示器。M3 不另建“必须严格位于 Bounds 内”的第二套归属规则。
 
 事件监听只能触发“值得重新观察”，不得直接成为 DesktopObservation 的事实来源。
 
