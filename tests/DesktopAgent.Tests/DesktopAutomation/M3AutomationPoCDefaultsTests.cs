@@ -24,7 +24,7 @@ public sealed class M3AutomationPoCDefaultsTests
         Assert.False(requestedAutomatic.CanAttemptUnattendedExecution);
         Assert.Contains(
             DesktopAutomationBlockReason.UnattendedWriteGateClosed,
-            requestedAutomatic.BlockReasons);
+            requestedAutomatic.UnattendedBlockReasons);
     }
 
     [Fact]
