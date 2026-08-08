@@ -91,4 +91,26 @@ public sealed class M3DiagnosticsBoundaryTests
 
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
     }
+
+    [Fact]
+    public void TrayController_DependsOnPresentationAndReadOnlyM3Coordinators_NotWriter()
+    {
+        var parameterTypes = typeof(M3TrayController)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.Equal(
+            new[]
+            {
+                typeof(MainWindow),
+                typeof(M3DiagnosticsWindow),
+                typeof(M3SuggestionMonitoringCoordinator),
+                typeof(M3SuggestionNotificationCoordinator),
+            },
+            parameterTypes);
+        Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
+    }
 }
