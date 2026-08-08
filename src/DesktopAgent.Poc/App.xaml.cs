@@ -15,6 +15,7 @@ using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Poc.Acceptance;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
+using DesktopAgent.WindowsInterop.DesktopNotifications;
 using DesktopAgent.WindowsInterop.DesktopObservations;
 using DesktopAgent.WindowsInterop.Displays;
 using Microsoft.Extensions.DependencyInjection;
@@ -140,12 +141,16 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<DesktopLayoutSuggestionPipeline>();
                 services.AddSingleton<M3SuggestionMonitoringCoordinator>();
 
-                // M3-04B PoC Notification：只消费 Suggestion lifecycle。
-                // 30s cooldown 仅用于人工验收，不冻结为产品最终默认值。
+                // M3-04C：真实 Windows App Notification 作为平台 sink；
+                // diagnostics wrapper 只在平台操作成功后镜像 surface，并保留 PoC stale-action 模拟能力。
                 services.AddSingleton(
                     new DesktopSuggestionNotificationPolicySettings(TimeSpan.FromSeconds(30)));
                 services.AddSingleton<DesktopSuggestionNotificationPolicy>();
-                services.AddSingleton<M3DiagnosticsNotificationSink>();
+                services.AddSingleton<WindowsAppNotificationSink>();
+                services.AddSingleton(sp =>
+                    new M3DiagnosticsNotificationSink(
+                        sp.GetRequiredService<WindowsAppNotificationSink>(),
+                        sp.GetRequiredService<TimeProvider>()));
                 services.AddSingleton<IDesktopSuggestionNotificationSink>(sp =>
                     sp.GetRequiredService<M3DiagnosticsNotificationSink>());
                 services.AddSingleton<DesktopSuggestionNotificationDispatcher>();
@@ -158,6 +163,17 @@ public partial class App : System.Windows.Application
             .Build();
 
         _host.StartAsync().GetAwaiter().GetResult();
+
+#if DEBUG
+        // M2 crash-window acceptance 与 M3 notification 是不同验收场景。
+        // 故障注入启用时不注册 Windows App Notification，避免 COM activation / callback 干扰。
+        if (!acceptanceFaultOptions.IsEnabled)
+        {
+            StartWindowsAppNotifications(showFailureDialog: true);
+        }
+#else
+        StartWindowsAppNotifications(showFailureDialog: false);
+#endif
 
         var mainWindow = _host.Services.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
@@ -173,6 +189,22 @@ public partial class App : System.Windows.Application
             diagnosticsWindow.Show();
         }
 #endif
+    }
+
+    private void StartWindowsAppNotifications(bool showFailureDialog)
+    {
+        var sink = _host!.Services.GetRequiredService<WindowsAppNotificationSink>();
+        var registration = sink.Start();
+        if (registration.IsRegistered || !showFailureDialog)
+            return;
+
+        MessageBox.Show(
+            "Windows App Notification 注册失败。DesktopAgent 会继续运行，Suggestion / Diff 不受影响；"
+            + "通知层将保持 fail-closed，并在诊断窗口记录 SinkFailed。\n\n"
+            + registration.Failure,
+            "DesktopAgent - App Notification unavailable",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
 #if DEBUG
