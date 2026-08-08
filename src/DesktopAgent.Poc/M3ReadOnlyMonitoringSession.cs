@@ -280,10 +280,13 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
                     componentName,
                     cts.Token);
 
-                // 任一长期组件非预期结束，整套 monitoring session 一起收口，
-                // 不允许悄悄失去 periodic convergence 或 single-flight pump。
-                cts.Cancel();
-                TryStopSource(source);
+                // Stop 可能与 component completion 几乎同时发生。
+                // 只有仍然确认是非预期退出时，才主动关闭整个 monitoring session。
+                if (fault is not null)
+                {
+                    cts.Cancel();
+                    TryStopSource(source);
+                }
             }
 
             // 无论已经有没有 fault，都必须把两个长期组件完整观察到终态。
@@ -401,7 +404,7 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
         }
     }
 
-    private static async Task<string> DescribeUnexpectedComponentExitAsync(
+    private static async Task<string?> DescribeUnexpectedComponentExitAsync(
         Task task,
         string componentName,
         CancellationToken sessionToken)
@@ -409,15 +412,23 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
         try
         {
             await task;
-            return $"{componentName} unexpectedly completed while monitoring session was still active.";
+            return sessionToken.IsCancellationRequested
+                ? null
+                : $"{componentName} unexpectedly completed while monitoring session was still active.";
         }
-        catch (OperationCanceledException) when (!sessionToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (sessionToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (OperationCanceledException)
         {
             return $"{componentName} was unexpectedly cancelled while monitoring session was still active.";
         }
         catch (Exception ex)
         {
-            return $"{componentName} faulted unexpectedly.\n{ex}";
+            return sessionToken.IsCancellationRequested
+                ? null
+                : $"{componentName} faulted unexpectedly.\n{ex}";
         }
     }
 
