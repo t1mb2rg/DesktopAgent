@@ -168,20 +168,30 @@ public sealed class M3AutomaticExecutionTriggerCoordinatorTests
                 return FakeCycle(runtime.Snapshot, lifecycle.Snapshot);
             });
 
-        trigger.Start();
-        lifecycle.Publish(s1);
-        trigger.RequestCurrent();
-        await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            trigger.Start();
+            lifecycle.Publish(s1);
+            trigger.RequestCurrent();
+            await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        lifecycle.Publish(s2);
-        trigger.RequestCurrent();
-        trigger.RequestCurrent();
-        releaseFirst.TrySetResult();
+            lifecycle.Publish(s2);
+            trigger.RequestCurrent();
+            trigger.RequestCurrent();
+            releaseFirst.TrySetResult();
 
-        await secondCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await trigger.StopAsync();
+            await secondCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await trigger.StopAsync();
 
-        Assert.Equal(2, calls);
+            Assert.Equal(2, calls);
+        }
+        finally
+        {
+            // 任一等待或断言先失败时，也必须先放行 fake cycle；
+            // 否则 using Dispose -> StopAsync 会反向等待这个永远无人释放的 Task。
+            releaseFirst.TrySetResult();
+            await trigger.StopAsync();
+        }
     }
 
     [Fact]
@@ -206,23 +216,32 @@ public sealed class M3AutomaticExecutionTriggerCoordinatorTests
                 return FakeCycle(runtime.Snapshot, lifecycle.Snapshot);
             });
 
-        trigger.Start();
-        lifecycle.Publish(s1);
-        trigger.RequestCurrent();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            trigger.Start();
+            lifecycle.Publish(s1);
+            trigger.RequestCurrent();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        lifecycle.Publish(s2);
-        trigger.RequestCurrent();
-        var stop = trigger.StopAsync();
-        await Task.Delay(50);
-        Assert.False(stop.IsCompleted);
+            lifecycle.Publish(s2);
+            trigger.RequestCurrent();
+            var stop = trigger.StopAsync();
+            await Task.Delay(50);
+            Assert.False(stop.IsCompleted);
 
-        release.TrySetResult();
-        await stop.WaitAsync(TimeSpan.FromSeconds(5));
+            release.TrySetResult();
+            await stop.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.Equal(1, calls);
-        Assert.False(trigger.IsStarted);
-        Assert.False(trigger.IsCyclePumpRunning);
+            Assert.Equal(1, calls);
+            Assert.False(trigger.IsStarted);
+            Assert.False(trigger.IsCyclePumpRunning);
+        }
+        finally
+        {
+            // 保证测试失败路径不会把 StopAsync 的 drain 语义放大成 testhost 永久挂起。
+            release.TrySetResult();
+            await trigger.StopAsync();
+        }
     }
 
     private static M3AutomaticExecutionTriggerCoordinator Trigger(
