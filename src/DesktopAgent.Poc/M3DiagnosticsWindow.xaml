@@ -21,7 +21,7 @@
 
         <StackPanel Grid.Row="0">
             <TextBlock FontSize="20" FontWeight="SemiBold"
-                       Text="M3 只读桌面诊断 / Suggestion / Notification PoC" />
+                       Text="M3 只读桌面诊断 / Suggestion / Windows Notification" />
             <TextBlock Margin="0,5,0,0" Foreground="#666" TextWrapping="Wrap"
                        Text="Observation / Diff / Suggestion / Notification 全程只读。Suggestion 中的 M2 Candidate 只是当时的计划证据，不是执行授权；本窗口没有 Writer，也没有“执行整理”按钮。" />
         </StackPanel>
@@ -134,12 +134,12 @@
                 </StackPanel>
                 <StackPanel Margin="0,0,12,0">
                     <TextBlock x:Name="NotificationStatusText" FontWeight="SemiBold" Foreground="#60449A"
-                               Text="PoC Notification：无当前通知。" TextWrapping="Wrap" />
+                               Text="Windows App Notification：无当前通知。" TextWrapping="Wrap" />
                     <TextBlock x:Name="NotificationSchedulerStatusText" Margin="0,4,0,0"
                                Foreground="#666" TextWrapping="Wrap"
-                               Text="Notification scheduler：等待 Suggestion lifecycle。PoC cooldown = 30s。" />
+                               Text="Notification scheduler：等待 Suggestion lifecycle。验收 cooldown = 30s。" />
                     <TextBlock Margin="0,3,0,0" Foreground="#777" FontSize="12" TextWrapping="Wrap"
-                               Text="这里是平台无关的内存通知 surface。模拟 Open 只激活本窗口；模拟 Ignore 使用 SuggestionId 原子校验，旧通知不会误删新 Suggestion。没有执行整理动作。" />
+                               Text="04C 已连接真实 Windows App Notification。这里同时保留 diagnostics mirror 和模拟按钮：模拟 Open 只激活本窗口；模拟 Ignore 使用 SuggestionId 原子校验。没有执行整理动作。" />
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -152,6 +152,6 @@
                  HorizontalScrollBarVisibility="Auto"
                  FontFamily="Consolas" FontSize="12"
                  Padding="8" BorderBrush="#D6D6D6" BorderThickness="1"
-                 Text="M3 diagnostics / suggestion / notification ready.&#x0D;&#x0A;" />
+                 Text="M3 diagnostics / suggestion / Windows notification ready.&#x0D;&#x0A;" />
     </Grid>
 </Window>
