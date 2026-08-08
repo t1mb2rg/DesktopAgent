@@ -64,20 +64,21 @@ public sealed class DesktopFileSystemMonitoringHintSourceFactory
 
 /// <summary>
 /// M3 PoC 的显式只读监控会话。
-/// 每次 Start 都创建新的 batcher / processor / pump / hint source，
-/// 因此 Stop 后可以重新 Start；会话内 baseline 仍由共享 DiagnosticsRunner 保持。
+/// 每次 Start 都创建新的 batcher / processor / pump / file-system hint source；
+/// periodic hint source 本身无会话状态，可在每次 Start 中启动一条新的可取消 loop。
 /// </summary>
 public sealed class M3ReadOnlyMonitoringSession : IDisposable
 {
     private readonly DesktopObservationDiagnosticsRunner _runner;
     private readonly DesktopObservationHintBatchSettings _hintBatchSettings;
     private readonly IM3ReadOnlyMonitoringHintSourceFactory _hintSourceFactory;
+    private readonly IPeriodicObservationHintSource _periodicHintSource;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
 
     private DesktopObservationBackgroundPump? _pump;
     private IM3ReadOnlyMonitoringHintSource? _fileSystemSource;
-    private CancellationTokenSource? _pumpCts;
-    private Task? _pumpLifetimeTask;
+    private CancellationTokenSource? _sessionCts;
+    private Task? _sessionLifetimeTask;
     private int _isRunning;
     private int _disposeStarted;
     private string? _lastPumpFault;
@@ -86,18 +87,25 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
     public event Action<string>? PumpFaulted;
 
     public bool IsRunning => Volatile.Read(ref _isRunning) != 0;
+
+    /// <summary>
+    /// 兼容 02E 既有 diagnostics 命名；02G 后该值表示 pump 或 periodic component 的最近一次监控 fault。
+    /// </summary>
     public string? LastPumpFault => Volatile.Read(ref _lastPumpFault);
 
     public M3ReadOnlyMonitoringSession(
         DesktopObservationDiagnosticsRunner runner,
         DesktopObservationHintBatchSettings hintBatchSettings,
-        IM3ReadOnlyMonitoringHintSourceFactory hintSourceFactory)
+        IM3ReadOnlyMonitoringHintSourceFactory hintSourceFactory,
+        IPeriodicObservationHintSource periodicHintSource)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _hintBatchSettings = hintBatchSettings
             ?? throw new ArgumentNullException(nameof(hintBatchSettings));
         _hintSourceFactory = hintSourceFactory
             ?? throw new ArgumentNullException(nameof(hintSourceFactory));
+        _periodicHintSource = periodicHintSource
+            ?? throw new ArgumentNullException(nameof(periodicHintSource));
     }
 
     public async Task<M3ReadOnlyMonitoringStartResult> StartAsync(
@@ -128,8 +136,9 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             var batcher = new DesktopObservationHintBatcher(_hintBatchSettings);
             var processor = new DesktopObservationBatchProcessor(_runner);
             var pump = new DesktopObservationBackgroundPump(batcher, processor);
-            var source = _hintSourceFactory.Create(
+            var publishHint = new Action<DesktopObservationHintKind, string>(
                 (kind, provider) => pump.TryPublishHint(kind, provider));
+            var source = _hintSourceFactory.Create(publishHint);
 
             DesktopFileSystemHintSourceStartResult sourceResult;
             try
@@ -154,9 +163,8 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             DesktopObservationDiagnosticsResult prime;
             try
             {
-                // source 先启动，但 pump 暂不运行。
-                // prime 期间到达的 hint 会先压进 batcher，待 baseline 建立后再由 pump 处理，
-                // 从而缩小“baseline 建立期间漏事件”的窗口。
+                // File-system source 先启动，但 pump / periodic 暂不运行。
+                // prime 期间到达的 file-system hint 会先进入 batcher，待 baseline 成功后再处理。
                 prime = await _runner.RunOnceAsync(ct);
             }
             catch
@@ -194,11 +202,17 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
 
             _pump = pump;
             _fileSystemSource = source;
-            _pumpCts = cts;
+            _sessionCts = cts;
             Interlocked.Exchange(ref _isRunning, 1);
 
+            // Periodic source 在 baseline prime 后才启动，所以不会产生无意义的“启动即 tick”。
             var rawPumpTask = pump.RunAsync(cts.Token);
-            _pumpLifetimeTask = ObservePumpLifetimeAsync(rawPumpTask, source, cts);
+            var rawPeriodicTask = _periodicHintSource.RunAsync(publishHint, cts.Token);
+            _sessionLifetimeTask = ObserveMonitoringLifetimeAsync(
+                rawPumpTask,
+                rawPeriodicTask,
+                source,
+                cts);
 
             return new M3ReadOnlyMonitoringStartResult(
                 M3ReadOnlyMonitoringStartStatus.Started,
@@ -244,31 +258,48 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
         }
     }
 
-    private async Task ObservePumpLifetimeAsync(
+    private async Task ObserveMonitoringLifetimeAsync(
         Task rawPumpTask,
+        Task rawPeriodicTask,
         IM3ReadOnlyMonitoringHintSource source,
         CancellationTokenSource cts)
     {
+        string? fault = null;
+
         try
         {
-            await rawPumpTask;
-        }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            var fault = ex.ToString();
-            Volatile.Write(ref _lastPumpFault, fault);
-            try
+            var firstCompleted = await Task.WhenAny(rawPumpTask, rawPeriodicTask);
+
+            if (!cts.IsCancellationRequested)
             {
-                source.Stop();
-            }
-            catch
-            {
+                var componentName = ReferenceEquals(firstCompleted, rawPumpTask)
+                    ? "BackgroundPump"
+                    : "PeriodicFallback";
+                fault = await DescribeUnexpectedComponentExitAsync(
+                    firstCompleted,
+                    componentName,
+                    cts.Token);
+
+                // 任一长期组件非预期结束，整套 monitoring session 一起收口，
+                // 不允许悄悄失去 periodic convergence 或 single-flight pump。
+                cts.Cancel();
+                TryStopSource(source);
             }
 
-            PublishPumpFaulted(fault);
+            fault ??= await ObserveComponentShutdownAsync(
+                rawPumpTask,
+                "BackgroundPump",
+                cts.Token);
+            fault ??= await ObserveComponentShutdownAsync(
+                rawPeriodicTask,
+                "PeriodicFallback",
+                cts.Token);
+
+            if (fault is not null)
+            {
+                Volatile.Write(ref _lastPumpFault, fault);
+                PublishPumpFaulted(fault);
+            }
         }
         finally
         {
@@ -280,19 +311,11 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
     {
         var source = _fileSystemSource;
         var pump = _pump;
-        var cts = _pumpCts;
-        var lifetime = _pumpLifetimeTask;
+        var cts = _sessionCts;
+        var lifetime = _sessionLifetimeTask;
 
         if (source is not null)
-        {
-            try
-            {
-                source.Stop();
-            }
-            catch
-            {
-            }
-        }
+            TryStopSource(source);
 
         cts?.Cancel();
 
@@ -307,8 +330,8 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
 
         _pump = null;
         _fileSystemSource = null;
-        _pumpCts = null;
-        _pumpLifetimeTask = null;
+        _sessionCts = null;
+        _sessionLifetimeTask = null;
         Interlocked.Exchange(ref _isRunning, 0);
     }
 
@@ -316,8 +339,8 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
     {
         if (_pump is null
             && _fileSystemSource is null
-            && _pumpCts is null
-            && _pumpLifetimeTask is null)
+            && _sessionCts is null
+            && _sessionLifetimeTask is null)
         {
             return;
         }
@@ -359,6 +382,57 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             catch
             {
             }
+        }
+    }
+
+    private static void TryStopSource(IM3ReadOnlyMonitoringHintSource source)
+    {
+        try
+        {
+            source.Stop();
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task<string> DescribeUnexpectedComponentExitAsync(
+        Task task,
+        string componentName,
+        CancellationToken sessionToken)
+    {
+        try
+        {
+            await task;
+            return $"{componentName} unexpectedly completed while monitoring session was still active.";
+        }
+        catch (OperationCanceledException) when (!sessionToken.IsCancellationRequested)
+        {
+            return $"{componentName} was unexpectedly cancelled while monitoring session was still active.";
+        }
+        catch (Exception ex)
+        {
+            return $"{componentName} faulted unexpectedly.\n{ex}";
+        }
+    }
+
+    private static async Task<string?> ObserveComponentShutdownAsync(
+        Task task,
+        string componentName,
+        CancellationToken sessionToken)
+    {
+        try
+        {
+            await task;
+            return null;
+        }
+        catch (OperationCanceledException) when (sessionToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"{componentName} faulted while monitoring session was stopping.\n{ex}";
         }
     }
 }
