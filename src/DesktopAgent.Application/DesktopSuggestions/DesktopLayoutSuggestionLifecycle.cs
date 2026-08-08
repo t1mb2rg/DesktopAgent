@@ -19,6 +19,7 @@ public enum DesktopLayoutSuggestionRetirementReason
     BindingChanged = 1,
     UserDismissed = 2,
     ReplacedByNewSuggestion = 3,
+    BaselineReestablished = 4,
 }
 
 public sealed record DesktopLayoutRetiredSuggestion(
@@ -154,6 +155,29 @@ public sealed class DesktopLayoutSuggestionLifecycle
             RetireCurrent(
                 DesktopLayoutSuggestionRetirementReason.DesktopChanged,
                 newStableObservationId);
+            _revision++;
+            return CreateSnapshot();
+        }
+    }
+
+    /// <summary>
+    /// baseline 被显式重置或首次重新建立时，旧建议失去连续比较链的依据并退休。
+    /// 初始没有建议时此操作为 no-op。
+    /// </summary>
+    public DesktopLayoutSuggestionLifecycleSnapshot MarkBaselineReestablished(
+        Guid newBaselineObservationId)
+    {
+        if (newBaselineObservationId == Guid.Empty)
+            throw new ArgumentException("newBaselineObservationId 不能为空。", nameof(newBaselineObservationId));
+
+        lock (_gate)
+        {
+            if (_current is null)
+                return CreateSnapshot();
+
+            RetireCurrent(
+                DesktopLayoutSuggestionRetirementReason.BaselineReestablished,
+                newBaselineObservationId);
             _revision++;
             return CreateSnapshot();
         }
