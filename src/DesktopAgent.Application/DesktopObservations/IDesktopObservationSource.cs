@@ -11,8 +11,7 @@ public enum DesktopObservationCaptureIssueCode
     ShellObservationFailed = 4,
     IncompleteDesktopRead = 5,
     DuplicateStableId = 6,
-    IconOutsideDisplayTopology = 7,
-    ObservationBuildFailed = 8,
+    ObservationBuildFailed = 7,
 }
 
 public sealed record DesktopObservationCaptureIssue(
