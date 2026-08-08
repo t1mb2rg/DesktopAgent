@@ -2,6 +2,7 @@ using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Application.DesktopSuggestions;
 using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.DesktopLayouts.Templates.Execution;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
@@ -213,7 +214,7 @@ public sealed class DesktopAutomationFreshExecutionHandoffTests
 
     private static DesktopLayoutFreshCandidateRebuildResult ReadyRebuild(
         Guid observationId,
-        Core.DesktopLayouts.Templates.Execution.DesktopLayoutRuleAwareExecutionCandidate candidate) =>
+        DesktopLayoutRuleAwareExecutionCandidate candidate) =>
         new(
             DesktopLayoutFreshCandidateRebuildStatus.Ready,
             observationId,
