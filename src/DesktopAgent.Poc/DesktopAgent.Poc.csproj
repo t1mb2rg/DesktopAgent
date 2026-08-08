@@ -9,7 +9,16 @@
     <RootNamespace>DesktopAgent.Poc</RootNamespace>
     <AssemblyName>DesktopAgent.Poc</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <WindowsPackageType>None</WindowsPackageType>
+
+    <!--
+      04C intentionally disables Windows App SDK module auto-initializers.
+      DesktopAgent.exe performs explicit bootstrap/deployment initialization in App startup.
+      This prevents xUnit from triggering WinAppSDK process initialization merely by loading
+      the PoC assembly as a referenced test dependency.
+    -->
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+    <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +31,5 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
   </ItemGroup>
 </Project>
