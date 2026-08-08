@@ -78,6 +78,20 @@ Suspended
 
 如果新一轮 Builder 返回 NoActionNeeded / CandidateRejected / TemplateMissing 等结果，则保持 None，不允许旧 Suggestion 复活。
 
+### Baseline 重新建立会退休旧建议
+
+显式 Reset Baseline 或其他原因导致下一份 stable observation 重新建立 baseline 时，旧 Suggestion 失去连续比较链的证据基础。
+
+因此：
+
+```text
+Active / Suspended
+→ BaselineReestablished
+→ retired / None
+```
+
+这与“周期产生一个新的 ObservationId”不同。普通 `NoChanges` 不会退休建议；只有 baseline 本身被重新建立才会。
+
 ### Binding 变化立即退休
 
 用户切换 TemplateId / SelectedTarget 等后台绑定时，旧 Suggestion 不再属于当前配置，退休为 `BindingChanged`。
@@ -100,7 +114,8 @@ Reason：
 - DesktopChanged；
 - BindingChanged；
 - UserDismissed；
-- ReplacedByNewSuggestion。
+- ReplacedByNewSuggestion；
+- BaselineReestablished。
 
 当前只保留进程内最近一次退休记录，不进入 SQLite history。
 
@@ -121,6 +136,7 @@ Lifecycle 维护单调递增 Revision。
 - NoChanges -> 恢复同一 Suggestion；
 - DesktopChanged 退休 Active；
 - DesktopChanged 退休 Suspended；
+- BaselineReestablished 退休当前 Suggestion；
 - Publish 新 Suggestion 替换旧 Suggestion；
 - BindingChanged；
 - UserDismissed；
