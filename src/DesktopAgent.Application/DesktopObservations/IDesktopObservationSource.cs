@@ -4,12 +4,14 @@ namespace DesktopAgent.Application.DesktopObservations;
 
 public enum DesktopObservationCaptureIssueCode
 {
-    NoDisplays = 0,
-    DuplicateDisplayDeviceName = 1,
-    ShellObservationFailed = 2,
-    IncompleteDesktopRead = 3,
-    DuplicateStableId = 4,
-    IconOutsideDisplayTopology = 5,
+    TopologyReadFailed = 0,
+    NoDisplays = 1,
+    DuplicateDisplayDeviceName = 2,
+    ShellObservationFailed = 3,
+    IncompleteDesktopRead = 4,
+    DuplicateStableId = 5,
+    IconOutsideDisplayTopology = 6,
+    ObservationBuildFailed = 7,
 }
 
 public sealed record DesktopObservationCaptureIssue(
