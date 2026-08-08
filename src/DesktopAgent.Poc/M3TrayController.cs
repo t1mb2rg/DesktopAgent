@@ -1,14 +1,16 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Threading;
+using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopSuggestions;
+using DesktopAgent.WindowsInterop.DesktopAutomation;
 
 namespace DesktopAgent.Poc;
 
 /// <summary>
-/// M3-04D tray presentation controller。
-/// 只负责窗口可见性、只读 monitoring 启停和当前状态展示。
-/// 不持有 Candidate / Writer / ExecutionCoordinator。
+/// M3 tray presentation controller。
+/// 负责窗口可见性、monitoring、automatic mode/status 与显式退出。
+/// 不直接持有 Candidate / Writer / ExecutionCoordinator。
 /// </summary>
 public sealed class M3TrayController : IDisposable
 {
@@ -19,13 +21,21 @@ public sealed class M3TrayController : IDisposable
     private readonly M3DiagnosticsWindow _diagnosticsWindow;
     private readonly M3SuggestionMonitoringCoordinator _suggestionCoordinator;
     private readonly M3SuggestionNotificationCoordinator _notificationCoordinator;
+    private readonly DesktopAutomationRuntimePolicy _automationRuntime;
+    private readonly M3AutomaticExecutionTriggerCoordinator _automaticTrigger;
 
     private System.Windows.Forms.NotifyIcon? _notifyIcon;
     private System.Windows.Forms.ContextMenuStrip? _menu;
     private System.Windows.Forms.ToolStripMenuItem? _monitoringStatusItem;
     private System.Windows.Forms.ToolStripMenuItem? _suggestionStatusItem;
     private System.Windows.Forms.ToolStripMenuItem? _notificationStatusItem;
+    private System.Windows.Forms.ToolStripMenuItem? _automationStatusItem;
     private System.Windows.Forms.ToolStripMenuItem? _toggleMonitoringItem;
+    private System.Windows.Forms.ToolStripMenuItem? _manualModeItem;
+    private System.Windows.Forms.ToolStripMenuItem? _suggestionModeItem;
+    private System.Windows.Forms.ToolStripMenuItem? _automaticModeItem;
+    private System.Windows.Forms.ToolStripMenuItem? _toggleAutomationPauseItem;
+    private System.Windows.Forms.ToolStripMenuItem? _resetFuseItem;
     private DispatcherTimer? _statusTimer;
 
     private bool _started;
@@ -39,7 +49,9 @@ public sealed class M3TrayController : IDisposable
         MainWindow mainWindow,
         M3DiagnosticsWindow diagnosticsWindow,
         M3SuggestionMonitoringCoordinator suggestionCoordinator,
-        M3SuggestionNotificationCoordinator notificationCoordinator)
+        M3SuggestionNotificationCoordinator notificationCoordinator,
+        DesktopAutomationRuntimePolicy automationRuntime,
+        M3AutomaticExecutionTriggerCoordinator automaticTrigger)
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
         _mainWindow = mainWindow ?? throw new ArgumentNullException(nameof(mainWindow));
@@ -48,6 +60,8 @@ public sealed class M3TrayController : IDisposable
             ?? throw new ArgumentNullException(nameof(suggestionCoordinator));
         _notificationCoordinator = notificationCoordinator
             ?? throw new ArgumentNullException(nameof(notificationCoordinator));
+        _automationRuntime = automationRuntime ?? throw new ArgumentNullException(nameof(automationRuntime));
+        _automaticTrigger = automaticTrigger ?? throw new ArgumentNullException(nameof(automaticTrigger));
     }
 
     public void Start()
@@ -74,21 +88,30 @@ public sealed class M3TrayController : IDisposable
         var openDiagnosticsItem = new System.Windows.Forms.ToolStripMenuItem("打开 M3 诊断");
         openDiagnosticsItem.Click += (_, _) => RunOnDispatcher(OpenDiagnosticsWindow);
 
-        _monitoringStatusItem = new System.Windows.Forms.ToolStripMenuItem
-        {
-            Enabled = false,
-        };
-        _suggestionStatusItem = new System.Windows.Forms.ToolStripMenuItem
-        {
-            Enabled = false,
-        };
-        _notificationStatusItem = new System.Windows.Forms.ToolStripMenuItem
-        {
-            Enabled = false,
-        };
+        _monitoringStatusItem = new System.Windows.Forms.ToolStripMenuItem { Enabled = false };
+        _suggestionStatusItem = new System.Windows.Forms.ToolStripMenuItem { Enabled = false };
+        _notificationStatusItem = new System.Windows.Forms.ToolStripMenuItem { Enabled = false };
+        _automationStatusItem = new System.Windows.Forms.ToolStripMenuItem { Enabled = false };
 
         _toggleMonitoringItem = new System.Windows.Forms.ToolStripMenuItem();
         _toggleMonitoringItem.Click += OnToggleMonitoringClick;
+
+        var automationModeMenu = new System.Windows.Forms.ToolStripMenuItem("自动整理模式");
+        _manualModeItem = new System.Windows.Forms.ToolStripMenuItem("Manual 手动");
+        _suggestionModeItem = new System.Windows.Forms.ToolStripMenuItem("Suggestion 建议");
+        _automaticModeItem = new System.Windows.Forms.ToolStripMenuItem("Automatic 自动");
+        _manualModeItem.Click += (_, _) => SetAutomationMode(DesktopAutomationMode.Manual);
+        _suggestionModeItem.Click += (_, _) => SetAutomationMode(DesktopAutomationMode.Suggestion);
+        _automaticModeItem.Click += (_, _) => SetAutomationMode(DesktopAutomationMode.Automatic);
+        automationModeMenu.DropDownItems.Add(_manualModeItem);
+        automationModeMenu.DropDownItems.Add(_suggestionModeItem);
+        automationModeMenu.DropDownItems.Add(_automaticModeItem);
+
+        _toggleAutomationPauseItem = new System.Windows.Forms.ToolStripMenuItem();
+        _toggleAutomationPauseItem.Click += OnToggleAutomationPauseClick;
+
+        _resetFuseItem = new System.Windows.Forms.ToolStripMenuItem("重置自动整理熔断");
+        _resetFuseItem.Click += OnResetFuseClick;
 
         var exitItem = new System.Windows.Forms.ToolStripMenuItem("退出 DesktopAgent");
         exitItem.Click += OnExitClick;
@@ -100,7 +123,12 @@ public sealed class M3TrayController : IDisposable
         _menu.Items.Add(_monitoringStatusItem);
         _menu.Items.Add(_suggestionStatusItem);
         _menu.Items.Add(_notificationStatusItem);
+        _menu.Items.Add(_automationStatusItem);
         _menu.Items.Add(_toggleMonitoringItem);
+        _menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        _menu.Items.Add(automationModeMenu);
+        _menu.Items.Add(_toggleAutomationPauseItem);
+        _menu.Items.Add(_resetFuseItem);
         _menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         _menu.Items.Add(exitItem);
         _menu.Opening += (_, _) => RunOnDispatcher(RefreshStatus);
@@ -113,6 +141,10 @@ public sealed class M3TrayController : IDisposable
             Visible = true,
         };
         _notifyIcon.DoubleClick += (_, _) => RunOnDispatcher(OpenMainWindow);
+
+        _automaticTrigger.CycleCompleted += OnAutomaticCycleCompleted;
+        _automaticTrigger.TriggerFaulted += OnAutomaticTriggerFaulted;
+        _automaticTrigger.Start();
 
         _statusTimer = new DispatcherTimer(
             TimeSpan.FromSeconds(1),
@@ -150,7 +182,6 @@ public sealed class M3TrayController : IDisposable
         _ = sender;
 
         // MainWindow 自己的 M2 安全 OnClosing 先执行。
-        // 如果它已经因为正在执行 / 人工恢复等原因阻止关闭，这里绝不覆盖。
         if (_exitRequested || e.Cancel)
             return;
 
@@ -165,7 +196,7 @@ public sealed class M3TrayController : IDisposable
         if (_exitRequested || e.Cancel)
             return;
 
-        // 只隐藏仪表盘，不触发 03D OnClosed，因此后台 monitoring 与 lifecycle 继续存在。
+        // 只隐藏仪表盘，不停止 monitoring / automation trigger。
         e.Cancel = true;
         _diagnosticsWindow.Hide();
         RefreshStatus();
@@ -198,6 +229,84 @@ public sealed class M3TrayController : IDisposable
         }
     }
 
+    private void SetAutomationMode(DesktopAutomationMode mode)
+    {
+        RunOnDispatcher(() =>
+        {
+            try
+            {
+                _automationRuntime.SetRequestedMode(mode);
+                if (mode == DesktopAutomationMode.Automatic)
+                    _automaticTrigger.RequestCurrent();
+                RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                ShowTrayWarning("自动整理模式切换失败", ex.Message);
+            }
+        });
+    }
+
+    private void OnToggleAutomationPauseClick(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        RunOnDispatcher(() =>
+        {
+            try
+            {
+                if (_automationRuntime.Snapshot.IsPaused)
+                {
+                    var resumed = _automationRuntime.Resume();
+                    if (resumed.RequestedMode == DesktopAutomationMode.Automatic)
+                        _automaticTrigger.RequestCurrent();
+                }
+                else
+                {
+                    _automationRuntime.Pause("用户从 tray 暂停 automatic execution。");
+                }
+                RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                ShowTrayWarning("自动整理暂停/恢复失败", ex.Message);
+            }
+        });
+    }
+
+    private void OnResetFuseClick(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        RunOnDispatcher(() =>
+        {
+            if (!_automationRuntime.Snapshot.IsFuseTripped)
+                return;
+
+            var answer = MessageBox.Show(
+                _mainWindow,
+                "这会清除自动整理连续失败熔断。\n如果失败原因尚未处理，Automatic 仍可能再次失败。\n\n继续重置？",
+                "重置自动整理熔断",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+                return;
+
+            try
+            {
+                var reset = _automationRuntime.ResetFuse();
+                if (reset.RequestedMode == DesktopAutomationMode.Automatic)
+                    _automaticTrigger.RequestCurrent();
+                RefreshStatus();
+            }
+            catch (Exception ex)
+            {
+                ShowTrayWarning("重置自动整理熔断失败", ex.Message);
+            }
+        });
+    }
+
     private async void OnExitClick(object? sender, EventArgs e)
     {
         _ = sender;
@@ -210,6 +319,9 @@ public sealed class M3TrayController : IDisposable
 
         try
         {
+            // 先停止接收新的 automatic trigger，并等待正在运行的 cycle/M2 transaction 收口。
+            await _automaticTrigger.StopAsync();
+
             if (_suggestionCoordinator.IsMonitoring)
             {
                 try
@@ -223,12 +335,12 @@ public sealed class M3TrayController : IDisposable
             }
 
             // 让 MainWindow 现有 M2 Closing 安全检查真正运行。
-            // 若它取消关闭，说明仍有操作/人工恢复状态需要用户处理，不能强退。
             OpenMainWindow();
             _mainWindow.Close();
             if (_mainWindow.IsLoaded)
             {
                 _exitRequested = false;
+                _automaticTrigger.Start();
                 RefreshStatus();
                 return;
             }
@@ -241,10 +353,45 @@ public sealed class M3TrayController : IDisposable
         catch (Exception ex)
         {
             _exitRequested = false;
+            try
+            {
+                _automaticTrigger.Start();
+            }
+            catch
+            {
+            }
             RefreshStatus();
             ShowTrayWarning("退出 DesktopAgent 失败", ex.Message);
         }
     }
+
+    private void OnAutomaticCycleCompleted(DesktopAutomationExecutionCycleResult result)
+    {
+        RunOnDispatcher(() =>
+        {
+            RefreshStatus();
+
+            if (result.Status == DesktopAutomationExecutionCycleStatus.FaultedAndPaused)
+            {
+                ShowTrayWarning(
+                    "自动整理已安全暂停",
+                    result.Fault ?? "Automatic cycle 发生未知异常。请查看诊断。");
+                return;
+            }
+
+            if (result.Outcome?.Status == DesktopAutomationExecutionOutcomeFeedbackStatus.FailureRecorded)
+            {
+                var coordinatorStatus = result.Outcome.BridgeResult.CoordinatorRun?.Status.ToString()
+                    ?? "Unknown";
+                ShowTrayWarning(
+                    "自动整理本次未完成",
+                    $"Coordinator={coordinatorStatus}。已进入 cooldown；连续失败可能触发 fuse。");
+            }
+        });
+    }
+
+    private void OnAutomaticTriggerFaulted(string fault) =>
+        RunOnDispatcher(() => ShowTrayWarning("Automatic trigger 异常", fault));
 
     private void OpenMainWindow()
     {
@@ -259,7 +406,6 @@ public sealed class M3TrayController : IDisposable
 
     private void OpenDiagnosticsWindow()
     {
-        // Diagnostics 是 MainWindow 的 owned window；先恢复 owner，避免 owner 隐藏时诊断窗也被压回去。
         OpenMainWindow();
 
         if (!_diagnosticsWindow.IsVisible)
@@ -279,6 +425,7 @@ public sealed class M3TrayController : IDisposable
         var monitoring = _suggestionCoordinator.IsMonitoring;
         var suggestion = _suggestionCoordinator.SuggestionSnapshot;
         var notification = _notificationCoordinator.SurfaceSnapshot.CurrentNotification;
+        var automation = _automationRuntime.Snapshot;
 
         if (_monitoringStatusItem is not null)
         {
@@ -305,6 +452,21 @@ public sealed class M3TrayController : IDisposable
                 : "通知：已有当前 Suggestion 通知";
         }
 
+        if (_automationStatusItem is not null)
+        {
+            var blocker = automation.IsFuseTripped
+                ? " | Fuse"
+                : automation.IsPaused
+                    ? " | Paused"
+                    : automation.IsCooldownActive
+                        ? " | Cooldown"
+                        : !automation.UnattendedGate.IsOpen
+                            ? $" | Gate:{automation.UnattendedGate.Reason}"
+                            : string.Empty;
+            _automationStatusItem.Text =
+                $"自动化：请求 {automation.RequestedMode} / 实际 {automation.EffectiveMode}{blocker}";
+        }
+
         if (_toggleMonitoringItem is not null)
         {
             _toggleMonitoringItem.Text = monitoring
@@ -313,13 +475,32 @@ public sealed class M3TrayController : IDisposable
             _toggleMonitoringItem.Enabled = !_monitoringOperation && !_exitRequested;
         }
 
+        if (_manualModeItem is not null)
+            _manualModeItem.Checked = automation.RequestedMode == DesktopAutomationMode.Manual;
+        if (_suggestionModeItem is not null)
+            _suggestionModeItem.Checked = automation.RequestedMode == DesktopAutomationMode.Suggestion;
+        if (_automaticModeItem is not null)
+            _automaticModeItem.Checked = automation.RequestedMode == DesktopAutomationMode.Automatic;
+
+        if (_toggleAutomationPauseItem is not null)
+        {
+            _toggleAutomationPauseItem.Text = automation.IsPaused
+                ? "恢复自动整理"
+                : "暂停自动整理";
+            _toggleAutomationPauseItem.Enabled = !_exitRequested;
+        }
+
+        if (_resetFuseItem is not null)
+            _resetFuseItem.Enabled = automation.IsFuseTripped && !_exitRequested;
+
         var suggestionLabel = suggestion.State switch
         {
             DesktopLayoutSuggestionPresentationState.Active => "Active",
             DesktopLayoutSuggestionPresentationState.Suspended => "Suspended",
             _ => "None",
         };
-        var text = $"DesktopAgent | 监控:{(monitoring ? "开" : "停")} | 建议:{suggestionLabel}";
+        var text =
+            $"DesktopAgent | 监控:{(monitoring ? "开" : "停")} | 自动:{automation.EffectiveMode} | 建议:{suggestionLabel}";
         _notifyIcon.Text = text.Length <= TrayTextLimit
             ? text
             : text[..TrayTextLimit];
@@ -361,6 +542,16 @@ public sealed class M3TrayController : IDisposable
     {
         _statusTimer?.Stop();
         _statusTimer = null;
+
+        _automaticTrigger.CycleCompleted -= OnAutomaticCycleCompleted;
+        _automaticTrigger.TriggerFaulted -= OnAutomaticTriggerFaulted;
+        try
+        {
+            _automaticTrigger.StopAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
 
         _mainWindow.Closing -= OnMainWindowClosing;
         _diagnosticsWindow.Closing -= OnDiagnosticsWindowClosing;
