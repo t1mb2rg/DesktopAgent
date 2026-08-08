@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopSuggestions;
+using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 
@@ -363,7 +364,6 @@ public sealed class DesktopAutomationCoordinatorExecutionBridge : IDisposable
             }
         }
 
-        // Risk policy 是同步 port，但实现/测试仍可能在调用中改变 runtime/lifecycle。
         if (!MatchesExpectedActiveLifecycle(_lifecycle.Snapshot, expectedLifecycle))
             reasons.Add("Coordinator commit point risk 评估期间 Suggestion lifecycle 发生变化。");
 
