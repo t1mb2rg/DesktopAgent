@@ -50,7 +50,7 @@ public sealed class DesktopAutomationExecutionOutcomeCoordinatorTests
         Assert.Equal(before.Revision, result.RuntimeAfter.Revision);
         Assert.Null(result.RuntimeAfter.LastExecutionOutcome);
         Assert.False(result.RuntimeAfter.IsCooldownActive);
-        Assert.Equal(0, result.RuntimeAfter.ConsecutiveFailures);
+        Assert.Equal(0, result.RuntimeAfter.ConsecutiveExecutionFailures);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public sealed class DesktopAutomationExecutionOutcomeCoordinatorTests
         Assert.Equal(1, calls);
         Assert.Equal(DesktopAutomationExecutionOutcome.Success, result.RuntimeAfter.LastExecutionOutcome);
         Assert.True(result.RuntimeAfter.IsCooldownActive);
-        Assert.Equal(0, result.RuntimeAfter.ConsecutiveFailures);
+        Assert.Equal(0, result.RuntimeAfter.ConsecutiveExecutionFailures);
         Assert.Equal(result.RuntimeBefore.Revision + 1, result.RuntimeAfter.Revision);
     }
 
@@ -110,7 +110,7 @@ public sealed class DesktopAutomationExecutionOutcomeCoordinatorTests
         Assert.Equal(DesktopAutomationExecutionOutcomeFeedbackStatus.FailureRecorded, result.Status);
         Assert.Equal(DesktopAutomationExecutionOutcome.Failure, result.RuntimeAfter.LastExecutionOutcome);
         Assert.True(result.RuntimeAfter.IsCooldownActive);
-        Assert.Equal(1, result.RuntimeAfter.ConsecutiveFailures);
+        Assert.Equal(1, result.RuntimeAfter.ConsecutiveExecutionFailures);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public sealed class DesktopAutomationExecutionOutcomeCoordinatorTests
         Assert.Equal(3, calls);
         Assert.Equal(DesktopAutomationExecutionOutcomeFeedbackStatus.FailureRecorded, third.Status);
         Assert.True(third.RuntimeAfter.IsFuseTripped);
-        Assert.Equal(3, third.RuntimeAfter.ConsecutiveFailures);
+        Assert.Equal(3, third.RuntimeAfter.ConsecutiveExecutionFailures);
         Assert.Equal(DesktopAutomationMode.Suggestion, third.RuntimeAfter.EffectiveMode);
     }
 
@@ -164,7 +164,7 @@ public sealed class DesktopAutomationExecutionOutcomeCoordinatorTests
 
         Assert.Equal(DesktopAutomationExecutionOutcome.Success, successResult.RuntimeAfter.LastExecutionOutcome);
         Assert.True(successResult.RuntimeAfter.IsFuseTripped);
-        Assert.Equal(2, successResult.RuntimeAfter.ConsecutiveFailures);
+        Assert.Equal(2, successResult.RuntimeAfter.ConsecutiveExecutionFailures);
     }
 
     [Fact]
@@ -239,13 +239,13 @@ public sealed class DesktopAutomationExecutionOutcomeCoordinatorTests
         TargetDisplayLayoutExecutionRunStatus status,
         bool isSuccess) =>
         new(
-            status,
-            isSuccess,
+            status: status,
+            isSuccess: isSuccess,
             isNoOp: status == TargetDisplayLayoutExecutionRunStatus.CompletedNoOp,
             session: null,
             safetySnapshotId: null,
-            Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
-            Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+            forwardAttempts: Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
+            rollbackAttempts: Array.Empty<TargetDisplayLayoutExecutionAttemptResult>(),
             failedStepIndex: null,
             requiresManualRecovery: status is TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete
                 or TargetDisplayLayoutExecutionRunStatus.PositionUncertain,
