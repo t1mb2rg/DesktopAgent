@@ -107,7 +107,6 @@ public sealed class M3AutomaticExecutionTriggerCoordinator : IDisposable
     {
         ThrowIfDisposed();
 
-        bool startPump;
         lock (_gate)
         {
             if (!_started || !_accepting)
@@ -121,13 +120,14 @@ public sealed class M3AutomaticExecutionTriggerCoordinator : IDisposable
                 return;
 
             _pendingKey = key;
-            startPump = !_pumpRunning;
-            if (startPump)
+            if (!_pumpRunning)
+            {
                 _pumpRunning = true;
+                // 在同一把 lock 里同时建立 running 标记和可等待 Task。
+                // Task.Run 返回后 StopAsync 不会再看到“running=true 但 tail 还是 Completed”的半状态。
+                _pumpTask = Task.Run(PumpAsync);
+            }
         }
-
-        if (startPump)
-            StartPump();
     }
 
     public async Task StopAsync()
@@ -163,28 +163,6 @@ public sealed class M3AutomaticExecutionTriggerCoordinator : IDisposable
         RequestCurrent();
     }
 
-    private void StartPump()
-    {
-        Task task;
-        try
-        {
-            task = PumpAsync();
-        }
-        catch (Exception ex)
-        {
-            lock (_gate)
-            {
-                _pumpRunning = false;
-                _pumpTask = Task.CompletedTask;
-            }
-            TriggerFaulted?.Invoke($"Automatic trigger pump 启动失败：{ex}");
-            return;
-        }
-
-        lock (_gate)
-            _pumpTask = task;
-    }
-
     private async Task PumpAsync()
     {
         try
@@ -197,10 +175,7 @@ public sealed class M3AutomaticExecutionTriggerCoordinator : IDisposable
                     queuedKey = _pendingKey;
                     _pendingKey = null;
                     if (queuedKey is null)
-                    {
-                        _pumpRunning = false;
                         return;
-                    }
                 }
 
                 // Queue 后到真正执行前，lifecycle/runtime 可能已经变化。
@@ -239,17 +214,18 @@ public sealed class M3AutomaticExecutionTriggerCoordinator : IDisposable
         }
         finally
         {
-            bool restart;
             lock (_gate)
             {
                 _pumpRunning = false;
-                restart = _accepting && _pendingKey is not null;
-                if (restart)
-                    _pumpRunning = true;
-            }
 
-            if (restart)
-                StartPump();
+                // cycle 运行期间若出现了更新的 TriggerKey，只保留最新一份 pending。
+                // 直接在同一 lock 下挂下一条 task，避免 StopAsync 穿过半状态。
+                if (_accepting && _pendingKey is not null)
+                {
+                    _pumpRunning = true;
+                    _pumpTask = Task.Run(PumpAsync);
+                }
+            }
         }
     }
 
