@@ -1,7 +1,9 @@
 using System.Text;
 using System.Windows;
 using DesktopAgent.Application.DesktopObservations;
+using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopObservations;
+using DesktopAgent.Core.Displays;
 
 namespace DesktopAgent.Poc;
 
@@ -236,9 +238,9 @@ public partial class M3DiagnosticsWindow : Window
             sb.AppendLine("  (empty)");
     }
 
-    private static string FormatDisplay(Core.Displays.DisplayDescriptor display) =>
+    private static string FormatDisplay(DisplayDescriptor display) =>
         $"{display.DeviceName} Bounds={display.Bounds} WorkArea={display.WorkArea} DPI={display.DpiX}x{display.DpiY} Primary={display.IsPrimary}";
 
-    private static string FormatIcon(Core.DesktopIcons.DesktopIconDescriptor icon) =>
+    private static string FormatIcon(DesktopIconDescriptor icon) =>
         $"Name=\"{icon.DisplayName}\" Kind={icon.ItemKind} Pos=({icon.PixelPosition.X},{icon.PixelPosition.Y}) Monitor={icon.MonitorDeviceName ?? "<null>"}";
 }
