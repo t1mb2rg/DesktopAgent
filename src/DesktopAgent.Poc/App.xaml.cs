@@ -11,6 +11,7 @@ using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Poc.Acceptance;
+using DesktopAgent.Poc.Hosting;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.DesktopObservations;
@@ -97,7 +98,33 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IStableDesktopObservationSource, StableDesktopObservationSource>();
                 services.AddSingleton<DesktopStateBaselineTracker>();
                 services.AddSingleton<DesktopObservationDiagnosticsRunner>();
+
+                // M3-02: event hint 只负责决定“什么时候值得重新观察”。
+                // 这些数值仅是 PoC 参数，不属于 Core 冻结语义。
+                services.AddSingleton(
+                    new DesktopObservationHintBatchSettings(
+                        TimeSpan.FromMilliseconds(500),
+                        TimeSpan.FromSeconds(2)));
+                services.AddSingleton<DesktopObservationHintBatcher>();
+                services.AddSingleton<DesktopObservationBatchProcessor>();
+                services.AddSingleton<DesktopObservationBackgroundPump>();
+                services.AddSingleton<IDesktopObservationHintSource>(sp =>
+                    new DesktopFileSystemObservationHintSource((kind, source) =>
+                    {
+                        _ = sp.GetRequiredService<DesktopObservationBackgroundPump>()
+                            .TryPublishHint(kind, source);
+                    }));
+                services.AddSingleton<DesktopObservationMonitoringRuntime>();
                 services.AddSingleton<M3DiagnosticsWindow>();
+
+#if DEBUG
+                // M2 crash-window / SoftError acceptance 必须保持实验环境单一，
+                // 故障注入启用时不启动 M3 常驻 Shell observation。
+                if (!acceptanceFaultOptions.IsEnabled)
+                    services.AddHostedService<M3ObservationMonitoringHostedService>();
+#else
+                services.AddHostedService<M3ObservationMonitoringHostedService>();
+#endif
 
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
                 services.AddSingleton<IRecoverySessionStore>(
