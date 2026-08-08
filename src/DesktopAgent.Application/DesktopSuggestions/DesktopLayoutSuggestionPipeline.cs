@@ -49,10 +49,11 @@ public sealed record DesktopLayoutSuggestionPipelineResult
         if (status == DesktopLayoutSuggestionPipelineStatus.Suggested
             && (buildResult?.Status != DesktopLayoutSuggestionBuildStatus.Suggested
                 || lifecycle.State != DesktopLayoutSuggestionPresentationState.Active
-                || lifecycle.CurrentSuggestion is null))
+                || lifecycle.CurrentSuggestion is null
+                || !ReferenceEquals(buildResult.Suggestion, lifecycle.CurrentSuggestion)))
         {
             throw new ArgumentException(
-                "Suggested pipeline result 必须包含 Suggested build 与 Active lifecycle。",
+                "Suggested pipeline result 必须包含同一 Suggested build 与 Active lifecycle。",
                 nameof(status));
         }
 
@@ -102,7 +103,7 @@ public sealed record DesktopLayoutSuggestionPipelineResult
 /// 并在 ChangesDetected 时使用显式 binding 构建新 Suggestion。
 /// 不依赖 WPF、WindowsInterop、Writer 或 ExecutionCoordinator。
 /// </summary>
-public sealed class DesktopLayoutSuggestionPipeline : IDisposable
+public sealed class DesktopLayoutSuggestionPipeline
 {
     private readonly object _bindingGate = new();
     private readonly SemaphoreSlim _processGate = new(1, 1);
@@ -111,7 +112,6 @@ public sealed class DesktopLayoutSuggestionPipeline : IDisposable
 
     private long _bindingRevision;
     private DesktopLayoutSuggestionBinding? _binding;
-    private bool _disposed;
 
     public DesktopLayoutSuggestionPipeline(
         IDesktopLayoutSuggestionBuilder builder,
@@ -140,8 +140,6 @@ public sealed class DesktopLayoutSuggestionPipeline : IDisposable
     public DesktopLayoutSuggestionBindingSnapshot SetBinding(
         DesktopLayoutSuggestionBinding? binding)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
         lock (_bindingGate)
         {
             if (Equals(_binding, binding))
@@ -162,13 +160,10 @@ public sealed class DesktopLayoutSuggestionPipeline : IDisposable
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(diagnostics);
-        ObjectDisposedException.ThrowIf(_disposed, this);
 
         await _processGate.WaitAsync(ct);
         try
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
-
             switch (diagnostics.Status)
             {
                 case DesktopObservationDiagnosticsStatus.BaselineEstablished:
@@ -232,15 +227,6 @@ public sealed class DesktopLayoutSuggestionPipeline : IDisposable
         {
             _processGate.Release();
         }
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        _processGate.Dispose();
     }
 
     private async Task<DesktopLayoutSuggestionPipelineResult> ProcessChangesAsync(
