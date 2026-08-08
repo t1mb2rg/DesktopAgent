@@ -82,7 +82,7 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _storeInitializationGate = new(1, 1);
     private readonly object _backgroundGate = new();
-    private readonly Queue<DesktopObservationTriggeredRun> _startupBufferedRuns = new();
+    private readonly Queue<BackgroundSuggestionWork> _startupBufferedWork = new();
 
     private Task _backgroundTail = Task.CompletedTask;
     private bool _startupBuffering;
@@ -190,14 +190,14 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
             lock (_backgroundGate)
             {
                 _startupBuffering = true;
-                _startupBufferedRuns.Clear();
+                _startupBufferedWork.Clear();
             }
 
-            M3ReadOnlyMonitoringStartResult monitoringResult;
-            M3SuggestionProcessingReport? primeReport = null;
+            var releaseBufferedWork = false;
             try
             {
-                monitoringResult = await _monitoringSession.StartAsync(ct);
+                var monitoringResult = await _monitoringSession.StartAsync(ct);
+                M3SuggestionProcessingReport? primeReport = null;
 
                 if (monitoringResult.BaselinePrime is not null)
                 {
@@ -207,15 +207,37 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
                         null,
                         ct);
                 }
+
+                releaseBufferedWork = true;
+                return new M3SuggestionMonitoringStartResult(
+                    monitoringResult,
+                    primeReport);
+            }
+            catch
+            {
+                // session.StartAsync 可能已经成功启动 pump/periodic，而 prime Suggestion processing
+                // 随后被取消或失败。此时必须 fail-close 整个 monitoring session，不能留下后台幽灵任务。
+                if (_monitoringSession.IsRunning)
+                {
+                    try
+                    {
+                        await _monitoringSession.StopAsync();
+                    }
+                    catch
+                    {
+                        // 保留原始 start/prime 异常作为主异常。
+                    }
+                }
+
+                throw;
             }
             finally
             {
-                ReleaseStartupBuffer();
+                if (releaseBufferedWork)
+                    ReleaseStartupBuffer();
+                else
+                    DiscardStartupBuffer();
             }
-
-            return new M3SuggestionMonitoringStartResult(
-                monitoringResult,
-                primeReport);
         }
         finally
         {
@@ -282,16 +304,34 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
     private void OnBackgroundRunCompleted(DesktopObservationTriggeredRun run)
     {
         PublishSafely(ObservationRunCompleted, run);
+        var work = BackgroundSuggestionWork.ForRun(run);
 
         lock (_backgroundGate)
         {
             if (_startupBuffering)
             {
-                _startupBufferedRuns.Enqueue(run);
+                _startupBufferedWork.Enqueue(work);
                 return;
             }
 
-            QueueBackgroundRunLocked(run);
+            QueueBackgroundWorkLocked(work);
+        }
+    }
+
+    private void OnMonitoringFaulted(string fault)
+    {
+        PublishSafely(MonitoringFaulted, fault);
+        var work = BackgroundSuggestionWork.ForFault(fault);
+
+        lock (_backgroundGate)
+        {
+            if (_startupBuffering)
+            {
+                _startupBufferedWork.Enqueue(work);
+                return;
+            }
+
+            QueueBackgroundWorkLocked(work);
         }
     }
 
@@ -300,19 +340,28 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
         lock (_backgroundGate)
         {
             _startupBuffering = false;
-            while (_startupBufferedRuns.Count > 0)
-                QueueBackgroundRunLocked(_startupBufferedRuns.Dequeue());
+            while (_startupBufferedWork.Count > 0)
+                QueueBackgroundWorkLocked(_startupBufferedWork.Dequeue());
         }
     }
 
-    private void QueueBackgroundRunLocked(DesktopObservationTriggeredRun run)
+    private void DiscardStartupBuffer()
     {
-        _backgroundTail = ProcessAfterAsync(_backgroundTail, run);
+        lock (_backgroundGate)
+        {
+            _startupBuffering = false;
+            _startupBufferedWork.Clear();
+        }
+    }
+
+    private void QueueBackgroundWorkLocked(BackgroundSuggestionWork work)
+    {
+        _backgroundTail = ProcessAfterAsync(_backgroundTail, work);
     }
 
     private async Task ProcessAfterAsync(
         Task previous,
-        DesktopObservationTriggeredRun run)
+        BackgroundSuggestionWork work)
     {
         try
         {
@@ -325,18 +374,18 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
 
         try
         {
+            if (work.MonitoringFault is not null)
+            {
+                PublishObservationFailure(null, work.MonitoringFault);
+                return;
+            }
+
+            var run = work.Run!;
             if (run.Status == DesktopObservationTriggeredRunStatus.Failed)
             {
-                var lifecycle = _suggestionPipeline.MarkObservationRunFailed();
-                PublishSafely(
-                    SuggestionProcessed,
-                    new M3SuggestionProcessingReport(
-                        M3SuggestionProcessingOrigin.ObservationRunFailure,
-                        run.RunId,
-                        null,
-                        null,
-                        lifecycle,
-                        run.EscapedException ?? "Unknown observation run failure."));
+                PublishObservationFailure(
+                    run.RunId,
+                    run.EscapedException ?? "Unknown observation run failure.");
                 return;
             }
 
@@ -348,21 +397,23 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
         }
         catch (Exception ex)
         {
-            var lifecycle = _suggestionPipeline.MarkObservationRunFailed();
-            PublishSafely(
-                SuggestionProcessed,
-                new M3SuggestionProcessingReport(
-                    M3SuggestionProcessingOrigin.ObservationRunFailure,
-                    run.RunId,
-                    null,
-                    null,
-                    lifecycle,
-                    ex.ToString()));
+            PublishObservationFailure(work.Run?.RunId, ex.ToString());
         }
     }
 
-    private void OnMonitoringFaulted(string fault) =>
-        PublishSafely(MonitoringFaulted, fault);
+    private void PublishObservationFailure(Guid? runId, string fault)
+    {
+        var lifecycle = _suggestionPipeline.MarkObservationRunFailed();
+        PublishSafely(
+            SuggestionProcessed,
+            new M3SuggestionProcessingReport(
+                M3SuggestionProcessingOrigin.ObservationRunFailure,
+                runId,
+                null,
+                null,
+                lifecycle,
+                fault));
+    }
 
     private async Task EnsureStoresInitializedAsync(CancellationToken ct)
     {
@@ -411,6 +462,24 @@ public sealed class M3SuggestionMonitoringCoordinator : IDisposable
             {
                 // UI/telemetry observer 不得反向破坏只读监控或 Suggestion pipeline。
             }
+        }
+    }
+
+    private sealed record BackgroundSuggestionWork(
+        DesktopObservationTriggeredRun? Run,
+        string? MonitoringFault)
+    {
+        public static BackgroundSuggestionWork ForRun(DesktopObservationTriggeredRun run)
+        {
+            ArgumentNullException.ThrowIfNull(run);
+            return new BackgroundSuggestionWork(run, null);
+        }
+
+        public static BackgroundSuggestionWork ForFault(string fault)
+        {
+            if (string.IsNullOrWhiteSpace(fault))
+                throw new ArgumentException("fault 不能为空。", nameof(fault));
+            return new BackgroundSuggestionWork(null, fault);
         }
     }
 }
