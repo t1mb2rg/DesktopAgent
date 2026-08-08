@@ -102,9 +102,12 @@ public sealed class DesktopSuggestionNotificationSchedulerTests
         Assert.True(delay.Requests[0].Task.IsCanceled);
         Assert.Single(sink.Published);
         Assert.Equal(firstSuggestion.SuggestionId, sink.Published[0].SuggestionId);
-        Assert.Null(scheduler.LatestLifecycle?.IsActionablePresentation == true
-            ? scheduler.LatestLifecycle.CurrentSuggestion
-            : null);
+        Assert.NotNull(scheduler.LatestLifecycle);
+        Assert.Equal(
+            DesktopLayoutSuggestionPresentationState.Suspended,
+            scheduler.LatestLifecycle!.State);
+        Assert.Same(secondSuggestion, scheduler.LatestLifecycle.CurrentSuggestion);
+        Assert.False(scheduler.LatestLifecycle.IsActionablePresentation);
     }
 
     [Fact]
