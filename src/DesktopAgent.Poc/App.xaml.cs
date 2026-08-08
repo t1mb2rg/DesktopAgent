@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using DesktopAgent.Application.DesktopNotifications;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Application.DesktopSuggestions;
 using DesktopAgent.Core.DesktopIcons;
@@ -72,6 +73,7 @@ public partial class App : System.Windows.Application
             })
             .ConfigureServices(services =>
             {
+                services.AddSingleton(TimeProvider.System);
                 services.AddSingleton<IDisplayTopologyReader, NativeDisplayTopologyReader>();
                 services.AddSingleton<IDesktopIconReader, DesktopShellIconReader>();
                 services.AddSingleton<DesktopShellIconPositionWriter>();
@@ -137,8 +139,20 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IDesktopLayoutSuggestionBuilder, DesktopLayoutSuggestionBuilder>();
                 services.AddSingleton<DesktopLayoutSuggestionPipeline>();
                 services.AddSingleton<M3SuggestionMonitoringCoordinator>();
-                services.AddSingleton<M3DiagnosticsWindow>();
 
+                // M3-04B PoC Notification：只消费 Suggestion lifecycle。
+                // 30s cooldown 仅用于人工验收，不冻结为产品最终默认值。
+                services.AddSingleton(
+                    new DesktopSuggestionNotificationPolicySettings(TimeSpan.FromSeconds(30)));
+                services.AddSingleton<DesktopSuggestionNotificationPolicy>();
+                services.AddSingleton<M3DiagnosticsNotificationSink>();
+                services.AddSingleton<IDesktopSuggestionNotificationSink>(sp =>
+                    sp.GetRequiredService<M3DiagnosticsNotificationSink>());
+                services.AddSingleton<DesktopSuggestionNotificationDispatcher>();
+                services.AddSingleton<DesktopSuggestionNotificationScheduler>();
+                services.AddSingleton<M3SuggestionNotificationCoordinator>();
+
+                services.AddSingleton<M3DiagnosticsWindow>();
                 services.AddSingleton<MainWindow>();
             })
             .Build();
