@@ -36,7 +36,7 @@ public sealed record DesktopFileSystemHintSourceStartResult
 /// 监听用户 Desktop 与 Public Desktop 顶层文件系统条目变化，并只发布“值得重新观察”的 hint。
 /// 文件路径、文件名和 FileSystemWatcher payload 都不会进入 DesktopObservationHint。
 /// </summary>
-public sealed class DesktopFileSystemObservationHintSource : IDisposable
+public sealed class DesktopFileSystemObservationHintSource : IDesktopObservationHintSource
 {
     public const string ProviderName = "DesktopFileSystemWatcher";
 
@@ -50,6 +50,7 @@ public sealed class DesktopFileSystemObservationHintSource : IDisposable
     private bool _disposed;
     private DesktopFileSystemHintSourceStartResult? _lastStartResult;
 
+    public string Source => ProviderName;
     public bool IsRunning => Volatile.Read(ref _isRunning) != 0;
     public IReadOnlyList<string> ConfiguredDirectories => _directories;
 
@@ -133,6 +134,17 @@ public sealed class DesktopFileSystemObservationHintSource : IDisposable
                 issues);
             return _lastStartResult;
         }
+    }
+
+    DesktopObservationHintSourceStartResult IDesktopObservationHintSource.Start()
+    {
+        var result = Start();
+        return new DesktopObservationHintSourceStartResult(
+            ProviderName,
+            result.IsRunning,
+            result.ActiveWatcherCount,
+            result.WatchedDirectories,
+            result.Issues);
     }
 
     public void Stop()
