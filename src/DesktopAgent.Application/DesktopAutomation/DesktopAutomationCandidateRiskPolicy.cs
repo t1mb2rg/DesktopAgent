@@ -127,6 +127,7 @@ public sealed record DesktopAutomationCandidateRiskAssessment
 /// 还必须同时满足 05A runtime policy、未来 fresh M2 safety chain 等门禁。
 /// </summary>
 public sealed class DesktopAutomationCandidateRiskPolicy
+    : IDesktopAutomationCandidateRiskPolicy
 {
     private readonly DesktopAutomationCandidateRiskPolicySettings _settings;
 
