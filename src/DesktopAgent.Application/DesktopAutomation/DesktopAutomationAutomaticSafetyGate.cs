@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopSuggestions;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+using DesktopAgent.Core.DesktopLayouts.Templates.Execution;
 
 namespace DesktopAgent.Application.DesktopAutomation;
 
@@ -42,7 +43,7 @@ public sealed record DesktopAutomationAutomaticSafetyGateResult
     {
         ArgumentNullException.ThrowIfNull(handoff);
         ArgumentNullException.ThrowIfNull(runtime);
-        if (unresolvedRecoveryCount < 0)
+        if (unresolvedRecoveryCount is < 0)
             throw new ArgumentOutOfRangeException(nameof(unresolvedRecoveryCount));
 
         var reasons = (rejectionReasons ?? Array.Empty<string>()).ToArray();
@@ -141,7 +142,7 @@ public sealed class DesktopAutomationAutomaticSafetyGate
         IReadOnlyList<RecoverySessionRecord> unresolved;
         try
         {
-            unresolved = await _recoveryStore.ListUnresolvedAsync(limit: 50, ct);
+            unresolved = await _recoveryStore.ListUnresolvedAsync(50, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -167,6 +168,35 @@ public sealed class DesktopAutomationAutomaticSafetyGate
                 {
                     $"存在 {unresolved.Count} 个未解决 recovery session，自动执行禁止继续。"
                 });
+        }
+
+        // Recovery query 自身跨越了 async 边界。查询完成后先重新确认旧票仍有效，
+        // 不让已经 stale 的 lifecycle/runtime 继续进入 Candidate risk 判断。
+        if (!MatchesExpectedActiveLifecycle(_lifecycle.Snapshot, expectedLifecycle))
+        {
+            return Reject(
+                DesktopAutomationAutomaticSafetyGateStatus.SuggestionNoLongerCurrent,
+                handoff,
+                _runtimePolicy.Snapshot,
+                "Recovery 查询期间 Suggestion lifecycle 发生变化。请重新 preflight。");
+        }
+
+        currentRuntime = _runtimePolicy.Snapshot;
+        if (currentRuntime.Revision != handoff.Preflight.Runtime.Revision)
+        {
+            return Reject(
+                DesktopAutomationAutomaticSafetyGateStatus.RuntimeChangedSincePreflight,
+                handoff,
+                currentRuntime,
+                "Recovery 查询期间 Runtime Revision 发生变化。请重新 preflight。");
+        }
+        if (!currentRuntime.CanAttemptUnattendedExecution)
+        {
+            return Reject(
+                DesktopAutomationAutomaticSafetyGateStatus.RuntimeBlocked,
+                handoff,
+                currentRuntime,
+                "Recovery 查询结束时 runtime 已不允许 unattended execution。");
         }
 
         var candidate = handoff.FreshCandidate!;
@@ -200,7 +230,7 @@ public sealed class DesktopAutomationAutomaticSafetyGate
                 rejectionReasons: freshRisk.BlockReasons.Select(reason => reason.ToString()));
         }
 
-        // Risk / recovery 查询期间也可能发生 UI 或 monitoring 状态变化。
+        // Risk 评估期间也可能发生 UI 或 monitoring 状态变化。
         // 在返回 Ready 前再次核对 lifecycle + runtime revision。
         if (!MatchesExpectedActiveLifecycle(_lifecycle.Snapshot, expectedLifecycle))
         {
@@ -208,7 +238,7 @@ public sealed class DesktopAutomationAutomaticSafetyGate
                 DesktopAutomationAutomaticSafetyGateStatus.SuggestionNoLongerCurrent,
                 handoff,
                 _runtimePolicy.Snapshot,
-                "Safety gate 评估期间 Suggestion lifecycle 发生变化。");
+                "Safety gate 风险评估期间 Suggestion lifecycle 发生变化。");
         }
 
         var finalRuntime = _runtimePolicy.Snapshot;
@@ -218,7 +248,7 @@ public sealed class DesktopAutomationAutomaticSafetyGate
                 DesktopAutomationAutomaticSafetyGateStatus.RuntimeChangedSincePreflight,
                 handoff,
                 finalRuntime,
-                "Safety gate 评估期间 Runtime Revision 发生变化。");
+                "Safety gate 风险评估期间 Runtime Revision 发生变化。");
         }
         if (!finalRuntime.CanAttemptUnattendedExecution)
         {
@@ -238,7 +268,7 @@ public sealed class DesktopAutomationAutomaticSafetyGate
     }
 
     private static List<string> ValidateFreshCandidate(
-        Core.DesktopLayouts.Templates.Execution.DesktopLayoutRuleAwareExecutionCandidate candidate,
+        DesktopLayoutRuleAwareExecutionCandidate candidate,
         DesktopLayoutSuggestion suggestion)
     {
         var reasons = new List<string>();
