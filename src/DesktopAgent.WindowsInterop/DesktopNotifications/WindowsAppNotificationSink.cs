@@ -18,8 +18,8 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
     private const string SuggestionGroup = "desktop-suggestion";
 
     private readonly object _gate = new();
-    private readonly AppNotificationManager _manager;
 
+    private AppNotificationManager? _manager;
     private bool _registered;
     private int _disposeStarted;
     private WindowsAppNotificationRegistrationResult _registration =
@@ -36,15 +36,10 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
         }
     }
 
-    public WindowsAppNotificationSink()
-    {
-        _manager = AppNotificationManager.Default;
-    }
-
     /// <summary>
-    /// 必须在应用启动时显式调用。按照 Windows App SDK 要求，
-    /// NotificationInvoked handler 先订阅，再调用 Register。
-    /// 注册失败只返回 degraded result，不强制结束 DesktopAgent。
+    /// 必须在 Windows App SDK runtime/deployment 已显式初始化后调用。
+    /// 按照 Windows App SDK 要求，NotificationInvoked handler 先订阅，再调用 Register。
+    /// AppNotificationManager.Default 也延迟到这里获取，使 runtime bootstrap 失败时 DI 仍可降级启动。
     /// </summary>
     public WindowsAppNotificationRegistrationResult Start()
     {
@@ -57,19 +52,36 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
             if (_registered)
                 return _registration;
 
-            _manager.NotificationInvoked += OnNotificationInvoked;
+            AppNotificationManager? manager = null;
+            var handlerAttached = false;
             try
             {
-                _manager.Register();
+                manager = AppNotificationManager.Default;
+                manager.NotificationInvoked += OnNotificationInvoked;
+                handlerAttached = true;
+                manager.Register();
+
+                _manager = manager;
                 _registered = true;
                 _registration = new WindowsAppNotificationRegistrationResult(
                     true,
-                    _manager.Setting.ToString(),
+                    manager.Setting.ToString(),
                     null);
             }
             catch (Exception ex)
             {
-                _manager.NotificationInvoked -= OnNotificationInvoked;
+                if (handlerAttached && manager is not null)
+                {
+                    try
+                    {
+                        manager.NotificationInvoked -= OnNotificationInvoked;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                _manager = null;
                 _registered = false;
                 _registration = new WindowsAppNotificationRegistrationResult(
                     false,
@@ -87,7 +99,7 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
     {
         ArgumentNullException.ThrowIfNull(payload);
         ct.ThrowIfCancellationRequested();
-        EnsureRegistered();
+        var manager = GetRegisteredManager();
 
         var suggestionId = payload.SuggestionId.ToString("D");
         var builder = new AppNotificationBuilder()
@@ -121,10 +133,10 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
             .SetGroup(SuggestionGroup);
 
         if (payload.UsesTemporaryStaging)
-            builder.AddText("该建议包含临时 staging 步骤，执行前仍会重新走 M2 安全链。 ");
+            builder.AddText("该建议包含临时 staging 步骤，执行前仍会重新走 M2 安全链。");
 
         var notification = builder.BuildNotification();
-        _manager.Show(notification);
+        manager.Show(notification);
         return Task.CompletedTask;
     }
 
@@ -135,10 +147,9 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
         if (suggestionId == Guid.Empty)
             throw new ArgumentException("suggestionId 不能为空。", nameof(suggestionId));
         ct.ThrowIfCancellationRequested();
-        EnsureRegistered();
+        var manager = GetRegisteredManager();
 
-        // WinRT async operation is awaitable from C#/WinRT projections.
-        await _manager.RemoveByTagAsync(
+        await manager.RemoveByTagAsync(
             WindowsAppNotificationInteractionParser.CreateTag(suggestionId));
         ct.ThrowIfCancellationRequested();
     }
@@ -147,15 +158,24 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
     {
         lock (_gate)
         {
-            if (!_registered)
+            var manager = _manager;
+            if (!_registered || manager is null)
                 return;
 
             _registered = false;
-            _manager.NotificationInvoked -= OnNotificationInvoked;
+            _manager = null;
 
             try
             {
-                _manager.Unregister();
+                manager.NotificationInvoked -= OnNotificationInvoked;
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                manager.Unregister();
                 _registration = new WindowsAppNotificationRegistrationResult(
                     false,
                     null,
@@ -200,7 +220,7 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
         PublishSafely(InteractionReceived, interaction);
     }
 
-    private void EnsureRegistered()
+    private AppNotificationManager GetRegisteredManager()
     {
         lock (_gate)
         {
@@ -208,11 +228,13 @@ public sealed class WindowsAppNotificationSink : IDesktopSuggestionNotificationS
                 Volatile.Read(ref _disposeStarted) != 0,
                 this);
 
-            if (!_registered)
+            if (!_registered || _manager is null)
             {
                 throw new InvalidOperationException(
-                    "Windows App Notification 尚未成功注册。请先调用 Start，并检查 Registration.Failure。");
+                    "Windows App Notification 尚未成功注册。请先初始化 Windows App SDK runtime，调用 Start，并检查 Registration.Failure。");
             }
+
+            return _manager;
         }
     }
 
