@@ -1,5 +1,6 @@
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.Displays;
+using DesktopAgent.Core.Geometry;
 
 namespace DesktopAgent.Core.DesktopObservations;
 
@@ -159,7 +160,7 @@ public static class DesktopObservationStabilityEvaluator
         string DisplayName,
         string? ParsingName,
         ItemKind ItemKind,
-        Geometry.PixelPoint PixelPosition,
+        PixelPoint PixelPosition,
         string? MonitorDeviceName,
         bool IsSystemItem,
         bool IsFileSystemItem);
