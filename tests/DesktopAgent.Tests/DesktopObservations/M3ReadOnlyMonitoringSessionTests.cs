@@ -191,7 +191,10 @@ public sealed class M3ReadOnlyMonitoringSessionTests
             quietPeriod ?? TimeSpan.FromMilliseconds(10),
             maxBatchDelay ?? TimeSpan.FromMilliseconds(50));
 
-        return new M3ReadOnlyMonitoringSession(runner, settings, sourceFactory);
+        return new M3ReadOnlyMonitoringSession(
+            runner,
+            settings,
+            new DelegateHintSourceFactory(sourceFactory));
     }
 
     private static StableDesktopObservationResult Stable(DesktopObservation observation) =>
@@ -277,6 +280,15 @@ public sealed class M3ReadOnlyMonitoringSessionTests
             var index = Math.Min(_index++, results.Length - 1);
             return Task.FromResult(results[index]);
         }
+    }
+
+    private sealed class DelegateHintSourceFactory(
+        Func<Action<DesktopObservationHintKind, string>, IM3ReadOnlyMonitoringHintSource> create)
+        : IM3ReadOnlyMonitoringHintSourceFactory
+    {
+        public IM3ReadOnlyMonitoringHintSource Create(
+            Action<DesktopObservationHintKind, string> publishHint) =>
+            create(publishHint);
     }
 
     private sealed class FakeHintSource(
