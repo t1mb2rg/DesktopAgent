@@ -33,6 +33,7 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
 
+        var enableM3DesktopSurfaces = true;
         var enableWindowsAppNotifications = true;
 
 #if DEBUG
@@ -54,6 +55,7 @@ public partial class App : System.Windows.Application
 
         if (acceptanceFaultOptions.IsEnabled)
         {
+            enableM3DesktopSurfaces = false;
             enableWindowsAppNotifications = false;
 
             var behaviorDescription = acceptanceFaultOptions.WillTerminateProcess
@@ -191,6 +193,7 @@ public partial class App : System.Windows.Application
 
                 services.AddSingleton<M3DiagnosticsWindow>();
                 services.AddSingleton<MainWindow>();
+                services.AddSingleton<M3TrayController>();
             })
             .Build();
 
@@ -209,16 +212,18 @@ public partial class App : System.Windows.Application
         MainWindow = mainWindow;
         mainWindow.Show();
 
-#if DEBUG
-        // Acceptance fault injection 与 M3 diagnostics 使用不同的人工验收场景。
-        // 故障注入启用时不自动弹出诊断窗，避免干扰 crash-window / SoftError 验收。
-        if (!acceptanceFaultOptions.IsEnabled)
+        if (enableM3DesktopSurfaces)
         {
+#if DEBUG
             var diagnosticsWindow = _host.Services.GetRequiredService<M3DiagnosticsWindow>();
             diagnosticsWindow.Owner = mainWindow;
             diagnosticsWindow.Show();
-        }
 #endif
+
+            // Tray is the persistent lifetime surface. Window X actions become Hide only after
+            // each window's existing safety Closing handlers have allowed the close request.
+            _host.Services.GetRequiredService<M3TrayController>().Start();
+        }
     }
 
     private void StartWindowsAppNotifications(bool showFailureDialog)
