@@ -136,22 +136,24 @@ public sealed class DesktopObservationBackgroundPump
                     continue;
                 }
 
-                using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var delayTask = _clock.DelayUntilAsync(dueAt.Value, delayCts.Token);
-                var wakeTask = _wakeSignals.Reader.ReadAsync(ct).AsTask();
+                // DueAt 可能被新 hint 改写，因此 timer 和 wake read 必须作为一对竞速任务。
+                // 谁输谁立即取消，绝不能留下旧 ReadAsync 偷走下一次 wake signal。
+                using var raceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                var delayTask = _clock.DelayUntilAsync(dueAt.Value, raceCts.Token);
+                var wakeTask = _wakeSignals.Reader.ReadAsync(raceCts.Token).AsTask();
 
                 var completed = await Task.WhenAny(delayTask, wakeTask);
                 if (ReferenceEquals(completed, wakeTask))
                 {
-                    // 新 hint 已经在 PublishHint 调用线程完成 batcher 更新。
-                    // 取消旧 DueAt wait，下一轮按新的 batch 状态重新计算。
-                    delayCts.Cancel();
-                    await IgnoreExpectedDelayCancellationAsync(delayTask, delayCts.Token);
                     await wakeTask;
+                    raceCts.Cancel();
+                    await IgnoreExpectedCancellationAsync(delayTask, raceCts.Token);
                     continue;
                 }
 
                 await delayTask;
+                raceCts.Cancel();
+                await IgnoreExpectedCancellationAsync(wakeTask, raceCts.Token);
             }
         }
         finally
@@ -198,15 +200,15 @@ public sealed class DesktopObservationBackgroundPump
         }
     }
 
-    private static async Task IgnoreExpectedDelayCancellationAsync(
-        Task delayTask,
-        CancellationToken delayToken)
+    private static async Task IgnoreExpectedCancellationAsync(
+        Task task,
+        CancellationToken token)
     {
         try
         {
-            await delayTask;
+            await task;
         }
-        catch (OperationCanceledException) when (delayToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
         }
     }
