@@ -44,17 +44,24 @@ public sealed class M3DiagnosticsBoundaryTests
     }
 
     [Fact]
-    public void DiagnosticsWindow_DependsOnlyOnReadOnlySuggestionCoordinator()
+    public void DiagnosticsWindow_HasNotificationCompositionConstructorWithoutWriter()
     {
-        var parameterTypes = typeof(M3DiagnosticsWindow)
-            .GetConstructors()
-            .Single()
+        var constructors = typeof(M3DiagnosticsWindow).GetConstructors();
+        Assert.Equal(2, constructors.Length);
+
+        var compositionConstructor = Assert.Single(
+            constructors.Where(constructor => constructor.GetParameters().Length == 2));
+        var parameterTypes = compositionConstructor
             .GetParameters()
             .Select(parameter => parameter.ParameterType)
             .ToArray();
 
         Assert.Equal(
-            new[] { typeof(M3SuggestionMonitoringCoordinator) },
+            new[]
+            {
+                typeof(M3SuggestionMonitoringCoordinator),
+                typeof(M3SuggestionNotificationCoordinator),
+            },
             parameterTypes);
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
     }
@@ -63,6 +70,19 @@ public sealed class M3DiagnosticsBoundaryTests
     public void SuggestionCoordinator_DoesNotExposeWriterDependency()
     {
         var parameterTypes = typeof(M3SuggestionMonitoringCoordinator)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
+    }
+
+    [Fact]
+    public void NotificationCoordinator_DoesNotExposeWriterDependency()
+    {
+        var parameterTypes = typeof(M3SuggestionNotificationCoordinator)
             .GetConstructors()
             .Single()
             .GetParameters()
