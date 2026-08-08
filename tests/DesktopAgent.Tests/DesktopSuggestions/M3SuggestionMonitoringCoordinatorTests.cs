@@ -81,6 +81,134 @@ public sealed class M3SuggestionMonitoringCoordinatorTests
     }
 
     [Fact]
+    public async Task StartMonitoringAsync_CancelledPrimeSuggestion_StopsSessionAndDiscardsStartupWork()
+    {
+        var template = Template();
+        var stableSource = new ScriptedStableSource(
+            Stable(Observation(160)),
+            Stable(Observation(80)),
+            Stable(Observation(0)));
+        var baseline = new DesktopStateBaselineTracker();
+        var runner = new DesktopObservationDiagnosticsRunner(stableSource, baseline);
+
+        // 先只建立 observation baseline，不经过 Suggestion pipeline。
+        var prePrime = await runner.RunOnceAsync();
+        Assert.Equal(DesktopObservationDiagnosticsStatus.BaselineEstablished, prePrime.Status);
+
+        PublishingHintSource? source = null;
+        using var session = new M3ReadOnlyMonitoringSession(
+            runner,
+            new DesktopObservationHintBatchSettings(TimeSpan.Zero, TimeSpan.Zero),
+            new DelegateHintSourceFactory(publish =>
+            {
+                source = new PublishingHintSource(() =>
+                    publish(DesktopObservationHintKind.FileSystem, "startup-buffered-hint"));
+                return source;
+            }),
+            new IdlePeriodicSource());
+        var templateStore = new TemplateStore(template);
+        var ruleStore = new RuleStore(DesktopLayoutIconRuleSet.Empty(template.TemplateId));
+        var blockingBuilder = new CancelBlockingBuilder();
+        var pipeline = new DesktopLayoutSuggestionPipeline(
+            blockingBuilder,
+            new DesktopLayoutSuggestionLifecycle());
+        using var coordinator = new M3SuggestionMonitoringCoordinator(
+            runner,
+            session,
+            pipeline,
+            templateStore,
+            ruleStore,
+            new FakeDisplayReader());
+        coordinator.SetBinding(new DesktopLayoutSuggestionBinding(template.TemplateId));
+
+        var reports = new List<M3SuggestionProcessingReport>();
+        var reportsGate = new object();
+        coordinator.SuggestionProcessed += report =>
+        {
+            lock (reportsGate)
+                reports.Add(report);
+        };
+
+        using var cts = new CancellationTokenSource();
+        var startTask = coordinator.StartMonitoringAsync(cts.Token);
+        await blockingBuilder.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => startTask);
+
+        Assert.False(coordinator.IsMonitoring);
+        Assert.NotNull(source);
+        Assert.True(source!.StopCount >= 1);
+        lock (reportsGate)
+            Assert.Empty(reports);
+    }
+
+    [Fact]
+    public async Task MonitoringFaultDuringStartup_IsAppliedAfterPrime_AndLeavesSuggestionSuspended()
+    {
+        var template = Template();
+        var first = Observation(160);
+        var changed = Observation(80);
+        var primeNoChange = CloneWithNewId(changed);
+        var stableSource = new ScriptedStableSource(
+            Stable(first),
+            Stable(changed),
+            Stable(primeNoChange));
+        var baseline = new DesktopStateBaselineTracker();
+        var runner = new DesktopObservationDiagnosticsRunner(stableSource, baseline);
+        using var session = new M3ReadOnlyMonitoringSession(
+            runner,
+            new DesktopObservationHintBatchSettings(TimeSpan.Zero, TimeSpan.Zero),
+            new DelegateHintSourceFactory(_ => new PublishingHintSource()),
+            new FaultingPeriodicSource());
+        var templateStore = new TemplateStore(template);
+        var ruleStore = new RuleStore(DesktopLayoutIconRuleSet.Empty(template.TemplateId));
+        var pipeline = new DesktopLayoutSuggestionPipeline(
+            new DesktopLayoutSuggestionBuilder(
+                templateStore,
+                ruleStore,
+                new DesktopLayoutSnapshotFactory()),
+            new DesktopLayoutSuggestionLifecycle());
+        using var coordinator = new M3SuggestionMonitoringCoordinator(
+            runner,
+            session,
+            pipeline,
+            templateStore,
+            ruleStore,
+            new FakeDisplayReader());
+        coordinator.SetBinding(new DesktopLayoutSuggestionBinding(template.TemplateId));
+
+        var manualBaseline = await coordinator.RunManualAsync();
+        var manualSuggestion = await coordinator.RunManualAsync();
+        Assert.Equal(
+            DesktopLayoutSuggestionPipelineStatus.BaselineReestablished,
+            manualBaseline.PipelineResult!.Status);
+        Assert.Equal(
+            DesktopLayoutSuggestionPipelineStatus.Suggested,
+            manualSuggestion.PipelineResult!.Status);
+        Assert.Equal(
+            DesktopLayoutSuggestionPresentationState.Active,
+            coordinator.SuggestionSnapshot.State);
+
+        var reports = Channel.CreateUnbounded<M3SuggestionProcessingReport>();
+        coordinator.SuggestionProcessed += report => reports.Writer.TryWrite(report);
+
+        var start = await coordinator.StartMonitoringAsync();
+        var prime = await ReadReportAsync(reports.Reader);
+        var fault = await ReadReportAsync(reports.Reader);
+
+        Assert.Equal(M3ReadOnlyMonitoringStartStatus.Started, start.Monitoring.Status);
+        Assert.Equal(M3SuggestionProcessingOrigin.MonitoringPrime, prime.Origin);
+        Assert.Equal(DesktopLayoutSuggestionPipelineStatus.NoChanges, prime.PipelineResult!.Status);
+        Assert.Equal(M3SuggestionProcessingOrigin.ObservationRunFailure, fault.Origin);
+        Assert.Equal(DesktopLayoutSuggestionPresentationState.Suspended, fault.Lifecycle.State);
+        Assert.Equal(
+            DesktopLayoutSuggestionSuspensionReason.ObservationRunFailed,
+            fault.Lifecycle.SuspensionReason);
+        Assert.Contains("periodic boom", fault.Fault, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ManualObservation_FlowsThroughSuggestionPipeline_AndResetRetiresImmediately()
     {
         var template = Template();
@@ -219,6 +347,16 @@ public sealed class M3SuggestionMonitoringCoordinatorTests
             TimeSpan.Zero);
     }
 
+    private static DesktopObservation CloneWithNewId(DesktopObservation source) =>
+        new(
+            Guid.NewGuid(),
+            source.ObservedAtUtc,
+            source.Displays,
+            source.PositioningCapabilities,
+            source.Icons,
+            source.IconReadConnectionMethod,
+            source.IconReadTime);
+
     private static StableDesktopObservationResult Stable(DesktopObservation observation) =>
         new(
             StableDesktopObservationStatus.Stable,
@@ -253,6 +391,8 @@ public sealed class M3SuggestionMonitoringCoordinatorTests
     private sealed class PublishingHintSource(Action? onStart = null)
         : IM3ReadOnlyMonitoringHintSource
     {
+        public int StopCount { get; private set; }
+
         public DesktopFileSystemHintSourceStartResult Start()
         {
             onStart?.Invoke();
@@ -265,6 +405,7 @@ public sealed class M3SuggestionMonitoringCoordinatorTests
 
         public void Stop()
         {
+            StopCount++;
         }
 
         public void Dispose()
@@ -280,6 +421,38 @@ public sealed class M3SuggestionMonitoringCoordinatorTests
         {
             _ = publishHint;
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        }
+    }
+
+    private sealed class FaultingPeriodicSource : IPeriodicObservationHintSource
+    {
+        public Task RunAsync(
+            Action<DesktopObservationHintKind, string> publishHint,
+            CancellationToken ct)
+        {
+            _ = publishHint;
+            ct.ThrowIfCancellationRequested();
+            return Task.FromException(new InvalidOperationException("periodic boom"));
+        }
+    }
+
+    private sealed class CancelBlockingBuilder : IDesktopLayoutSuggestionBuilder
+    {
+        public TaskCompletionSource<bool> Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<DesktopLayoutSuggestionBuildResult> BuildAsync(
+            DesktopLayoutSuggestionBinding binding,
+            DesktopStateChangeSet changeSet,
+            DesktopObservation currentObservation,
+            CancellationToken ct = default)
+        {
+            _ = binding;
+            _ = changeSet;
+            _ = currentObservation;
+            Entered.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            throw new InvalidOperationException("unreachable");
         }
     }
 
