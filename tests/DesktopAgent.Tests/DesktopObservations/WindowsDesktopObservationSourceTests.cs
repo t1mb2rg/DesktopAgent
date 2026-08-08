@@ -122,22 +122,23 @@ public sealed class WindowsDesktopObservationSourceTests
     }
 
     [Fact]
-    public async Task CaptureAsync_IconOutsideCurrentTopology_FailsClosed()
+    public async Task CaptureAsync_IconOutsideBounds_UsesExistingNearestDisplayAssignment()
     {
-        var display = Display("\\\\.\\DISPLAY1", new PixelRect(0, 0, 1920, 1080));
+        var first = Display("\\\\.\\DISPLAY1", new PixelRect(0, 0, 1920, 1080));
+        var second = Display("\\\\.\\DISPLAY2", new PixelRect(3000, 0, 4920, 1080));
         using var sta = new StaThreadExecutor();
         var source = new WindowsDesktopObservationSource(
-            new FakeTopologyReader(display),
-            new FakeIconReader(Read(Icon("outside", new PixelPoint(5000, 5000)))),
+            new FakeTopologyReader(first, second),
+            new FakeIconReader(Read(Icon("between", new PixelPoint(2500, 100)))),
             new FakeCapabilitiesReader(Capabilities()),
             sta);
 
         var result = await source.CaptureAsync();
 
-        Assert.False(result.IsCaptured);
-        var issue = Assert.Single(result.Issues);
-        Assert.Equal(DesktopObservationCaptureIssueCode.IconOutsideDisplayTopology, issue.Code);
-        Assert.Equal("outside", issue.StableId);
+        Assert.True(result.IsCaptured);
+        var observation = Assert.IsType<DesktopObservation>(result.Observation);
+        var icon = Assert.Single(observation.Icons);
+        Assert.Equal("\\\\.\\DISPLAY2", icon.MonitorDeviceName);
     }
 
     [Fact]
