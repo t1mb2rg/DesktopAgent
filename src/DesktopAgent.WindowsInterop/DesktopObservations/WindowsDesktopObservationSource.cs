@@ -36,42 +36,10 @@ public sealed class WindowsDesktopObservationSource : IDesktopObservationSource
     {
         ct.ThrowIfCancellationRequested();
 
-        DisplayDescriptor[] displays;
-        try
-        {
-            displays = _topologyReader.GetDisplays().ToArray();
-        }
-        catch (Exception ex)
-        {
-            return DesktopObservationCaptureResult.Unavailable(
-                new DesktopObservationCaptureIssue(
-                    DesktopObservationCaptureIssueCode.TopologyReadFailed,
-                    $"显示拓扑读取失败：{ex.GetType().Name}: {ex.Message}"));
-        }
-
-        if (displays.Length == 0)
-        {
-            return DesktopObservationCaptureResult.Unavailable(
-                new DesktopObservationCaptureIssue(
-                    DesktopObservationCaptureIssueCode.NoDisplays,
-                    "当前未读取到任何显示器，无法建立桌面物理坐标事实。"));
-        }
-
-        var duplicateDisplayNames = displays
-            .GroupBy(display => display.DeviceName, StringComparer.Ordinal)
-            .Where(group => group.Count() > 1)
-            .Select(group => group.Key)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToArray();
-        if (duplicateDisplayNames.Length > 0)
-        {
-            return DesktopObservationCaptureResult.Unavailable(
-                duplicateDisplayNames.Select(name =>
-                    new DesktopObservationCaptureIssue(
-                        DesktopObservationCaptureIssueCode.DuplicateDisplayDeviceName,
-                        $"显示拓扑中 DeviceName “{name}”重复，无法建立唯一显示器身份。"))
-                    .ToArray());
-        }
+        var firstTopology = TryReadTopology();
+        if (firstTopology.Result is not null)
+            return firstTopology.Result;
+        var displays = firstTopology.Displays!;
 
         ShellObservation shell;
         try
@@ -92,6 +60,19 @@ public sealed class WindowsDesktopObservationSource : IDesktopObservationSource
         }
 
         ct.ThrowIfCancellationRequested();
+
+        // 一次 Observation 自己也必须描述同一套物理坐标系。
+        // 若 topology 在 Shell 读取期间改变，这一帧直接作废，交给上层稍后重新观察。
+        var secondTopology = TryReadTopology();
+        if (secondTopology.Result is not null)
+            return secondTopology.Result;
+        if (!DisplayTopologyComparer.AreEquivalent(displays, secondTopology.Displays!))
+        {
+            return DesktopObservationCaptureResult.Unavailable(
+                new DesktopObservationCaptureIssue(
+                    DesktopObservationCaptureIssueCode.TopologyChangedDuringCapture,
+                    "显示拓扑在一次桌面观察过程中发生变化，当前物理坐标事实不一致。"));
+        }
 
         if (shell.Desktop.FailedItemCount != 0)
         {
@@ -161,7 +142,59 @@ public sealed class WindowsDesktopObservationSource : IDesktopObservationSource
         }
     }
 
+    private TopologyRead TryReadTopology()
+    {
+        DisplayDescriptor[] displays;
+        try
+        {
+            displays = _topologyReader.GetDisplays().ToArray();
+        }
+        catch (Exception ex)
+        {
+            return new TopologyRead(
+                null,
+                DesktopObservationCaptureResult.Unavailable(
+                    new DesktopObservationCaptureIssue(
+                        DesktopObservationCaptureIssueCode.TopologyReadFailed,
+                        $"显示拓扑读取失败：{ex.GetType().Name}: {ex.Message}")));
+        }
+
+        if (displays.Length == 0)
+        {
+            return new TopologyRead(
+                null,
+                DesktopObservationCaptureResult.Unavailable(
+                    new DesktopObservationCaptureIssue(
+                        DesktopObservationCaptureIssueCode.NoDisplays,
+                        "当前未读取到任何显示器，无法建立桌面物理坐标事实。")));
+        }
+
+        var duplicateDisplayNames = displays
+            .GroupBy(display => display.DeviceName, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (duplicateDisplayNames.Length > 0)
+        {
+            return new TopologyRead(
+                null,
+                DesktopObservationCaptureResult.Unavailable(
+                    duplicateDisplayNames.Select(name =>
+                        new DesktopObservationCaptureIssue(
+                            DesktopObservationCaptureIssueCode.DuplicateDisplayDeviceName,
+                            $"显示拓扑中 DeviceName “{name}”重复，无法建立唯一显示器身份。"))
+                        .ToArray()));
+        }
+
+        return new TopologyRead(displays, null);
+    }
+
     private sealed record ShellObservation(
         DesktopIconPositioningCapabilities Capabilities,
         DesktopIconReadResult Desktop);
+
+    private sealed record TopologyRead(
+        DisplayDescriptor[]? Displays,
+        DesktopObservationCaptureResult? Result);
 }
