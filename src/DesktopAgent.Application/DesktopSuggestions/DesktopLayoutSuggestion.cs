@@ -39,22 +39,26 @@ public enum DesktopLayoutSuggestionBuildStatus
     NoActionNeeded = 2,
     ObservationMismatch = 3,
     TemplateMissing = 4,
-    RuleSetMissing = 5,
-    BindingIncomplete = 6,
-    PreviewRejected = 7,
-    CandidateRejected = 8,
+    TemplateLoadFailed = 5,
+    RuleSetMissing = 6,
+    RuleSetLoadFailed = 7,
+    BindingIncomplete = 8,
+    PreviewRejected = 9,
+    CandidateRejected = 10,
 }
 
 public enum DesktopLayoutSuggestionIssueCode
 {
     ObservationMismatch = 0,
     TemplateMissing = 1,
-    RuleSetMissing = 2,
-    RuleSetTemplateMismatch = 3,
-    SelectedTargetRequired = 4,
-    TargetDisplayResolutionFailed = 5,
-    PreviewPlanningFailed = 6,
-    CandidateRejected = 7,
+    TemplateLoadFailed = 2,
+    RuleSetMissing = 3,
+    RuleSetLoadFailed = 4,
+    RuleSetTemplateMismatch = 5,
+    SelectedTargetRequired = 6,
+    TargetDisplayResolutionFailed = 7,
+    PreviewPlanningFailed = 8,
+    CandidateRejected = 9,
 }
 
 public sealed record DesktopLayoutSuggestionIssue(
