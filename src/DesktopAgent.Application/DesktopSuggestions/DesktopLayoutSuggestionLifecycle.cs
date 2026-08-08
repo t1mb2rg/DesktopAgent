@@ -253,6 +253,28 @@ public sealed class DesktopLayoutSuggestionLifecycle
         }
     }
 
+    /// <summary>
+    /// 只有当前 SuggestionId 与交互携带的 expectedSuggestionId 完全一致时才 dismiss。
+    /// 用于可能晚到的 notification / tray action，避免旧 surface 误删后来出现的新 Suggestion。
+    /// </summary>
+    public DesktopLayoutSuggestionDismissResult DismissCurrent(Guid expectedSuggestionId)
+    {
+        if (expectedSuggestionId == Guid.Empty)
+            throw new ArgumentException(
+                "expectedSuggestionId 不能为空。",
+                nameof(expectedSuggestionId));
+
+        lock (_gate)
+        {
+            if (_current is null || _current.SuggestionId != expectedSuggestionId)
+                return new DesktopLayoutSuggestionDismissResult(false, CreateSnapshot());
+
+            RetireCurrent(DesktopLayoutSuggestionRetirementReason.UserDismissed, null);
+            _revision++;
+            return new DesktopLayoutSuggestionDismissResult(true, CreateSnapshot());
+        }
+    }
+
     private void RetireCurrent(
         DesktopLayoutSuggestionRetirementReason reason,
         Guid? newStableObservationId)
