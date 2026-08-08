@@ -1,3 +1,4 @@
+using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Poc;
 using DesktopAgent.WindowsInterop.DesktopIcons;
@@ -93,7 +94,7 @@ public sealed class M3DiagnosticsBoundaryTests
     }
 
     [Fact]
-    public void TrayController_DependsOnPresentationAndReadOnlyM3Coordinators_NotWriter()
+    public void TrayController_ControlsAutomationOnlyThroughPolicyAndTrigger_NotWriter()
     {
         var parameterTypes = typeof(M3TrayController)
             .GetConstructors()
@@ -109,8 +110,24 @@ public sealed class M3DiagnosticsBoundaryTests
                 typeof(M3DiagnosticsWindow),
                 typeof(M3SuggestionMonitoringCoordinator),
                 typeof(M3SuggestionNotificationCoordinator),
+                typeof(DesktopAutomationRuntimePolicy),
+                typeof(M3AutomaticExecutionTriggerCoordinator),
             },
             parameterTypes);
+        Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
+    }
+
+    [Fact]
+    public void AutomaticTrigger_DoesNotExposeWriterDependency()
+    {
+        var parameterTypes = typeof(M3AutomaticExecutionTriggerCoordinator)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.Contains(typeof(DesktopAutomationRuntimePolicy), parameterTypes);
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
     }
 }
