@@ -51,8 +51,52 @@ public sealed class AcceptanceFaultInjectionTests
         var options = AcceptanceFaultInjectionOptions.FromLookup(name => values[name]);
 
         Assert.True(options.IsEnabled);
+        Assert.Equal(AcceptanceFaultInjectionBehavior.HardCrash, options.Behavior);
+        Assert.True(options.WillTerminateProcess);
         Assert.Equal(2, options.MoveCallIndex);
         Assert.Equal("c:\\desktop\\m2-a.txt", options.StableId);
+    }
+
+    [Fact]
+    public void FromLookup_OmittedBehavior_PreservesHardCrashCompatibility()
+    {
+        var values = ValidValues();
+        values.Remove(AcceptanceFaultInjectionOptions.BehaviorVariable);
+
+        var options = AcceptanceFaultInjectionOptions.FromLookup(name =>
+            values.TryGetValue(name, out var value) ? value : null);
+
+        Assert.Equal(AcceptanceFaultInjectionBehavior.HardCrash, options.Behavior);
+        Assert.True(options.WillTerminateProcess);
+    }
+
+    [Fact]
+    public void FromLookup_SoftError_RequiresSoftArmAndDoesNotTerminate()
+    {
+        var values = ValidValues();
+        values[AcceptanceFaultInjectionOptions.BehaviorVariable] =
+            AcceptanceFaultInjectionOptions.SoftErrorBehaviorValue;
+        values[AcceptanceFaultInjectionOptions.ArmVariable] =
+            AcceptanceFaultInjectionOptions.RequiredSoftErrorArmValue;
+
+        var options = AcceptanceFaultInjectionOptions.FromLookup(name => values[name]);
+
+        Assert.True(options.IsEnabled);
+        Assert.Equal(AcceptanceFaultInjectionBehavior.SoftError, options.Behavior);
+        Assert.False(options.WillTerminateProcess);
+    }
+
+    [Fact]
+    public void FromLookup_SoftErrorWithHardCrashArm_FailsClosed()
+    {
+        var values = ValidValues();
+        values[AcceptanceFaultInjectionOptions.BehaviorVariable] =
+            AcceptanceFaultInjectionOptions.SoftErrorBehaviorValue;
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AcceptanceFaultInjectionOptions.FromLookup(name => values[name]));
+
+        Assert.Contains(AcceptanceFaultInjectionOptions.ArmVariable, ex.Message);
     }
 
     [Fact]
@@ -72,7 +116,34 @@ public sealed class AcceptanceFaultInjectionTests
         Assert.Equal(1, inner.MoveCallCount);
         Assert.NotNull(terminationMessage);
         Assert.Contains("before caller checkpoint", terminationMessage);
+        Assert.Contains("Behavior=HardCrash", terminationMessage);
         Assert.Contains("终止器意外返回", ex.Message);
+    }
+
+    [Fact]
+    public void MoveDesktopIcon_SoftError_ThrowsWithoutTerminatingAndSchedulesUiReturn()
+    {
+        var options = EnabledOptions(
+            callIndex: 1,
+            stableId: "icon-a",
+            AcceptanceFaultInjectionBehavior.SoftError);
+        var inner = new RecordingWriter(isExact: true);
+        var terminated = false;
+        string? scheduledMessage = null;
+        var writer = new AcceptanceFaultInjectingDesktopIconPositionWriter(
+            inner,
+            options,
+            _ => terminated = true,
+            message => scheduledMessage = message);
+
+        var ex = Assert.Throws<AcceptanceInjectedSoftFaultException>(() =>
+            writer.MoveDesktopIcon("icon-a", new PixelPoint(100, 200)));
+
+        Assert.Equal(1, inner.MoveCallCount);
+        Assert.False(terminated);
+        Assert.NotNull(scheduledMessage);
+        Assert.Contains("Behavior=SoftError", scheduledMessage);
+        Assert.Contains("before caller checkpoint", ex.Message);
     }
 
     [Fact]
@@ -113,19 +184,28 @@ public sealed class AcceptanceFaultInjectionTests
     private static Dictionary<string, string?> ValidValues() => new()
     {
         [AcceptanceFaultInjectionOptions.ModeVariable] = AcceptanceFaultInjectionOptions.SupportedMode,
+        [AcceptanceFaultInjectionOptions.BehaviorVariable] = AcceptanceFaultInjectionOptions.HardCrashBehaviorValue,
         [AcceptanceFaultInjectionOptions.MoveCallVariable] = "2",
         [AcceptanceFaultInjectionOptions.StableIdVariable] = "c:\\desktop\\m2-a.txt",
-        [AcceptanceFaultInjectionOptions.ArmVariable] = AcceptanceFaultInjectionOptions.RequiredArmValue,
+        [AcceptanceFaultInjectionOptions.ArmVariable] = AcceptanceFaultInjectionOptions.RequiredHardCrashArmValue,
     };
 
-    private static AcceptanceFaultInjectionOptions EnabledOptions(int callIndex, string stableId)
+    private static AcceptanceFaultInjectionOptions EnabledOptions(
+        int callIndex,
+        string stableId,
+        AcceptanceFaultInjectionBehavior behavior = AcceptanceFaultInjectionBehavior.HardCrash)
     {
         var values = new Dictionary<string, string?>
         {
             [AcceptanceFaultInjectionOptions.ModeVariable] = AcceptanceFaultInjectionOptions.SupportedMode,
+            [AcceptanceFaultInjectionOptions.BehaviorVariable] = behavior == AcceptanceFaultInjectionBehavior.HardCrash
+                ? AcceptanceFaultInjectionOptions.HardCrashBehaviorValue
+                : AcceptanceFaultInjectionOptions.SoftErrorBehaviorValue,
             [AcceptanceFaultInjectionOptions.MoveCallVariable] = callIndex.ToString(),
             [AcceptanceFaultInjectionOptions.StableIdVariable] = stableId,
-            [AcceptanceFaultInjectionOptions.ArmVariable] = AcceptanceFaultInjectionOptions.RequiredArmValue,
+            [AcceptanceFaultInjectionOptions.ArmVariable] = behavior == AcceptanceFaultInjectionBehavior.HardCrash
+                ? AcceptanceFaultInjectionOptions.RequiredHardCrashArmValue
+                : AcceptanceFaultInjectionOptions.RequiredSoftErrorArmValue,
         };
 
         return AcceptanceFaultInjectionOptions.FromLookup(name => values[name]);
