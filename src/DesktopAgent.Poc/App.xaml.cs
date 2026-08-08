@@ -92,6 +92,13 @@ public partial class App : System.Windows.Application
 #endif
                 services.AddSingleton<StaThreadExecutor>();
                 services.AddSingleton<IDesktopObservationSource, WindowsDesktopObservationSource>();
+                services.AddSingleton(
+                    new DesktopObservationStabilitySettings(TimeSpan.FromMilliseconds(500)));
+                services.AddSingleton<IStableDesktopObservationSource, StableDesktopObservationSource>();
+                services.AddSingleton<DesktopStateBaselineTracker>();
+                services.AddSingleton<DesktopObservationDiagnosticsRunner>();
+                services.AddSingleton<M3DiagnosticsWindow>();
+
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
                 services.AddSingleton<IRecoverySessionStore>(
                     new SqliteRecoverySessionStore(
@@ -120,6 +127,17 @@ public partial class App : System.Windows.Application
         var mainWindow = _host.Services.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
         mainWindow.Show();
+
+#if DEBUG
+        // Acceptance fault injection 与 M3 diagnostics 使用不同的人工验收场景。
+        // 故障注入启用时不自动弹出诊断窗，避免干扰 crash-window / SoftError 验收。
+        if (!acceptanceFaultOptions.IsEnabled)
+        {
+            var diagnosticsWindow = _host.Services.GetRequiredService<M3DiagnosticsWindow>();
+            diagnosticsWindow.Owner = mainWindow;
+            diagnosticsWindow.Show();
+        }
+#endif
     }
 
 #if DEBUG
