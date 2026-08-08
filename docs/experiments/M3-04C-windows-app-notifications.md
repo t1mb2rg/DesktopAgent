@@ -38,29 +38,99 @@ WindowsInterop / PoC / Tests 的 Windows TFM 对齐为：
 net10.0-windows10.0.19041.0
 ```
 
-PoC 明确声明：
-
-```xml
-<WindowsPackageType>None</WindowsPackageType>
-```
-
-WindowsInterop 与 PoC 引入：
+WindowsInterop 引入：
 
 ```xml
 <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
 ```
 
-PoC 仍为 unpackaged WPF。
+PoC 仍为 unpackaged WPF，但最终 04C 不使用 executable module auto-initializer。
+
+PoC 显式关闭：
+
+```xml
+<WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+<WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+<WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
+```
+
+Tests 同样显式关闭这些 auto-initializer，确保 xUnit 仅加载 PoC / WindowsInterop assembly 时不会偷偷初始化 Windows App SDK process state。
+
+## 为什么改为显式 bootstrap
+
+04C 第一版曾在 PoC 中使用：
+
+```xml
+<WindowsPackageType>None</WindowsPackageType>
+```
+
+它会为 executable 注入 Windows App SDK bootstrap auto-initializer。
+
+CI 第一轮 Restore / Build 均通过，但 Test 相比上一层约 31 秒的正常耗时出现明显长期停滞。由于 tests 会引用并加载 PoC assembly，而 WinAppSDK executable module initializer 会在 assembly load 时执行，我们将其视为高概率的 test-host platform-initialization 污染。
+
+最终设计改为：
+
+```text
+load DesktopAgent.Poc.dll in xUnit
+→ NO WinAppSDK runtime bootstrap
+
+real DesktopAgent.exe startup
+→ explicit Bootstrap.Initialize
+→ explicit DeploymentManager.Initialize
+→ then AppNotificationManager
+```
+
+这也让 runtime / Singleton 缺失变成可观察、可降级的启动结果，而不是模块初始化阶段的隐式副作用。
+
+## Runtime / Singleton 初始化
+
+新增 `WindowsAppSdkRuntimeBootstrapper`。
+
+当前 Microsoft.WindowsAppSDK 为 2.3.x，对应：
+
+```text
+Bootstrap.Initialize(0x0002_0003)
+```
+
+随后显式：
+
+```text
+DeploymentManager.Initialize(
+    OnErrorShowUI=false,
+    ForceDeployment=false)
+```
+
+`AppNotificationManager` 依赖 Singleton package，因此只 bootstrap Framework package 不足以作为最终运行前提。
+
+成功条件：
+
+```text
+Bootstrap initialized
+AND DeploymentStatus == Ok
+```
+
+失败时：
+
+- 尝试 `Bootstrap.Shutdown()`；
+- 返回 `WindowsAppSdkRuntimeInitializationResult`；
+- DesktopAgent 主程序继续运行；
+- Suggestion / Diff 不受影响；
+- notification composition 退回 diagnostics-only 内存 surface。
+
+退出时先 Dispose Host / notification sink，再 Shutdown Bootstrap runtime。
 
 ## 注册生命周期
 
-`WindowsAppNotificationSink.Start()`：
+runtime / deployment 成功以后，`WindowsAppNotificationSink.Start()`：
 
 ```text
-subscribe NotificationInvoked
+resolve AppNotificationManager.Default
+→ subscribe NotificationInvoked
 → AppNotificationManager.Register()
 → record notification Setting
 ```
+
+`AppNotificationManager.Default` 被延迟到 `Start()` 获取，constructor 本身不触碰 Windows App SDK runtime。因此即使 runtime 初始化失败，DI 仍能构造其余 DesktopAgent 服务。
 
 必须先订阅 activation handler，再 Register。
 
@@ -72,7 +142,7 @@ subscribe NotificationInvoked
 - Debug PoC 会显示一次 registration warning；
 - dispatcher 不会把失败的平台操作 acknowledge 成成功。
 
-M2 Acceptance Fault Injection 启用时，04C 不注册 App Notification，避免 COM activation / callback 干扰 crash-window 验收。
+M2 Acceptance Fault Injection 启用时，04C 连 runtime bootstrap 都不执行，避免 DDLM / Singleton / COM activation / callback 干扰 crash-window 验收。
 
 ## Publish
 
@@ -152,6 +222,8 @@ platform Publish / Withdraw succeeds
 
 真实 Windows activation 也会经 wrapper 原样转发到 04B interaction bridge。
 
+如果 runtime bootstrap 本身失败，则 wrapper 不连接 real sink，退回纯内存 diagnostics surface。
+
 PoC 的“模拟打开 / 模拟忽略”仍保留，用于主动制造 stale interaction 场景。
 
 ## Stale-safe Ignore 保持不变
@@ -175,18 +247,22 @@ Ignore(S1)
 
 ## 生命周期 / 退出
 
-`WindowsAppNotificationSink.Dispose()`：
+正常退出：
 
 ```text
-unsubscribe NotificationInvoked
-→ AppNotificationManager.Unregister()
+Host.Dispose
+→ WindowsAppNotificationSink.Dispose
+→ unsubscribe NotificationInvoked
+→ AppNotificationManager.Unregister
+→ WindowsAppSdkRuntimeBootstrapper.Dispose
+→ Bootstrap.Shutdown
 ```
 
 shutdown cleanup 失败不会反向导致 DesktopAgent 退出异常。
 
 ## 自动测试
 
-CI 不依赖真实 Notification Center 弹窗。
+CI 不依赖真实 Notification Center 弹窗，也不初始化 WinAppSDK runtime。
 
 覆盖：
 
@@ -198,13 +274,13 @@ CI 不依赖真实 Notification Center 弹窗。
 - inner Withdraw 失败时 mirror 不提前清除；
 - inner activation 原样穿透 mirror。
 
-真实 Register / Show / button activation / RemoveByTag 需要 Windows 实机验收。
+真实 Bootstrap / DeploymentManager / Register / Show / button activation / RemoveByTag 需要 Windows 实机验收。
 
 ## 部署注意
 
 当前 PoC 是 unpackaged + Windows App SDK frame-dependent 路径。
 
-后续发布安装器时必须把 Windows App SDK Runtime 作为明确依赖处理，不能假设目标机器已经安装对应 runtime。
+后续发布安装器时必须把 Windows App SDK Runtime 以及 AppNotification 所需 Singleton package 作为明确依赖处理，不能假设目标机器已经安装对应 runtime。
 
 这属于部署/安装阶段责任，不在 04C 中偷偷改成 MSIX。
 
