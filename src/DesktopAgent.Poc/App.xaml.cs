@@ -101,6 +101,11 @@ public partial class App : System.Windows.Application
                     new DesktopObservationHintBatchSettings(
                         TimeSpan.FromMilliseconds(700),
                         TimeSpan.FromSeconds(3)));
+                services.AddSingleton(
+                    new PeriodicObservationHintSettings(TimeSpan.FromSeconds(15)));
+                services.AddSingleton<IPeriodicObservationHintSource>(sp =>
+                    new PeriodicObservationHintSource(
+                        sp.GetRequiredService<PeriodicObservationHintSettings>()));
                 services.AddSingleton<
                     IM3ReadOnlyMonitoringHintSourceFactory,
                     DesktopFileSystemMonitoringHintSourceFactory>();
