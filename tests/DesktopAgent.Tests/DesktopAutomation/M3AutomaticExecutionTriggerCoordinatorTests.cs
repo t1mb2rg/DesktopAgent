@@ -1,3 +1,4 @@
+using System.Reflection;
 using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopSuggestions;
 using DesktopAgent.Poc;
@@ -15,9 +16,9 @@ public sealed class M3AutomaticExecutionTriggerCoordinatorTests
         var runtime = RuntimePolicy();
         runtime.SetRequestedMode(DesktopAutomationMode.Automatic);
         var calls = 0;
-        using var trigger = new M3AutomaticExecutionTriggerCoordinator(
-            () => lifecycle.Snapshot,
-            () => runtime.Snapshot,
+        using var trigger = Trigger(
+            lifecycle,
+            runtime,
             _ =>
             {
                 calls++;
@@ -227,11 +228,22 @@ public sealed class M3AutomaticExecutionTriggerCoordinatorTests
     private static M3AutomaticExecutionTriggerCoordinator Trigger(
         DesktopLayoutSuggestionLifecycle lifecycle,
         DesktopAutomationRuntimePolicy runtime,
-        Func<CancellationToken, Task<DesktopAutomationExecutionCycleResult>> runCycle) =>
-        new(
-            () => lifecycle.Snapshot,
-            () => runtime.Snapshot,
-            runCycle);
+        Func<CancellationToken, Task<DesktopAutomationExecutionCycleResult>> runCycle)
+    {
+        var instance = Activator.CreateInstance(
+            typeof(M3AutomaticExecutionTriggerCoordinator),
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[]
+            {
+                (Func<DesktopLayoutSuggestionLifecycleSnapshot>)(() => lifecycle.Snapshot),
+                (Func<DesktopAutomationRuntimeSnapshot>)(() => runtime.Snapshot),
+                runCycle,
+            },
+            culture: null);
+
+        return Assert.IsType<M3AutomaticExecutionTriggerCoordinator>(instance);
+    }
 
     private static DesktopAutomationRuntimePolicy RuntimePolicy() =>
         new(
