@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopNotifications;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Application.DesktopSuggestions;
@@ -13,6 +14,7 @@ using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Poc.Acceptance;
+using DesktopAgent.WindowsInterop.DesktopAutomation;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using DesktopAgent.WindowsInterop.DesktopNotifications;
@@ -166,11 +168,43 @@ public partial class App : System.Windows.Application
                     new SqliteDesktopLayoutIconRuleStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
 
-                // M3-03 Suggestion 仍为只读：Candidate 只作为建议证据，不连接 Coordinator / Writer。
+                // M3-03 Suggestion：旧 Candidate 只作为证据；M3-B 永远通过 fresh rebuilder 重建。
                 services.AddSingleton<DesktopLayoutSuggestionLifecycle>();
                 services.AddSingleton<IDesktopLayoutSuggestionBuilder, DesktopLayoutSuggestionBuilder>();
                 services.AddSingleton<DesktopLayoutSuggestionPipeline>();
                 services.AddSingleton<M3SuggestionMonitoringCoordinator>();
+
+                // M3-B05/B06 automation composition。
+                // 当前 PoC 永远使用 provisional-closed unattended gate：代码链存在，但默认不能到 Writer。
+                services.AddSingleton(
+                    new DesktopAutomationRuntimePolicySettings(
+                        executionCooldown: TimeSpan.FromSeconds(30),
+                        fuseFailureThreshold: 3));
+                services.AddSingleton(sp =>
+                    new DesktopAutomationRuntimePolicy(
+                        sp.GetRequiredService<DesktopAutomationRuntimePolicySettings>(),
+                        DesktopAutomationUnattendedGate.M3AProvisionalClosed,
+                        sp.GetRequiredService<TimeProvider>()));
+                services.AddSingleton(
+                    new DesktopAutomationCandidateRiskPolicySettings(
+                        maxMoveCount: 5,
+                        maxExecutionStepCount: 10,
+                        allowTemporaryStaging: false));
+                services.AddSingleton<DesktopAutomationCandidateRiskPolicy>();
+                services.AddSingleton<IDesktopAutomationCandidateRiskPolicy>(sp =>
+                    sp.GetRequiredService<DesktopAutomationCandidateRiskPolicy>());
+                services.AddSingleton<IDesktopAutomationCandidateRiskEvidencePolicy>(sp =>
+                    sp.GetRequiredService<DesktopAutomationCandidateRiskPolicy>());
+                services.AddSingleton<DesktopAutomationPreflightDecisionPolicy>();
+                services.AddSingleton<
+                    IDesktopLayoutFreshCandidateRebuilder,
+                    DesktopLayoutFreshCandidateRebuilder>();
+                services.AddSingleton<DesktopAutomationFreshExecutionHandoff>();
+                services.AddSingleton<DesktopAutomationAutomaticSafetyGate>();
+                services.AddSingleton<DesktopAutomationCoordinatorExecutionBridge>();
+                services.AddSingleton<DesktopAutomationExecutionOutcomeCoordinator>();
+                services.AddSingleton<DesktopAutomationExecutionCycleCoordinator>();
+                services.AddSingleton<M3AutomaticExecutionTriggerCoordinator>();
 
                 // M3-04C：runtime 初始化成功时使用真实 Windows App Notification sink；
                 // 初始化失败则 diagnostics wrapper 退回纯内存 surface，主程序继续运行。
