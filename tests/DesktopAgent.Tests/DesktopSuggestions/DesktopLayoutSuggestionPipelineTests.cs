@@ -129,27 +129,29 @@ public sealed class DesktopLayoutSuggestionPipelineTests
     }
 
     [Fact]
-    public async Task ChangesDetected_SuggestedBuild_PublishesActiveSuggestion()
+    public async Task ChangesDetected_RealBuilder_PublishesSuggestionForCurrentObservation()
     {
-        var suggested = await CreateSuggestedBuildAsync();
-        var builder = new ScriptedBuilder(suggested);
+        var templateId = Guid.NewGuid();
+        var builder = ConcreteBuilder(Template(templateId));
         var pipeline = Pipeline(builder);
-        pipeline.SetBinding(suggested.Suggestion!.Binding);
+        pipeline.SetBinding(new DesktopLayoutSuggestionBinding(templateId));
         var previous = Observation(160);
         var current = Observation(80);
 
         var result = await pipeline.ProcessAsync(Changes(previous, current));
 
         Assert.Equal(DesktopLayoutSuggestionPipelineStatus.Suggested, result.Status);
-        Assert.Equal(1, builder.CallCount);
         Assert.Equal(DesktopLayoutSuggestionPresentationState.Active, result.Lifecycle.State);
-        Assert.Same(suggested.Suggestion, result.CurrentSuggestion);
+        Assert.NotNull(result.CurrentSuggestion);
+        Assert.Equal(current.ObservationId, result.CurrentSuggestion!.SourceObservationId);
+        Assert.Equal(previous.ObservationId, result.CurrentSuggestion.PreviousObservationId);
+        Assert.Equal(templateId, result.CurrentSuggestion.TemplateId);
     }
 
     [Fact]
     public async Task ChangesDetected_NoActionNeeded_LeavesNoActiveSuggestion()
     {
-        var builder = new ScriptedBuilder(NoActionBuild());
+        var builder = new ScriptedBuilder(await CreateNoActionBuildAsync());
         var lifecycle = new DesktopLayoutSuggestionLifecycle();
         var pipeline = new DesktopLayoutSuggestionPipeline(builder, lifecycle);
         pipeline.SetBinding(new DesktopLayoutSuggestionBinding(Guid.NewGuid()));
@@ -180,7 +182,7 @@ public sealed class DesktopLayoutSuggestionPipelineTests
     }
 
     [Fact]
-    public async Task BindingChangesDuringAsyncBuild_OldResultIsDiscarded()
+    public async Task BindingChangesDuringAsyncBuild_OldSuggestedResultIsDiscarded()
     {
         var suggested = await CreateSuggestedBuildAsync();
         var builder = new DelayedBuilder(suggested);
@@ -196,7 +198,7 @@ public sealed class DesktopLayoutSuggestionPipelineTests
 
         var secondBinding = new DesktopLayoutSuggestionBinding(Guid.NewGuid());
         var changed = pipeline.SetBinding(secondBinding);
-        builder.Release.TrySetResult();
+        builder.Release.TrySetResult(true);
         var result = await processTask;
 
         Assert.Equal(2, changed.Revision);
@@ -359,17 +361,10 @@ public sealed class DesktopLayoutSuggestionPipelineTests
                     "missing")
             });
 
-    private static DesktopLayoutSuggestionBuildResult NoActionBuild()
-    {
-        // 通过真实 03A Builder 生成一个合法 NoOp Candidate，避免在 pipeline test 中伪造 M2 类型不变量。
-        return CreateNoActionBuildAsync().GetAwaiter().GetResult();
-    }
-
     private static async Task<DesktopLayoutSuggestionBuildResult> CreateNoActionBuildAsync()
     {
         var templateId = Guid.NewGuid();
-        var template = Template(templateId);
-        var builder = ConcreteBuilder(template);
+        var builder = ConcreteBuilder(Template(templateId));
         var previous = Observation(80);
         var current = Observation(0);
         var result = await builder.BuildAsync(
@@ -383,8 +378,7 @@ public sealed class DesktopLayoutSuggestionPipelineTests
     private static async Task<DesktopLayoutSuggestionBuildResult> CreateSuggestedBuildAsync()
     {
         var templateId = Guid.NewGuid();
-        var template = Template(templateId);
-        var builder = ConcreteBuilder(template);
+        var builder = ConcreteBuilder(Template(templateId));
         var previous = Observation(160);
         var current = Observation(80);
         var result = await builder.BuildAsync(
@@ -438,8 +432,10 @@ public sealed class DesktopLayoutSuggestionPipelineTests
     private sealed class DelayedBuilder(DesktopLayoutSuggestionBuildResult result)
         : IDesktopLayoutSuggestionBuilder
     {
-        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public async Task<DesktopLayoutSuggestionBuildResult> BuildAsync(
             DesktopLayoutSuggestionBinding binding,
@@ -447,7 +443,7 @@ public sealed class DesktopLayoutSuggestionPipelineTests
             DesktopObservation currentObservation,
             CancellationToken ct = default)
         {
-            Entered.TrySetResult();
+            Entered.TrySetResult(true);
             await Release.Task.WaitAsync(ct);
             return result;
         }
