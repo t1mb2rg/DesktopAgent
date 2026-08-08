@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
 using DesktopAgent.WindowsInterop.DesktopIcons;
@@ -31,7 +32,7 @@ public sealed class WindowsDesktopObservationSourceTests
 
         Assert.True(result.IsCaptured);
         Assert.Empty(result.Issues);
-        var observation = Assert.IsType<Core.DesktopObservations.DesktopObservation>(result.Observation);
+        var observation = Assert.IsType<DesktopObservation>(result.Observation);
         Assert.NotEqual(Guid.Empty, observation.ObservationId);
         Assert.Single(observation.Displays);
         Assert.Single(observation.Icons);
