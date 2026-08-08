@@ -11,6 +11,7 @@ public enum DesktopLayoutSuggestionSuspensionReason
 {
     ObservationUnstable = 0,
     ObservationUnavailable = 1,
+    ObservationRunFailed = 2,
 }
 
 public enum DesktopLayoutSuggestionRetirementReason
@@ -20,6 +21,7 @@ public enum DesktopLayoutSuggestionRetirementReason
     UserDismissed = 2,
     ReplacedByNewSuggestion = 3,
     BaselineReestablished = 4,
+    BaselineReset = 5,
 }
 
 public sealed record DesktopLayoutRetiredSuggestion(
@@ -102,10 +104,6 @@ public sealed class DesktopLayoutSuggestionLifecycle
         }
     }
 
-    /// <summary>
-    /// 接受一份新的 Suggested 结果并设为 Active。
-    /// 若当前已有建议，会先以 ReplacedByNewSuggestion 退休。
-    /// </summary>
     public DesktopLayoutSuggestionLifecycleSnapshot Publish(
         DesktopLayoutSuggestion suggestion)
     {
@@ -137,10 +135,6 @@ public sealed class DesktopLayoutSuggestionLifecycle
         }
     }
 
-    /// <summary>
-    /// 新的 stable State Diff 已证明桌面事实发生变化。
-    /// 旧建议无论 Active/Suspended 都立即退休；新建议必须随后重新 Build/Publish。
-    /// </summary>
     public DesktopLayoutSuggestionLifecycleSnapshot MarkDesktopChanged(
         Guid newStableObservationId)
     {
@@ -160,10 +154,6 @@ public sealed class DesktopLayoutSuggestionLifecycle
         }
     }
 
-    /// <summary>
-    /// baseline 被显式重置或首次重新建立时，旧建议失去连续比较链的依据并退休。
-    /// 初始没有建议时此操作为 no-op。
-    /// </summary>
     public DesktopLayoutSuggestionLifecycleSnapshot MarkBaselineReestablished(
         Guid newBaselineObservationId)
     {
@@ -184,8 +174,22 @@ public sealed class DesktopLayoutSuggestionLifecycle
     }
 
     /// <summary>
-    /// 当前无法证明桌面仍稳定/可完整观察时，保留建议内容但暂停其 Active 展示。
+    /// baseline 被用户显式 Reset 的瞬间，旧 Suggestion 立即失去连续证据链。
+    /// 不等待下一次 BaselineEstablished 才退休。
     /// </summary>
+    public DesktopLayoutSuggestionLifecycleSnapshot MarkBaselineReset()
+    {
+        lock (_gate)
+        {
+            if (_current is null)
+                return CreateSnapshot();
+
+            RetireCurrent(DesktopLayoutSuggestionRetirementReason.BaselineReset, null);
+            _revision++;
+            return CreateSnapshot();
+        }
+    }
+
     public DesktopLayoutSuggestionLifecycleSnapshot Suspend(
         DesktopLayoutSuggestionSuspensionReason reason)
     {
@@ -208,10 +212,6 @@ public sealed class DesktopLayoutSuggestionLifecycle
         }
     }
 
-    /// <summary>
-    /// 后续 fresh stable observation 与最近 stable baseline 无事实变化时，
-    /// 可把因 Unstable/Unavailable 暂停的建议恢复为 Active。
-    /// </summary>
     public DesktopLayoutSuggestionLifecycleSnapshot ConfirmNoDesktopChanges()
     {
         lock (_gate)
