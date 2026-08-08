@@ -31,10 +31,12 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
 {
     private readonly DesktopObservationDiagnosticsRunner _runner;
     private readonly DesktopObservationHintBatchSettings _hintBatchSettings;
+    private readonly Func<Action<DesktopObservationHintKind, string>, IM3ReadOnlyMonitoringHintSource>
+        _hintSourceFactory;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
 
     private DesktopObservationBackgroundPump? _pump;
-    private DesktopFileSystemObservationHintSource? _fileSystemSource;
+    private IM3ReadOnlyMonitoringHintSource? _fileSystemSource;
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpLifetimeTask;
     private int _isRunning;
@@ -50,10 +52,24 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
     public M3ReadOnlyMonitoringSession(
         DesktopObservationDiagnosticsRunner runner,
         DesktopObservationHintBatchSettings hintBatchSettings)
+        : this(
+            runner,
+            hintBatchSettings,
+            publish => new DesktopFileSystemMonitoringHintSourceAdapter(publish))
+    {
+    }
+
+    internal M3ReadOnlyMonitoringSession(
+        DesktopObservationDiagnosticsRunner runner,
+        DesktopObservationHintBatchSettings hintBatchSettings,
+        Func<Action<DesktopObservationHintKind, string>, IM3ReadOnlyMonitoringHintSource>
+            hintSourceFactory)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _hintBatchSettings = hintBatchSettings
             ?? throw new ArgumentNullException(nameof(hintBatchSettings));
+        _hintSourceFactory = hintSourceFactory
+            ?? throw new ArgumentNullException(nameof(hintSourceFactory));
     }
 
     public async Task<M3ReadOnlyMonitoringStartResult> StartAsync(
@@ -84,7 +100,7 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             var batcher = new DesktopObservationHintBatcher(_hintBatchSettings);
             var processor = new DesktopObservationBatchProcessor(_runner);
             var pump = new DesktopObservationBackgroundPump(batcher, processor);
-            var source = new DesktopFileSystemObservationHintSource(
+            var source = _hintSourceFactory(
                 (kind, provider) => pump.TryPublishHint(kind, provider));
 
             DesktopFileSystemHintSourceStartResult sourceResult;
@@ -202,7 +218,7 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
 
     private async Task ObservePumpLifetimeAsync(
         Task rawPumpTask,
-        DesktopFileSystemObservationHintSource source,
+        IM3ReadOnlyMonitoringHintSource source,
         CancellationTokenSource cts)
     {
         try
@@ -317,4 +333,28 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
             }
         }
     }
+}
+
+internal interface IM3ReadOnlyMonitoringHintSource : IDisposable
+{
+    DesktopFileSystemHintSourceStartResult Start();
+    void Stop();
+}
+
+internal sealed class DesktopFileSystemMonitoringHintSourceAdapter
+    : IM3ReadOnlyMonitoringHintSource
+{
+    private readonly DesktopFileSystemObservationHintSource _inner;
+
+    public DesktopFileSystemMonitoringHintSourceAdapter(
+        Action<DesktopObservationHintKind, string> publish)
+    {
+        _inner = new DesktopFileSystemObservationHintSource(publish);
+    }
+
+    public DesktopFileSystemHintSourceStartResult Start() => _inner.Start();
+
+    public void Stop() => _inner.Stop();
+
+    public void Dispose() => _inner.Dispose();
 }
