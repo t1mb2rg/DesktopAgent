@@ -44,7 +44,7 @@ public sealed class M3DiagnosticsBoundaryTests
     }
 
     [Fact]
-    public void DiagnosticsWindow_DependsOnDiagnosticsRunnerAndReadOnlyMonitoringSession()
+    public void DiagnosticsWindow_DependsOnlyOnReadOnlySuggestionCoordinator()
     {
         var parameterTypes = typeof(M3DiagnosticsWindow)
             .GetConstructors()
@@ -54,12 +54,21 @@ public sealed class M3DiagnosticsBoundaryTests
             .ToArray();
 
         Assert.Equal(
-            new[]
-            {
-                typeof(DesktopObservationDiagnosticsRunner),
-                typeof(M3ReadOnlyMonitoringSession),
-            },
+            new[] { typeof(M3SuggestionMonitoringCoordinator) },
             parameterTypes);
+        Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
+    }
+
+    [Fact]
+    public void SuggestionCoordinator_DoesNotExposeWriterDependency()
+    {
+        var parameterTypes = typeof(M3SuggestionMonitoringCoordinator)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
     }
 }
