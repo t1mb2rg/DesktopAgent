@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using DesktopAgent.Application.DesktopObservations;
+using DesktopAgent.Application.DesktopSuggestions;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
@@ -110,7 +111,6 @@ public partial class App : System.Windows.Application
                     IM3ReadOnlyMonitoringHintSourceFactory,
                     DesktopFileSystemMonitoringHintSourceFactory>();
                 services.AddSingleton<M3ReadOnlyMonitoringSession>();
-                services.AddSingleton<M3DiagnosticsWindow>();
 
                 services.AddSingleton<DesktopLayoutSnapshotFactory>();
                 services.AddSingleton<IRecoverySessionStore>(
@@ -131,6 +131,14 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<IDesktopLayoutIconRuleStore>(
                     new SqliteDesktopLayoutIconRuleStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
+
+                // M3-03 Suggestion 仍为只读：Candidate 只作为建议证据，不连接 Coordinator / Writer。
+                services.AddSingleton<DesktopLayoutSuggestionLifecycle>();
+                services.AddSingleton<IDesktopLayoutSuggestionBuilder, DesktopLayoutSuggestionBuilder>();
+                services.AddSingleton<DesktopLayoutSuggestionPipeline>();
+                services.AddSingleton<M3SuggestionMonitoringCoordinator>();
+                services.AddSingleton<M3DiagnosticsWindow>();
+
                 services.AddSingleton<MainWindow>();
             })
             .Build();
