@@ -7,11 +7,12 @@ public enum DesktopObservationCaptureIssueCode
     TopologyReadFailed = 0,
     NoDisplays = 1,
     DuplicateDisplayDeviceName = 2,
-    ShellObservationFailed = 3,
-    IncompleteDesktopRead = 4,
-    DuplicateStableId = 5,
-    IconOutsideDisplayTopology = 6,
-    ObservationBuildFailed = 7,
+    TopologyChangedDuringCapture = 3,
+    ShellObservationFailed = 4,
+    IncompleteDesktopRead = 5,
+    DuplicateStableId = 6,
+    IconOutsideDisplayTopology = 7,
+    ObservationBuildFailed = 8,
 }
 
 public sealed record DesktopObservationCaptureIssue(
