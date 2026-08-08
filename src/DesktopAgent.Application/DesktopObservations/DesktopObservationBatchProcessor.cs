@@ -67,12 +67,11 @@ public sealed record DesktopObservationTriggeredRun
 /// 无论上层同时提交多少 ready batches，同一实例一次最多运行一条完整 DiagnosticsRunner。
 /// 它不负责计时/合批，不注册 Windows 事件，也不调用 Writer。
 /// </summary>
-public sealed class DesktopObservationBatchProcessor : IDisposable
+public sealed class DesktopObservationBatchProcessor
 {
     private readonly DesktopObservationDiagnosticsRunner _runner;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _singleFlight = new(1, 1);
-    private bool _disposed;
 
     public DesktopObservationBatchProcessor(
         DesktopObservationDiagnosticsRunner runner,
@@ -87,12 +86,10 @@ public sealed class DesktopObservationBatchProcessor : IDisposable
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(batch);
-        ObjectDisposedException.ThrowIf(_disposed, this);
 
         await _singleFlight.WaitAsync(ct);
         try
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
             var runId = Guid.NewGuid();
             var startedAtUtc = _timeProvider.GetUtcNow();
 
@@ -131,15 +128,6 @@ public sealed class DesktopObservationBatchProcessor : IDisposable
         {
             _singleFlight.Release();
         }
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-        _singleFlight.Dispose();
     }
 
     private static DateTimeOffset Max(DateTimeOffset value, DateTimeOffset minimum) =>
