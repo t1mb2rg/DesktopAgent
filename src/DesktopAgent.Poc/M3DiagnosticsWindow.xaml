@@ -55,7 +55,7 @@
                     <TextBlock x:Name="MonitoringStatusText" FontWeight="SemiBold" Foreground="#3A7137"
                                Text="后台监听：未启动（需要手动开启）" />
                     <TextBlock Margin="0,3,0,0" Foreground="#777" FontSize="12" TextWrapping="Wrap"
-                               Text="当前只接 Desktop FileSystemWatcher：可提示新增 / 删除 / 重命名；纯图标位置拖动仍需要后续 Shell / periodic fallback 补齐。" />
+                               Text="Desktop FileSystemWatcher 负责新增 / 删除 / 重命名的低延迟提示；15 秒 periodic fallback 负责最终重新观察，包括纯图标位置拖动等静默变化。" />
                 </StackPanel>
             </DockPanel>
         </Border>
