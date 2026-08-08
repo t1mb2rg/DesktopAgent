@@ -286,14 +286,19 @@ public sealed class M3ReadOnlyMonitoringSession : IDisposable
                 TryStopSource(source);
             }
 
-            fault ??= await ObserveComponentShutdownAsync(
+            // 无论已经有没有 fault，都必须把两个长期组件完整观察到终态。
+            // 否则 Host/Stop 可能在另一个 Task 仍取消中的时候提前释放 CTS/source。
+            var pumpShutdownFault = await ObserveComponentShutdownAsync(
                 rawPumpTask,
                 "BackgroundPump",
                 cts.Token);
-            fault ??= await ObserveComponentShutdownAsync(
+            var periodicShutdownFault = await ObserveComponentShutdownAsync(
                 rawPeriodicTask,
                 "PeriodicFallback",
                 cts.Token);
+
+            fault ??= pumpShutdownFault;
+            fault ??= periodicShutdownFault;
 
             if (fault is not null)
             {
