@@ -99,26 +99,16 @@ public sealed class WindowsDesktopObservationSource : IDesktopObservationSource
                     .ToArray());
         }
 
-        var assignedIcons = new DesktopIconDescriptor[shell.Desktop.Icons.Count];
-        var assignmentIssues = new List<DesktopObservationCaptureIssue>();
-        for (var i = 0; i < shell.Desktop.Icons.Count; i++)
-        {
-            var icon = shell.Desktop.Icons[i];
-            var display = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, displays);
-            if (display is null)
+        // MonitorDeviceName 的归属语义沿用 M1 的 DisplayAssignmentService：
+        // 坐标落在 Bounds 内则直接归属，否则归给最近显示器。
+        // M3 不在这里另造一套“必须严格落在 Bounds 内”的新规则。
+        var assignedIcons = shell.Desktop.Icons
+            .Select(icon =>
             {
-                assignmentIssues.Add(new DesktopObservationCaptureIssue(
-                    DesktopObservationCaptureIssueCode.IconOutsideDisplayTopology,
-                    $"StableId “{icon.StableId}”的物理坐标 {icon.PixelPosition} 不属于当前任何显示器。",
-                    icon.StableId));
-                continue;
-            }
-
-            assignedIcons[i] = icon with { MonitorDeviceName = display.DeviceName };
-        }
-
-        if (assignmentIssues.Count > 0)
-            return DesktopObservationCaptureResult.Unavailable(assignmentIssues.ToArray());
+                var display = DisplayAssignmentService.AssignMonitor(icon.PixelPosition, displays)!;
+                return icon with { MonitorDeviceName = display.DeviceName };
+            })
+            .ToArray();
 
         try
         {
