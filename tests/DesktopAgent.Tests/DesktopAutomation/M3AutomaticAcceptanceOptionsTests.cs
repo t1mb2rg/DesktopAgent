@@ -117,7 +117,7 @@ public sealed class M3AutomaticAcceptanceOptionsTests
         Assert.False(options.AllowTemporaryStaging);
         Assert.True(snapshot.UnattendedGate.IsOpen);
         Assert.Equal(
-            DesktopAutomationUnattendedGateReason.ValidatedSafetyAcceptance,
+            DesktopAutomationUnattendedGateReason.None,
             snapshot.UnattendedGate.Reason);
         Assert.Equal(DesktopAutomationMode.Suggestion, snapshot.RequestedMode);
         Assert.Equal(DesktopAutomationMode.Suggestion, snapshot.EffectiveMode);
