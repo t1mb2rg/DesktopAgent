@@ -9,73 +9,65 @@ namespace DesktopAgent.Poc;
 
 public partial class M3DiagnosticsWindow : Window
 {
-    private readonly DesktopObservationDiagnosticsRunner _runner;
-    private bool _running;
+    private readonly DesktopObservationMonitoringRuntime _runtime;
+    private readonly HashSet<Guid> _seenRunIds = [];
     private int _runNumber;
+    private bool _subscribed;
 
-    public M3DiagnosticsWindow(DesktopObservationDiagnosticsRunner runner)
+    public M3DiagnosticsWindow(DesktopObservationMonitoringRuntime runtime)
     {
         InitializeComponent();
-        _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+
+        Loaded += OnLoaded;
+        Closed += OnClosed;
     }
 
-    private async void RunOnce_Click(object sender, RoutedEventArgs e)
+    private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (_running)
+        if (!_subscribed)
+        {
+            _runtime.RunCompleted += Runtime_RunCompleted;
+            _runtime.StatusChanged += Runtime_StatusChanged;
+            _subscribed = true;
+        }
+
+        RenderStatus(_runtime.Status, appendDiagnostics: true);
+        if (_runtime.LastRun is { } lastRun)
+            AppendTriggeredRun(lastRun);
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        if (!_subscribed)
             return;
 
-        _running = true;
-        UpdateButtons();
-        SummaryText.Text = "正在执行两次 fresh Observation 并判断稳定性…";
+        _runtime.RunCompleted -= Runtime_RunCompleted;
+        _runtime.StatusChanged -= Runtime_StatusChanged;
+        _subscribed = false;
+    }
 
-        try
+    private void RunOnce_Click(object sender, RoutedEventArgs e)
+    {
+        if (_runtime.RequestManualObservation())
         {
-            var result = await _runner.RunOnceAsync();
-            _runNumber++;
-            var text = FormatResult(_runNumber, result);
-
-            SummaryText.Text = result.Status switch
-            {
-                DesktopObservationDiagnosticsStatus.BaselineEstablished =>
-                    "Baseline 已建立。移动/新增/删除桌面项目后再次观察即可看到 Diff。",
-                DesktopObservationDiagnosticsStatus.NoChanges =>
-                    "Stable：与上一次 stable baseline 相比没有事实变化。",
-                DesktopObservationDiagnosticsStatus.ChangesDetected =>
-                    $"Stable：检测到 {result.ChangeSet!.ItemChanges.Count} 个项目变化"
-                    + (result.ChangeSet.TopologyChange is not null ? "，并包含 topology 变化" : "")
-                    + "。",
-                DesktopObservationDiagnosticsStatus.Unstable =>
-                    "Unstable：两次完整观察不一致，baseline 未推进。",
-                DesktopObservationDiagnosticsStatus.Unavailable =>
-                    "Unavailable：无法建立完整事实，baseline 未推进。",
-                _ => result.Status.ToString(),
-            };
-
-            AppendDiagnostics(text);
+            SummaryText.Text =
+                "已提交 Manual hint。将经过 bounded debounce 后进入同一条 single-flight observation 管线。";
         }
-        catch (Exception ex)
+        else
         {
-            SummaryText.Text = "诊断运行发生未处理异常。应用仍保持运行。";
-            AppendDiagnostics(
-                $"=== M3 diagnostics escaped exception @ {DateTimeOffset.Now:O} ===\r\n{ex}\r\n");
-        }
-        finally
-        {
-            _running = false;
-            UpdateButtons();
+            SummaryText.Text = "后台监控当前未运行，Manual hint 未提交。";
         }
     }
 
     private void ResetBaseline_Click(object sender, RoutedEventArgs e)
     {
-        if (_running)
-            return;
-
-        _runner.ResetBaseline();
-        SummaryText.Text = "Baseline 已重置。下一次成功 stable observation 将重新建立 baseline。";
+        _runtime.ResetBaseline();
+        SummaryText.Text =
+            "Baseline 已重置。下一次成功 stable observation 会重新建立当前会话 baseline。";
         AppendDiagnostics(
             $"=== baseline reset @ {DateTimeOffset.Now:O} ===\r\n"
-            + "No persisted history was used. Next stable observation will establish a new in-memory baseline.\r\n");
+            + "History was not used. Next stable observation will establish a fresh in-memory baseline.\r\n");
     }
 
     private void Copy_Click(object sender, RoutedEventArgs e)
@@ -91,11 +83,85 @@ public partial class M3DiagnosticsWindow : Window
         }
     }
 
-    private void UpdateButtons()
+    private void Runtime_RunCompleted(DesktopObservationTriggeredRun run)
     {
-        RunOnceButton.IsEnabled = !_running;
-        ResetBaselineButton.IsEnabled = !_running;
-        CopyButton.IsEnabled = !_running;
+        _ = Dispatcher.BeginInvoke(new Action(() => AppendTriggeredRun(run)));
+    }
+
+    private void Runtime_StatusChanged(DesktopObservationMonitoringStatus status)
+    {
+        _ = Dispatcher.BeginInvoke(new Action(() => RenderStatus(status, appendDiagnostics: true)));
+    }
+
+    private void RenderStatus(
+        DesktopObservationMonitoringStatus status,
+        bool appendDiagnostics)
+    {
+        var sourceSummary = status.Sources.Count == 0
+            ? "no active source diagnostics"
+            : string.Join(
+                "; ",
+                status.Sources.Select(source =>
+                    $"{source.Source}: {(source.IsRunning ? "running" : "stopped")} / endpoints={source.ActiveEndpointCount}"));
+
+        MonitoringText.Text =
+            $"后台监控状态：{status.State}  |  {sourceSummary}";
+        RunOnceButton.IsEnabled = status.IsRunning;
+        ResetBaselineButton.IsEnabled = status.IsRunning;
+
+        if (!appendDiagnostics)
+            return;
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"=== monitoring status @ {status.ChangedAtUtc:O} ===");
+        sb.AppendLine($"State: {status.State}");
+        foreach (var source in status.Sources)
+        {
+            sb.AppendLine(
+                $"Source: {source.Source}  Running={source.IsRunning}  ActiveEndpoints={source.ActiveEndpointCount}");
+            foreach (var endpoint in source.ActiveEndpoints)
+                sb.AppendLine($"  Endpoint: {endpoint}");
+            foreach (var issue in source.Issues)
+                sb.AppendLine($"  Issue: {issue}");
+        }
+        foreach (var issue in status.Issues)
+            sb.AppendLine($"RuntimeIssue: {issue}");
+
+        AppendDiagnostics(sb.ToString());
+    }
+
+    private void AppendTriggeredRun(DesktopObservationTriggeredRun run)
+    {
+        if (!_seenRunIds.Add(run.RunId))
+            return;
+
+        _runNumber++;
+        var text = FormatTriggeredRun(_runNumber, run);
+        AppendDiagnostics(text);
+
+        if (run.Status == DesktopObservationTriggeredRunStatus.Failed)
+        {
+            SummaryText.Text = "后台 observation run 发生逃逸异常；Runtime 仍保持运行并可处理后续 hint。";
+            return;
+        }
+
+        var result = run.DiagnosticsResult!;
+        SummaryText.Text = result.Status switch
+        {
+            DesktopObservationDiagnosticsStatus.BaselineEstablished =>
+                "后台已从 fresh stable observation 建立 baseline。",
+            DesktopObservationDiagnosticsStatus.NoChanges =>
+                "Stable：与上一份 stable baseline 相比没有事实变化。",
+            DesktopObservationDiagnosticsStatus.ChangesDetected =>
+                $"Stable：检测到 {result.ChangeSet!.ItemChanges.Count} 个项目变化"
+                + (result.ChangeSet.TopologyChange is not null ? "，并包含 topology 变化" : "")
+                + "。",
+            DesktopObservationDiagnosticsStatus.Unstable =>
+                "Unstable：两次完整观察不一致，baseline 未推进。",
+            DesktopObservationDiagnosticsStatus.Unavailable =>
+                "Unavailable：无法建立完整事实，baseline 未推进。",
+            _ => result.Status.ToString(),
+        };
     }
 
     private void AppendDiagnostics(string text)
@@ -107,13 +173,45 @@ public partial class M3DiagnosticsWindow : Window
         DiagnosticsText.ScrollToEnd();
     }
 
-    private static string FormatResult(
+    private static string FormatTriggeredRun(
         int runNumber,
-        DesktopObservationDiagnosticsResult result)
+        DesktopObservationTriggeredRun run)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"=== M3 diagnostics run #{runNumber} @ {DateTimeOffset.Now:O} ===");
-        sb.AppendLine($"Status: {result.Status}");
+        sb.AppendLine($"=== M3 background run #{runNumber} / {run.RunId:D} ===");
+        sb.AppendLine($"RunStatus: {run.Status}");
+        sb.AppendLine($"StartedAtUtc: {run.StartedAtUtc:O}");
+        sb.AppendLine($"CompletedAtUtc: {run.CompletedAtUtc:O}");
+        sb.AppendLine($"Duration: {run.Duration.TotalMilliseconds:F1} ms");
+        sb.AppendLine(
+            $"TriggerBatch: hints={run.TriggerBatch.TotalHintCount}  "
+            + $"first={run.TriggerBatch.FirstHintAtUtc:O}  "
+            + $"last={run.TriggerBatch.LastHintAtUtc:O}  due={run.TriggerBatch.DueAtUtc:O}");
+        sb.AppendLine($"TriggerSources: {string.Join(", ", run.TriggerBatch.Sources)}");
+        sb.AppendLine(
+            "TriggerKinds: "
+            + string.Join(
+                ", ",
+                run.TriggerBatch.HintCounts
+                    .OrderBy(pair => pair.Key)
+                    .Select(pair => $"{pair.Key}={pair.Value}")));
+
+        if (run.Status == DesktopObservationTriggeredRunStatus.Failed)
+        {
+            sb.AppendLine("EscapedException:");
+            sb.AppendLine(run.EscapedException);
+            return sb.ToString();
+        }
+
+        AppendDiagnosticsResult(sb, run.DiagnosticsResult!);
+        return sb.ToString();
+    }
+
+    private static void AppendDiagnosticsResult(
+        StringBuilder sb,
+        DesktopObservationDiagnosticsResult result)
+    {
+        sb.AppendLine($"DiagnosticsStatus: {result.Status}");
 
         if (result.ObservationResult.StableObservation is { } observation)
         {
@@ -168,8 +266,6 @@ public partial class M3DiagnosticsWindow : Window
                 }
                 break;
         }
-
-        return sb.ToString();
     }
 
     private static void AppendBaselineIds(
