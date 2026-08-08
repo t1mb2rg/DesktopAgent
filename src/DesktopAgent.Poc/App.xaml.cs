@@ -37,18 +37,32 @@ public partial class App : System.Windows.Application
 
         var enableM3DesktopSurfaces = true;
         var enableWindowsAppNotifications = true;
+        var m3AutomaticAcceptance = M3AutomaticAcceptanceOptions.Disabled;
 
 #if DEBUG
         AcceptanceFaultInjectionOptions acceptanceFaultOptions;
         try
         {
             acceptanceFaultOptions = AcceptanceFaultInjectionOptions.FromEnvironment();
+            m3AutomaticAcceptance = M3AutomaticAcceptanceOptions.FromEnvironment();
         }
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"M2 acceptance fault injection 配置无效，应用将 fail-closed 退出。\n\n{ex.Message}",
-                "DesktopAgent - Fault Injection 配置错误",
+                "Acceptance 配置无效，应用将 fail-closed 退出。\n\n" + ex.Message,
+                "DesktopAgent - Acceptance 配置错误",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            Shutdown(-1);
+            return;
+        }
+
+        if (acceptanceFaultOptions.IsEnabled && m3AutomaticAcceptance.IsEnabled)
+        {
+            MessageBox.Show(
+                "M2 Writer fault injection 与 M3 unattended automatic acceptance 不能在同一进程同时启用。\n\n"
+                + "请清除其中一组 DESKTOPAGENT_* acceptance 环境变量后重新启动。",
+                "DesktopAgent - Acceptance 模式冲突",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(-1);
@@ -72,6 +86,28 @@ public partial class App : System.Windows.Application
                 "DesktopAgent - M2 Acceptance Fault Injection",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
+        }
+
+        if (m3AutomaticAcceptance.IsEnabled)
+        {
+            var answer = MessageBox.Show(
+                "M3 AUTOMATIC ACCEPTANCE ARMED\n\n"
+                + "本次 Debug 进程允许 unattended REAL desktop writes。\n"
+                + "这不是普通 DesktopAgent 运行模式。\n\n"
+                + m3AutomaticAcceptance.Describe() + "\n\n"
+                + "启动后 RequestedMode 仍默认为 Suggestion。"
+                + "只有你随后从 tray 明确选择 Automatic，自动执行链才可能进入真实 M2 Coordinator / Writer。\n\n"
+                + "确认本次进程用于受控实机验收并继续？",
+                "DesktopAgent - M3 UNATTENDED WRITE ACCEPTANCE",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (answer != MessageBoxResult.Yes)
+            {
+                Shutdown(-1);
+                return;
+            }
         }
 #endif
 
@@ -174,13 +210,20 @@ public partial class App : System.Windows.Application
                 services.AddSingleton<DesktopLayoutSuggestionPipeline>();
                 services.AddSingleton<M3SuggestionMonitoringCoordinator>();
 
-                // M3-B05/B06 automation composition。
-                // 普通 PoC 永远使用 M3AutomationPoCDefaults 的 provisional-closed gate。
+                // 普通 PoC 使用 provisional-closed gate；只有 Debug-only M3 acceptance 配置
+                // 通过环境变量武装 + 启动确认后，本次进程才使用 ValidatedOpen。
                 services.AddSingleton(M3AutomationPoCDefaults.RuntimeSettings);
+                services.AddSingleton(m3AutomaticAcceptance);
                 services.AddSingleton(sp =>
-                    M3AutomationPoCDefaults.CreateRuntimePolicy(
-                        sp.GetRequiredService<TimeProvider>()));
-                services.AddSingleton(M3AutomationPoCDefaults.RiskSettings);
+                    m3AutomaticAcceptance.IsEnabled
+                        ? m3AutomaticAcceptance.CreateValidatedRuntimePolicy(
+                            sp.GetRequiredService<TimeProvider>())
+                        : M3AutomationPoCDefaults.CreateRuntimePolicy(
+                            sp.GetRequiredService<TimeProvider>()));
+                services.AddSingleton(
+                    m3AutomaticAcceptance.IsEnabled
+                        ? m3AutomaticAcceptance.RiskSettings
+                        : M3AutomationPoCDefaults.RiskSettings);
                 services.AddSingleton<DesktopAutomationCandidateRiskPolicy>();
                 services.AddSingleton<IDesktopAutomationCandidateRiskPolicy>(sp =>
                     sp.GetRequiredService<DesktopAutomationCandidateRiskPolicy>());
