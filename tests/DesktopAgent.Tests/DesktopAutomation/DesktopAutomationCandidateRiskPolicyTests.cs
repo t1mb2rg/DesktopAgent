@@ -101,20 +101,15 @@ public sealed class DesktopAutomationCandidateRiskPolicyTests
     [Fact]
     public void RiskEvidence_DoesNotExposeCandidateOrExecutionPlan()
     {
-        var propertyTypes = typeof(DesktopAutomationCandidateRiskEvidence)
+        var properties = typeof(DesktopAutomationCandidateRiskEvidence)
             .GetProperties()
-            .Select(property => property.PropertyType)
-            .ToArray();
+            .ToDictionary(property => property.Name, property => property.PropertyType);
 
-        Assert.Equal(
-            new[]
-            {
-                typeof(Guid),
-                typeof(int),
-                typeof(int),
-                typeof(bool),
-            },
-            propertyTypes);
+        Assert.Equal(4, properties.Count);
+        Assert.Equal(typeof(Guid), properties[nameof(DesktopAutomationCandidateRiskEvidence.SuggestionId)]);
+        Assert.Equal(typeof(int), properties[nameof(DesktopAutomationCandidateRiskEvidence.MoveRequiredCount)]);
+        Assert.Equal(typeof(int), properties[nameof(DesktopAutomationCandidateRiskEvidence.ExecutionStepCount)]);
+        Assert.Equal(typeof(bool), properties[nameof(DesktopAutomationCandidateRiskEvidence.UsesTemporaryStaging)]);
     }
 
     [Fact]
