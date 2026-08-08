@@ -27,7 +27,7 @@ public sealed record M3ReadOnlyMonitoringStartResult(
 /// 每次 Start 都创建新的 batcher / processor / pump / FileSystemWatcher source，
 /// 因此 Stop 后可以重新 Start；会话内 baseline 仍由共享 DiagnosticsRunner 保持。
 /// </summary>
-public sealed class M3ReadOnlyMonitoringSession : IAsyncDisposable
+public sealed class M3ReadOnlyMonitoringSession : IDisposable
 {
     private readonly DesktopObservationDiagnosticsRunner _runner;
     private readonly DesktopObservationHintBatchSettings _hintBatchSettings;
@@ -38,6 +38,7 @@ public sealed class M3ReadOnlyMonitoringSession : IAsyncDisposable
     private CancellationTokenSource? _pumpCts;
     private Task? _pumpLifetimeTask;
     private int _isRunning;
+    private int _disposeStarted;
     private string? _lastPumpFault;
 
     public event Action<DesktopObservationTriggeredRun>? RunCompleted;
@@ -58,9 +59,17 @@ public sealed class M3ReadOnlyMonitoringSession : IAsyncDisposable
     public async Task<M3ReadOnlyMonitoringStartResult> StartAsync(
         CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(
+            Volatile.Read(ref _disposeStarted) != 0,
+            this);
+
         await _lifecycleGate.WaitAsync(ct);
         try
         {
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref _disposeStarted) != 0,
+                this);
+
             if (IsRunning)
             {
                 return new M3ReadOnlyMonitoringStartResult(
@@ -160,6 +169,9 @@ public sealed class M3ReadOnlyMonitoringSession : IAsyncDisposable
 
     public async Task StopAsync()
     {
+        if (Volatile.Read(ref _disposeStarted) != 0)
+            return;
+
         await _lifecycleGate.WaitAsync();
         try
         {
@@ -171,10 +183,21 @@ public sealed class M3ReadOnlyMonitoringSession : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
-        await StopAsync();
-        _lifecycleGate.Dispose();
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+            return;
+
+        _lifecycleGate.Wait();
+        try
+        {
+            StopCoreAsync().GetAwaiter().GetResult();
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+            _lifecycleGate.Dispose();
+        }
     }
 
     private async Task ObservePumpLifetimeAsync(
