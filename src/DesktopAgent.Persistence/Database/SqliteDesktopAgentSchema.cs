@@ -8,7 +8,7 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 6;
+    internal const int CurrentVersion = 7;
 
     public static void Initialize(SqliteConnection connection, CancellationToken cancellationToken)
     {
@@ -31,6 +31,7 @@ internal static class SqliteDesktopAgentSchema
             EnsureV4Schema(connection, tx);
             EnsureV5Schema(connection, tx);
             EnsureV6Schema(connection, tx);
+            EnsureV7Schema(connection, tx);
 
             if (version < CurrentVersion)
             {
@@ -312,6 +313,51 @@ internal static class SqliteDesktopAgentSchema
 
             CREATE INDEX IF NOT EXISTS idx_classification_evidence_observed_desc
                 ON desktop_classification_evidence (observed_at_utc DESC, evidence_id ASC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV7Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS desktop_pending_actions (
+                pending_action_id    TEXT PRIMARY KEY NOT NULL,
+                created_at_utc       TEXT NOT NULL,
+                template_id          TEXT NULL,
+                stable_id            TEXT NOT NULL CHECK(stable_id != '' AND LENGTH(stable_id) <= 2048),
+                display_name         TEXT NOT NULL CHECK(TRIM(display_name) != '' AND LENGTH(display_name) <= 512),
+                file_extension       TEXT NULL,
+                item_kind            INTEGER NOT NULL CHECK(item_kind IN (0,1,2,3,4)),
+                is_system_item       INTEGER NOT NULL CHECK(is_system_item IN (0,1)),
+                is_file_system_item  INTEGER NOT NULL CHECK(is_file_system_item IN (0,1)),
+                proposed_category    TEXT NULL,
+                proposed_zone_id     TEXT NULL,
+                proposed_confidence  REAL NULL,
+                proposed_source      INTEGER NULL,
+                explanation          TEXT NULL,
+                authorization_basis  INTEGER NOT NULL CHECK(authorization_basis IN (0,1,2,3,4)),
+                queue_reason         INTEGER NOT NULL CHECK(queue_reason IN (10,11,20,21,22,23)),
+                CHECK(file_extension IS NULL OR
+                      (LENGTH(file_extension) > 1 AND SUBSTR(file_extension, 1, 1) = '.')),
+                CHECK(proposed_zone_id IS NULL OR template_id IS NOT NULL),
+                CHECK(
+                    (proposed_category IS NULL AND proposed_zone_id IS NULL AND
+                     proposed_confidence IS NULL AND proposed_source IS NULL AND explanation IS NULL)
+                    OR
+                    (proposed_category IS NOT NULL AND TRIM(proposed_category) != '' AND
+                     LENGTH(proposed_category) <= 128 AND
+                     proposed_confidence IS NOT NULL AND
+                     proposed_confidence >= 0.0 AND proposed_confidence <= 1.0 AND
+                     proposed_source IS NOT NULL AND proposed_source IN (0,1,2,3) AND
+                     explanation IS NOT NULL AND TRIM(explanation) != '' AND
+                     LENGTH(explanation) <= 2048)
+                )
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pending_actions_created_at_utc
+                ON desktop_pending_actions (created_at_utc ASC, pending_action_id ASC);
         ";
         cmd.ExecuteNonQuery();
     }
