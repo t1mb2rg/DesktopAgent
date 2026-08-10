@@ -64,6 +64,12 @@ public sealed record DesktopAutomationPolicyDecision(
 /// </summary>
 public static class DesktopAutomationPolicy
 {
+    /// <summary>
+    /// v1.0 产品默认自动化模式。
+    /// Settings / first-run 后续必须显式使用该合同，而不是依赖 enum 的零值。
+    /// </summary>
+    public const DesktopAutomationMode DefaultMode = DesktopAutomationMode.Assisted;
+
     public static DesktopAutomationPolicyDecision Resolve(
         DesktopAutomationPolicyContext context)
     {
