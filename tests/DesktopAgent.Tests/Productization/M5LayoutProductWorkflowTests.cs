@@ -77,8 +77,8 @@ public sealed class M5LayoutProductWorkflowTests
                     ItemKind.File,
                     new PixelPoint(0, 0),
                     "DISPLAY1",
-                    isSystemItem: false,
-                    isFileSystemItem: true),
+                    IsSystemItem: false,
+                    IsFileSystemItem: true),
             },
             ConnectionMethod.FindWindowSW,
             TimeSpan.FromMilliseconds(5));
