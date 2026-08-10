@@ -1,4 +1,5 @@
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 
 namespace DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 
@@ -64,7 +65,7 @@ public static class DesktopLayoutPresetFactory
             name,
             targetDisplayBinding ?? TargetDisplayBinding.ForPrimaryDisplay(),
             CreateZones(preset),
-            Core.DesktopLayouts.Templates.Rules.DesktopLayoutIconRuleSet.Empty(templateId));
+            DesktopLayoutIconRuleSet.Empty(templateId));
     }
 
     private static DesktopLayoutZone Zone(
