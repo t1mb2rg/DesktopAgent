@@ -23,6 +23,7 @@ public sealed class M3TrayController : IDisposable
     private readonly M3SuggestionNotificationCoordinator _notificationCoordinator;
     private readonly DesktopAutomationRuntimePolicy _automationRuntime;
     private readonly M3AutomaticExecutionTriggerCoordinator _automaticTrigger;
+    private readonly M3TrayWindowLifecycleState _windowLifecycle = new();
 
     private System.Windows.Forms.NotifyIcon? _notifyIcon;
     private System.Windows.Forms.ContextMenuStrip? _menu;
@@ -39,7 +40,6 @@ public sealed class M3TrayController : IDisposable
     private DispatcherTimer? _statusTimer;
 
     private bool _started;
-    private bool _exitRequested;
     private bool _monitoringOperation;
     private int _disposeStarted;
 
@@ -80,10 +80,11 @@ public sealed class M3TrayController : IDisposable
             _diagnosticsWindow.Owner = _mainWindow;
 
         _mainWindow.Closing += OnMainWindowClosing;
+        _mainWindow.Closed += OnMainWindowClosed;
         _diagnosticsWindow.Closing += OnDiagnosticsWindowClosing;
 
         var openMainItem = new System.Windows.Forms.ToolStripMenuItem("打开 DesktopAgent");
-        openMainItem.Click += (_, _) => RunOnDispatcher(OpenMainWindow);
+        openMainItem.Click += (_, _) => RunOnDispatcher(TryOpenMainWindowFromTray);
 
         var openDiagnosticsItem = new System.Windows.Forms.ToolStripMenuItem("打开 M3 诊断");
         openDiagnosticsItem.Click += (_, _) => RunOnDispatcher(OpenDiagnosticsWindow);
@@ -140,7 +141,7 @@ public sealed class M3TrayController : IDisposable
             ContextMenuStrip = _menu,
             Visible = true,
         };
-        _notifyIcon.DoubleClick += (_, _) => RunOnDispatcher(OpenMainWindow);
+        _notifyIcon.DoubleClick += (_, _) => RunOnDispatcher(TryOpenMainWindowFromTray);
 
         _automaticTrigger.CycleCompleted += OnAutomaticCycleCompleted;
         _automaticTrigger.TriggerFaulted += OnAutomaticTriggerFaulted;
@@ -182,7 +183,7 @@ public sealed class M3TrayController : IDisposable
         _ = sender;
 
         // MainWindow 自己的 M2 安全 OnClosing 先执行。
-        if (_exitRequested || e.Cancel)
+        if (_windowLifecycle.IsExitRequested || e.Cancel)
             return;
 
         e.Cancel = true;
@@ -190,10 +191,27 @@ public sealed class M3TrayController : IDisposable
         RefreshStatus();
     }
 
+    private void OnMainWindowClosed(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+
+        // WPF Window.Close 是不可逆边界：Closed 后同一实例永远不能再 Show。
+        _windowLifecycle.MarkMainWindowClosed();
+
+        if (_notifyIcon is not null)
+            _notifyIcon.Visible = false;
+
+        // 正常 tray Exit 会在 OnExitClick 中继续 Shutdown；若出现任何其他真实 Close，
+        // 也把它视为终止事件，避免留下持有已关闭 MainWindow 的 zombie tray。
+        if (!_windowLifecycle.IsExitRequested)
+            System.Windows.Application.Current?.Shutdown();
+    }
+
     private void OnDiagnosticsWindowClosing(object? sender, CancelEventArgs e)
     {
         _ = sender;
-        if (_exitRequested || e.Cancel)
+        if (_windowLifecycle.IsExitRequested || e.Cancel)
             return;
 
         // 只隐藏仪表盘，不停止 monitoring / automation trigger。
@@ -206,8 +224,13 @@ public sealed class M3TrayController : IDisposable
     {
         _ = sender;
         _ = e;
-        if (_monitoringOperation || Volatile.Read(ref _disposeStarted) != 0)
+        if (_monitoringOperation
+            || _windowLifecycle.IsExitRequested
+            || _windowLifecycle.IsMainWindowClosed
+            || Volatile.Read(ref _disposeStarted) != 0)
+        {
             return;
+        }
 
         _monitoringOperation = true;
         RefreshStatus();
@@ -233,6 +256,9 @@ public sealed class M3TrayController : IDisposable
     {
         RunOnDispatcher(() =>
         {
+            if (_windowLifecycle.IsExitRequested || _windowLifecycle.IsMainWindowClosed)
+                return;
+
             try
             {
                 _automationRuntime.SetRequestedMode(mode);
@@ -253,6 +279,9 @@ public sealed class M3TrayController : IDisposable
         _ = e;
         RunOnDispatcher(() =>
         {
+            if (_windowLifecycle.IsExitRequested || _windowLifecycle.IsMainWindowClosed)
+                return;
+
             try
             {
                 if (_automationRuntime.Snapshot.IsPaused)
@@ -280,6 +309,9 @@ public sealed class M3TrayController : IDisposable
         _ = e;
         RunOnDispatcher(() =>
         {
+            if (_windowLifecycle.IsExitRequested || _windowLifecycle.IsMainWindowClosed)
+                return;
+
             if (!_automationRuntime.Snapshot.IsFuseTripped)
                 return;
 
@@ -311,10 +343,9 @@ public sealed class M3TrayController : IDisposable
     {
         _ = sender;
         _ = e;
-        if (_exitRequested || Volatile.Read(ref _disposeStarted) != 0)
+        if (Volatile.Read(ref _disposeStarted) != 0 || !_windowLifecycle.TryBeginExit())
             return;
 
-        _exitRequested = true;
         RefreshStatus();
 
         try
@@ -335,24 +366,37 @@ public sealed class M3TrayController : IDisposable
             }
 
             // 让 MainWindow 现有 M2 Closing 安全检查真正运行。
-            OpenMainWindow();
-            _mainWindow.Close();
-            if (_mainWindow.IsLoaded)
+            // ExitRequested 阶段禁止普通 tray Open，但 exit 自己仍可把尚未 Closed 的窗口拉回前台。
+            if (!EnsureMainWindowVisibleForExit())
             {
-                _exitRequested = false;
+                CompleteTerminalShutdown();
+                return;
+            }
+
+            _mainWindow.Close();
+
+            // Closed 事件是唯一可靠的不可逆提交点。若没触发，说明 M2 Closing gate 取消了关闭，
+            // 此时才允许回滚 exit request 并恢复 tray 运行。
+            if (!_windowLifecycle.IsMainWindowClosed)
+            {
+                _windowLifecycle.CancelExit();
                 _automaticTrigger.Start();
                 RefreshStatus();
                 return;
             }
 
-            if (_notifyIcon is not null)
-                _notifyIcon.Visible = false;
-
-            System.Windows.Application.Current.Shutdown();
+            CompleteTerminalShutdown();
         }
         catch (Exception ex)
         {
-            _exitRequested = false;
+            // 一旦 MainWindow 已 Closed，就绝不能把 exit 状态回滚成可从 tray 重新 Show。
+            if (_windowLifecycle.IsMainWindowClosed)
+            {
+                CompleteTerminalShutdown();
+                return;
+            }
+
+            _windowLifecycle.CancelExit();
             try
             {
                 _automaticTrigger.Start();
@@ -393,7 +437,24 @@ public sealed class M3TrayController : IDisposable
     private void OnAutomaticTriggerFaulted(string fault) =>
         RunOnDispatcher(() => ShowTrayWarning("Automatic trigger 异常", fault));
 
-    private void OpenMainWindow()
+    private void TryOpenMainWindowFromTray()
+    {
+        if (!_windowLifecycle.CanOpenFromTray)
+            return;
+
+        ShowAndActivateMainWindow();
+    }
+
+    private bool EnsureMainWindowVisibleForExit()
+    {
+        if (!_windowLifecycle.CanShowMainWindowForExit)
+            return false;
+
+        ShowAndActivateMainWindow();
+        return true;
+    }
+
+    private void ShowAndActivateMainWindow()
     {
         if (!_mainWindow.IsVisible)
             _mainWindow.Show();
@@ -406,7 +467,10 @@ public sealed class M3TrayController : IDisposable
 
     private void OpenDiagnosticsWindow()
     {
-        OpenMainWindow();
+        if (!_windowLifecycle.CanOpenFromTray)
+            return;
+
+        ShowAndActivateMainWindow();
 
         if (!_diagnosticsWindow.IsVisible)
             _diagnosticsWindow.Show();
@@ -415,6 +479,14 @@ public sealed class M3TrayController : IDisposable
             _diagnosticsWindow.WindowState = WindowState.Normal;
 
         _diagnosticsWindow.Activate();
+    }
+
+    private void CompleteTerminalShutdown()
+    {
+        if (_notifyIcon is not null)
+            _notifyIcon.Visible = false;
+
+        System.Windows.Application.Current?.Shutdown();
     }
 
     private void RefreshStatus()
@@ -472,7 +544,9 @@ public sealed class M3TrayController : IDisposable
             _toggleMonitoringItem.Text = monitoring
                 ? "暂停后台监听"
                 : "恢复后台监听";
-            _toggleMonitoringItem.Enabled = !_monitoringOperation && !_exitRequested;
+            _toggleMonitoringItem.Enabled = !_monitoringOperation
+                && !_windowLifecycle.IsExitRequested
+                && !_windowLifecycle.IsMainWindowClosed;
         }
 
         if (_manualModeItem is not null)
@@ -487,11 +561,16 @@ public sealed class M3TrayController : IDisposable
             _toggleAutomationPauseItem.Text = automation.IsPaused
                 ? "恢复自动整理"
                 : "暂停自动整理";
-            _toggleAutomationPauseItem.Enabled = !_exitRequested;
+            _toggleAutomationPauseItem.Enabled = !_windowLifecycle.IsExitRequested
+                && !_windowLifecycle.IsMainWindowClosed;
         }
 
         if (_resetFuseItem is not null)
-            _resetFuseItem.Enabled = automation.IsFuseTripped && !_exitRequested;
+        {
+            _resetFuseItem.Enabled = automation.IsFuseTripped
+                && !_windowLifecycle.IsExitRequested
+                && !_windowLifecycle.IsMainWindowClosed;
+        }
 
         var suggestionLabel = suggestion.State switch
         {
@@ -554,6 +633,7 @@ public sealed class M3TrayController : IDisposable
         }
 
         _mainWindow.Closing -= OnMainWindowClosing;
+        _mainWindow.Closed -= OnMainWindowClosed;
         _diagnosticsWindow.Closing -= OnDiagnosticsWindowClosing;
 
         if (_notifyIcon is not null)
