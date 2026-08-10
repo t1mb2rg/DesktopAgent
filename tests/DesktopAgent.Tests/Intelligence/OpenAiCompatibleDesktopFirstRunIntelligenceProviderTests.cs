@@ -107,7 +107,7 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
     }
 
     [Fact]
-    public async Task Provider_BrokenSemanticReferencesAndHints_AreRejectedTogether()
+    public async Task Provider_BrokenSemanticPayloads_AreRejectedTogether()
     {
         var responses = new Queue<string>(new[]
         {
@@ -123,6 +123,16 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
                 assignmentItemRef: "item-0001",
                 existingZoneRef: "existing-zone-0001",
                 placementHint: "pixel-perfect-left-ish"),
+            """
+            {
+              "intent_summary": "用户希望按用途整理桌面。",
+              "desktop_summary": "桌面主要是开发项目。",
+              "categories": [null],
+              "zones": [],
+              "assignments": [],
+              "questions": []
+            }
+            """,
         });
 
         using var httpClient = CreateClient((_, _) =>
@@ -132,12 +142,16 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
             new[] { CreateFacts("stable-local", "Visual Studio Code.lnk", ItemKind.Shortcut, ".lnk") },
             new[] { new IntelligenceZoneOption(Guid.NewGuid(), "开发") });
 
-        var unknownItem = await provider.UnderstandAsync(request);
-        var unknownExistingZone = await provider.UnderstandAsync(request);
-        var invalidHint = await provider.UnderstandAsync(request);
+        var results = new[]
+        {
+            await provider.UnderstandAsync(request),
+            await provider.UnderstandAsync(request),
+            await provider.UnderstandAsync(request),
+            await provider.UnderstandAsync(request),
+        };
 
         Assert.All(
-            new[] { unknownItem, unknownExistingZone, invalidHint },
+            results,
             result =>
             {
                 Assert.Equal(IntelligenceProviderStatus.InvalidResponse, result.Status);
