@@ -18,7 +18,7 @@ public sealed class DesktopItemContentExcerpt
         bool wasTruncated)
     {
         if (string.IsNullOrWhiteSpace(sourceExtension) ||
-            !sourceExtension.StartsWith('.', StringComparison.Ordinal) ||
+            !sourceExtension.StartsWith(".", StringComparison.Ordinal) ||
             sourceExtension.Length == 1)
         {
             throw new ArgumentException("SourceExtension 必须形如 .txt。", nameof(sourceExtension));
