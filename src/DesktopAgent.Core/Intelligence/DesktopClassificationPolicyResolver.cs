@@ -54,6 +54,7 @@ public sealed class DesktopClassificationPolicyResult
     public Guid? CategoryRuleId { get; }
     public Guid? TargetZoneRuleId { get; }
     public bool TargetZoneOverriddenByLayoutRule { get; }
+    public bool RequiresUserConfirmation { get; }
     public IReadOnlyList<Guid> MatchedRuleIds => _matchedRuleIds;
     public IReadOnlyList<DesktopClassificationPolicyConflict> Conflicts => _conflicts;
     public bool HasConflict => _conflicts.Count > 0;
@@ -63,6 +64,7 @@ public sealed class DesktopClassificationPolicyResult
         Guid? categoryRuleId,
         Guid? targetZoneRuleId,
         bool targetZoneOverriddenByLayoutRule,
+        bool requiresUserConfirmation,
         IEnumerable<Guid> matchedRuleIds,
         IEnumerable<DesktopClassificationPolicyConflict> conflicts)
     {
@@ -70,6 +72,7 @@ public sealed class DesktopClassificationPolicyResult
         CategoryRuleId = categoryRuleId;
         TargetZoneRuleId = targetZoneRuleId;
         TargetZoneOverriddenByLayoutRule = targetZoneOverriddenByLayoutRule;
+        RequiresUserConfirmation = requiresUserConfirmation;
         _matchedRuleIds = Array.AsReadOnly(matchedRuleIds.ToArray());
         _conflicts = Array.AsReadOnly(conflicts.ToArray());
     }
@@ -131,16 +134,14 @@ public static class DesktopClassificationPolicyResolver
                 throw new ArgumentException("AI Suggestion 指向当前布局不存在的 Zone。", nameof(aiSuggestion));
         }
 
-        var candidates = new List<PolicyCandidate>();
-        var matchedRuleIds = new List<Guid>();
+        var candidates = new List<PolicyCandidate>(copiedRules.Length + (aiSuggestion is null ? 0 : 1));
+        var matchedRuleIds = new List<Guid>(copiedRules.Length);
 
         foreach (var rule in copiedRules)
         {
             if (!rule.IsEnabled || !rule.Condition.Matches(item))
                 continue;
 
-            // 只让真正命中当前项目的悬空 Zone 规则阻断本轮分类。
-            // 其他项目的陈旧 Zone 规则不应冻结整个 Policy Engine。
             if (rule.TargetZoneId.HasValue && !zoneIds.Contains(rule.TargetZoneId.Value))
             {
                 throw new ArgumentException(
@@ -159,7 +160,7 @@ public static class DesktopClassificationPolicyResolver
         if (matchingLayoutRule?.Kind == DesktopLayoutIconRuleKind.ZoneOverride)
             layoutZoneOverride = PolicyCandidate.FromLayoutZoneOverride(matchingLayoutRule);
 
-        var conflicts = new List<DesktopClassificationPolicyConflict>();
+        var conflicts = new List<DesktopClassificationPolicyConflict>(capacity: 2);
         var categoryWinner = SelectCategoryWinner(candidates, conflicts);
         var zoneWinner = SelectZoneWinner(candidates, layoutZoneOverride, conflicts);
 
@@ -172,6 +173,7 @@ public static class DesktopClassificationPolicyResolver
                 null,
                 zoneWinner?.RuleId,
                 zoneWinner?.IsLayoutZoneOverride == true,
+                conflicts.Count > 0,
                 matchedRuleIds,
                 conflicts);
         }
@@ -183,19 +185,18 @@ public static class DesktopClassificationPolicyResolver
 
         var explanation = BuildExplanation(categoryWinner, zoneWinner, conflicts.Count > 0);
         var decision = new DesktopItemClassificationDecision(
-            item.StableId,
             categoryWinner.Category!,
             zoneWinner?.TargetZoneId,
             categoryWinner.Confidence,
             categoryWinner.Source,
-            explanation,
-            requiresUserConfirmation);
+            explanation);
 
         return new DesktopClassificationPolicyResult(
             decision,
             categoryWinner.RuleId,
             zoneWinner?.RuleId,
             zoneWinner?.IsLayoutZoneOverride == true,
+            requiresUserConfirmation,
             matchedRuleIds,
             conflicts);
     }
@@ -356,7 +357,7 @@ public static class DesktopClassificationPolicyResolver
                 null,
                 rule.TargetZoneId,
                 1d,
-                DesktopItemClassificationSource.ExplicitUserRule,
+                DesktopItemClassificationSource.UserRule,
                 -1,
                 int.MaxValue,
                 int.MaxValue,
