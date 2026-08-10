@@ -29,7 +29,7 @@ public sealed class OpenAiCompatibleProviderOptions
             throw new ArgumentException("SecretReference 不能为空。", nameof(secretReference));
 
         var resolvedTimeout = timeout ?? TimeSpan.FromSeconds(30);
-        if (resolvedTimeout <= TimeSpan.Zero || resolvedTimeout == Timeout.InfiniteTimeSpan)
+        if (resolvedTimeout <= TimeSpan.Zero || resolvedTimeout == System.Threading.Timeout.InfiniteTimeSpan)
             throw new ArgumentOutOfRangeException(nameof(timeout), "Timeout 必须大于 0 且不能无限等待。");
 
         Model = model;
