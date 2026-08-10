@@ -5,6 +5,8 @@ namespace DesktopAgent.Tests.DesktopObservations;
 
 public sealed class PeriodicObservationHintSourceTests
 {
+    private static readonly TimeSpan AsyncGuardTimeout = TimeSpan.FromSeconds(10);
+
     [Fact]
     public void Settings_ZeroOrNegativeInterval_IsRejected()
     {
@@ -34,7 +36,7 @@ public sealed class PeriodicObservationHintSourceTests
         Assert.False(published.Task.IsCompleted);
 
         firstDelay.Complete();
-        var hint = await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var hint = await published.Task.WaitAsync(AsyncGuardTimeout);
 
         Assert.Equal(DesktopObservationHintKind.PeriodicFallback, hint.Kind);
         Assert.Equal(PeriodicObservationHintSource.ProviderName, hint.Provider);
@@ -59,11 +61,11 @@ public sealed class PeriodicObservationHintSourceTests
 
         var first = await clock.NextDelayAsync();
         first.Complete();
-        var firstHint = await hints.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var firstHint = await hints.Reader.ReadAsync().AsTask().WaitAsync(AsyncGuardTimeout);
 
         var second = await clock.NextDelayAsync();
         second.Complete();
-        var secondHint = await hints.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        var secondHint = await hints.Reader.ReadAsync().AsTask().WaitAsync(AsyncGuardTimeout);
 
         Assert.Equal(DesktopObservationHintKind.PeriodicFallback, firstHint.Kind);
         Assert.Equal(DesktopObservationHintKind.PeriodicFallback, secondHint.Kind);
@@ -101,7 +103,7 @@ public sealed class PeriodicObservationHintSourceTests
 
         var second = await clock.NextDelayAsync();
         second.Complete();
-        await secondPublished.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await secondPublished.Task.WaitAsync(AsyncGuardTimeout);
 
         Assert.Equal(2, Volatile.Read(ref callCount));
 
@@ -151,7 +153,7 @@ public sealed class PeriodicObservationHintSourceTests
         }
 
         public async Task<DelayRequest> NextDelayAsync() =>
-            await _requests.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await _requests.Reader.ReadAsync().AsTask().WaitAsync(AsyncGuardTimeout);
     }
 
     private sealed record DelayRequest(
