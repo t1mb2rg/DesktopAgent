@@ -129,6 +129,12 @@ confidence must be between 0 and 1 inclusive.
                 IntelligenceProviderStatus.Unavailable,
                 $"Provider 网络请求失败：{ex.Message}");
         }
+        catch (IOException ex)
+        {
+            return IntelligenceProviderResult.Failure(
+                IntelligenceProviderStatus.Unavailable,
+                $"Provider 响应流读取失败：{ex.Message}");
+        }
     }
 
     private HttpRequestMessage BuildRequestMessage(
