@@ -42,8 +42,14 @@ public sealed class OpenAiCompatibleDesktopNaturalLanguageRuleProviderTests
             .GetProperty("messages")[1]
             .GetProperty("content")
             .GetString()!;
+        const string inputPrefix = "Draft one DesktopAgent classification rule from this request. Input JSON:\n";
+        Assert.StartsWith(inputPrefix, userPrompt, StringComparison.Ordinal);
         Assert.DoesNotContain(reference.StableId, userPrompt, StringComparison.Ordinal);
-        Assert.Contains("实验报告.pdf", userPrompt, StringComparison.Ordinal);
+
+        using var inputJson = JsonDocument.Parse(userPrompt[inputPrefix.Length..]);
+        var referenceItem = inputJson.RootElement.GetProperty("reference_item");
+        Assert.Equal("实验报告.pdf", referenceItem.GetProperty("display_name").GetString());
+        Assert.False(referenceItem.TryGetProperty("stable_id", out _));
 
         var confirmed = draft.Confirm(Guid.NewGuid());
         Assert.Equal(DesktopClassificationRuleAuthority.ExplicitUser, confirmed.Authority);
