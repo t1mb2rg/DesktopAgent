@@ -1,3 +1,4 @@
+using DesktopAgent.Persistence.Automation;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
@@ -32,11 +33,11 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public async Task FreshDatabase_CreatesCompleteV6Schema()
+    public async Task FreshDatabase_CreatesCompleteV7Schema()
     {
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(6, ReadUserVersion(_dbPath));
+        Assert.Equal(7, ReadUserVersion(_dbPath));
 
         var expectedTables = new[]
         {
@@ -50,6 +51,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             "desktop_classification_rules",
             "desktop_user_category_zone_preferences",
             "desktop_classification_evidence",
+            "desktop_pending_actions",
         };
         foreach (var table in expectedTables)
             Assert.True(TableExists(_dbPath, table), $"缺少表 {table}");
@@ -62,15 +64,16 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             "idx_classification_rules_enabled_authority_priority",
             "idx_user_preferences_template_category",
             "idx_classification_evidence_observed_desc",
+            "idx_pending_actions_created_at_utc",
         };
         foreach (var index in expectedIndexes)
             Assert.True(IndexExists(_dbPath, index), $"缺少索引 {index}");
     }
 
     [Fact]
-    public async Task EveryStore_UsesSharedV6Initializer_AndRepeatedInitIsIdempotent()
+    public async Task EveryStore_UsesSharedV7Initializer_AndRepeatedInitIsIdempotent()
     {
-        var paths = Enumerable.Range(0, 5)
+        var paths = Enumerable.Range(0, 6)
             .Select(index => Path.Combine(_tempDir, $"store-{index}.db"))
             .ToArray();
 
@@ -94,11 +97,16 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         await profileStore.InitializeAsync();
         await profileStore.InitializeAsync();
 
+        var pendingStore = new SqliteDesktopPendingActionStore(paths[5]);
+        await pendingStore.InitializeAsync();
+        await pendingStore.InitializeAsync();
+
         foreach (var path in paths)
         {
-            Assert.Equal(6, ReadUserVersion(path));
+            Assert.Equal(7, ReadUserVersion(path));
             Assert.True(TableExists(path, "desktop_classification_rules"));
             Assert.True(TableExists(path, "desktop_classification_evidence"));
+            Assert.True(TableExists(path, "desktop_pending_actions"));
         }
     }
 
@@ -124,7 +132,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(6, ReadUserVersion(_dbPath));
+        Assert.Equal(7, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -171,7 +179,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutTemplateStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(6, ReadUserVersion(_dbPath));
+        Assert.Equal(7, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -225,7 +233,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutIconRuleStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(6, ReadUserVersion(_dbPath));
+        Assert.Equal(7, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -241,7 +249,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public async Task V5Upgrade_CreatesM4TablesAndPreservesExistingData()
+    public async Task V5Upgrade_CreatesM4AndM5TablesAndPreservesExistingData()
     {
         var bootstrap = new SqliteDesktopLayoutSnapshotStore(_dbPath);
         await bootstrap.InitializeAsync();
@@ -256,6 +264,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
                 VALUES
                     ('00000000-0000-0000-0000-000000000051',
                      '2026-08-10T00:00:00.0000000+00:00', NULL, 1, 1, 0);
+                DROP TABLE desktop_pending_actions;
                 DROP TABLE desktop_classification_evidence;
                 DROP TABLE desktop_user_category_zone_preferences;
                 DROP TABLE desktop_classification_rules;
@@ -266,13 +275,15 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         Assert.Equal(5, ReadUserVersion(_dbPath));
         Assert.False(TableExists(_dbPath, "desktop_classification_rules"));
+        Assert.False(TableExists(_dbPath, "desktop_pending_actions"));
 
         await new SqliteDesktopClassificationRuleStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(6, ReadUserVersion(_dbPath));
+        Assert.Equal(7, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "desktop_classification_rules"));
         Assert.True(TableExists(_dbPath, "desktop_user_category_zone_preferences"));
         Assert.True(TableExists(_dbPath, "desktop_classification_evidence"));
+        Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
 
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
@@ -282,6 +293,45 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             WHERE snapshot_id = '00000000-0000-0000-0000-000000000051';
         ";
         Assert.Equal(1L, (long)select.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task V6Upgrade_CreatesPendingQueueWithoutRewritingM4Data()
+    {
+        var bootstrap = new SqliteDesktopLayoutSnapshotStore(_dbPath);
+        await bootstrap.InitializeAsync();
+
+        using (var connection = OpenRawConnection(_dbPath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                INSERT INTO desktop_classification_rules
+                    (rule_id, name, stable_id, category,
+                     target_template_id, target_zone_id,
+                     authority, provenance, priority, is_enabled)
+                VALUES
+                    ('00000000-0000-0000-0000-000000000071',
+                     'keep-me', 'desktop:keep', 'Course',
+                     NULL, NULL, 0, 0, 0, 1);
+                DROP TABLE desktop_pending_actions;
+                PRAGMA user_version = 6;
+            ";
+            command.ExecuteNonQuery();
+        }
+
+        await new SqliteDesktopPendingActionStore(_dbPath).InitializeAsync();
+
+        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
+
+        using var upgraded = OpenRawConnection(_dbPath);
+        using var select = upgraded.CreateCommand();
+        select.CommandText = @"
+            SELECT name
+            FROM desktop_classification_rules
+            WHERE rule_id = '00000000-0000-0000-0000-000000000071';
+        ";
+        Assert.Equal("keep-me", (string)select.ExecuteScalar()!);
     }
 
     [Fact]
@@ -299,10 +349,11 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
                 .InitializeAsync().GetAwaiter().GetResult());
 
         Assert.Contains("99", ex.Message);
-        Assert.Contains("6", ex.Message);
+        Assert.Contains("7", ex.Message);
         Assert.Equal(99, ReadUserVersion(_dbPath));
         Assert.False(TableExists(_dbPath, "desktop_layout_snapshots"));
         Assert.False(TableExists(_dbPath, "desktop_classification_rules"));
+        Assert.False(TableExists(_dbPath, "desktop_pending_actions"));
     }
 
     [Fact]
