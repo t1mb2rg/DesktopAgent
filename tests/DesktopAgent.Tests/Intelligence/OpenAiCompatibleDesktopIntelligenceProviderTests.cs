@@ -99,10 +99,23 @@ public sealed class OpenAiCompatibleDesktopIntelligenceProviderTests
 
         var messages = root.GetProperty("messages");
         Assert.Equal(2, messages.GetArrayLength());
+
+        const string inputPrefix = "Classify this desktop item. Input JSON:\n";
         var userContent = messages[1].GetProperty("content").GetString()!;
-        Assert.Contains("实验报告.pdf", userContent, StringComparison.Ordinal);
-        Assert.Contains(zoneId.ToString(), userContent, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("stable-private-id", userContent, StringComparison.Ordinal);
+        Assert.StartsWith(inputPrefix, userContent, StringComparison.Ordinal);
+
+        using var inputJson = JsonDocument.Parse(userContent[inputPrefix.Length..]);
+        var inputRoot = inputJson.RootElement;
+        var item = inputRoot.GetProperty("item");
+        Assert.Equal("实验报告.pdf", item.GetProperty("display_name").GetString());
+        Assert.Equal(".pdf", item.GetProperty("file_extension").GetString());
+        Assert.Equal(nameof(ItemKind.File), item.GetProperty("item_kind").GetString());
+        Assert.False(item.TryGetProperty("stable_id", out _));
+
+        var zones = inputRoot.GetProperty("zones");
+        Assert.Single(zones.EnumerateArray());
+        Assert.Equal(zoneId, zones[0].GetProperty("zone_id").GetGuid());
+        Assert.Equal("开发", zones[0].GetProperty("name").GetString());
     }
 
     [Fact]
