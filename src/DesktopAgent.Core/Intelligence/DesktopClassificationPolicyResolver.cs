@@ -82,6 +82,7 @@ public sealed class DesktopClassificationPolicyResult
 public static class DesktopClassificationPolicyResolver
 {
     public const int MaxRulesPerResolution = 4096;
+    public const int MaxZonesPerResolution = 256;
 
     public static DesktopClassificationPolicyResult Resolve(
         DesktopItemFacts item,
@@ -102,23 +103,12 @@ public static class DesktopClassificationPolicyResolver
         if (copiedRules.Select(static rule => rule.RuleId).Distinct().Count() != copiedRules.Length)
             throw new ArgumentException("Rules 不能包含重复 RuleId。", nameof(rules));
 
-        var zoneIds = new HashSet<Guid>();
-        foreach (var zoneId in validZoneIds)
-        {
-            if (zoneId == Guid.Empty)
-                throw new ArgumentException("validZoneIds 不能包含 Guid.Empty。", nameof(validZoneIds));
-            zoneIds.Add(zoneId);
-        }
-
-        foreach (var rule in copiedRules)
-        {
-            if (rule.IsEnabled && rule.TargetZoneId.HasValue && !zoneIds.Contains(rule.TargetZoneId.Value))
-            {
-                throw new ArgumentException(
-                    $"启用规则 {rule.RuleId} 指向当前布局不存在的 TargetZoneId {rule.TargetZoneId}。",
-                    nameof(rules));
-            }
-        }
+        var copiedZoneIds = validZoneIds.Take(MaxZonesPerResolution + 1).ToArray();
+        if (copiedZoneIds.Length > MaxZonesPerResolution)
+            throw new ArgumentOutOfRangeException(nameof(validZoneIds), $"单次 Policy 解析最多支持 {MaxZonesPerResolution} 个 Zone。");
+        if (copiedZoneIds.Any(static zoneId => zoneId == Guid.Empty))
+            throw new ArgumentException("validZoneIds 不能包含 Guid.Empty。", nameof(validZoneIds));
+        var zoneIds = copiedZoneIds.ToHashSet();
 
         if (matchingLayoutRule is not null)
         {
@@ -133,8 +123,13 @@ public static class DesktopClassificationPolicyResolver
             }
         }
 
-        if (aiSuggestion?.SuggestedZoneId is Guid aiZoneId && !zoneIds.Contains(aiZoneId))
-            throw new ArgumentException("AI Suggestion 指向当前布局不存在的 Zone。", nameof(aiSuggestion));
+        if (aiSuggestion is not null)
+        {
+            if (aiSuggestion.Source != DesktopItemClassificationSource.AiProvider)
+                throw new ArgumentException("aiSuggestion 必须来自 AiProvider。", nameof(aiSuggestion));
+            if (aiSuggestion.SuggestedZoneId is Guid aiZoneId && !zoneIds.Contains(aiZoneId))
+                throw new ArgumentException("AI Suggestion 指向当前布局不存在的 Zone。", nameof(aiSuggestion));
+        }
 
         var candidates = new List<PolicyCandidate>();
         var matchedRuleIds = new List<Guid>();
@@ -143,6 +138,15 @@ public static class DesktopClassificationPolicyResolver
         {
             if (!rule.IsEnabled || !rule.Condition.Matches(item))
                 continue;
+
+            // 只让真正命中当前项目的悬空 Zone 规则阻断本轮分类。
+            // 其他项目的陈旧 Zone 规则不应冻结整个 Policy Engine。
+            if (rule.TargetZoneId.HasValue && !zoneIds.Contains(rule.TargetZoneId.Value))
+            {
+                throw new ArgumentException(
+                    $"命中规则 {rule.RuleId} 指向当前布局不存在的 TargetZoneId {rule.TargetZoneId}。",
+                    nameof(rules));
+            }
 
             matchedRuleIds.Add(rule.RuleId);
             candidates.Add(PolicyCandidate.FromRule(rule));
