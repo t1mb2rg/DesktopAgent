@@ -76,7 +76,8 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                     persisted.AiEnabled,
                     baseUri,
                     persisted.AiModel,
-                    persisted.AiSecretReference);
+                    persisted.AiSecretReference,
+                    persisted.ActiveLayoutTemplateId);
             }
             catch (Exception ex) when (ex is ArgumentException or FormatException)
             {
@@ -109,6 +110,7 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                 AiBaseUri = settings.AiBaseUri?.AbsoluteUri,
                 AiModel = settings.AiModel,
                 AiSecretReference = settings.AiSecretReference,
+                ActiveLayoutTemplateId = settings.ActiveLayoutTemplateId,
             };
 
             var json = JsonSerializer.Serialize(persisted, SerializerOptions);
@@ -132,5 +134,6 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
         public string? AiBaseUri { get; set; }
         public string? AiModel { get; set; }
         public string? AiSecretReference { get; set; }
+        public Guid? ActiveLayoutTemplateId { get; set; }
     }
 }
