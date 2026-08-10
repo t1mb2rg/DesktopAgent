@@ -11,6 +11,8 @@ public sealed class M3AutomaticAcceptanceOptionsTests
         var options = M3AutomaticAcceptanceOptions.FromLookup(_ => null);
 
         Assert.False(options.IsEnabled);
+        Assert.False(options.InjectPreWriterFailure);
+        Assert.Equal(M3AutomaticAcceptanceFailureMode.None, options.FailureMode);
         Assert.Equal("Disabled", options.Describe());
     }
 
@@ -94,6 +96,67 @@ public sealed class M3AutomaticAcceptanceOptionsTests
     {
         var values = ValidValues();
         values[M3AutomaticAcceptanceOptions.AllowStagingVariable] = value;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            M3AutomaticAcceptanceOptions.FromLookup(values.GetValueOrDefault));
+    }
+
+    [Fact]
+    public void FailureMode_WhenOmitted_RemainsDisabled()
+    {
+        var options = M3AutomaticAcceptanceOptions.FromLookup(
+            ValidValues().GetValueOrDefault);
+
+        Assert.Equal(M3AutomaticAcceptanceFailureMode.None, options.FailureMode);
+        Assert.False(options.InjectPreWriterFailure);
+    }
+
+    [Fact]
+    public void FailureMode_ExactSupportedValue_EnablesPreWriterInjection()
+    {
+        var values = ValidValues();
+        values[M3AutomaticAcceptanceOptions.FailureModeVariable] =
+            M3AutomaticAcceptanceOptions.SupportedFailureMode;
+
+        var options = M3AutomaticAcceptanceOptions.FromLookup(values.GetValueOrDefault);
+
+        Assert.Equal(
+            M3AutomaticAcceptanceFailureMode.FailBeforeWriterAtSafetySnapshot,
+            options.FailureMode);
+        Assert.True(options.InjectPreWriterFailure);
+        Assert.Contains(
+            "FailureMode=FailBeforeWriterAtSafetySnapshot",
+            options.Describe(),
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("failbeforewriteratsafetysnapshot")]
+    [InlineData("FailBeforeWriterAtSafetySnapshot ")]
+    [InlineData("")]
+    [InlineData("WriterException")]
+    public void FailureMode_MustMatchExactly(string value)
+    {
+        var values = ValidValues();
+        values[M3AutomaticAcceptanceOptions.FailureModeVariable] = value;
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            M3AutomaticAcceptanceOptions.FromLookup(values.GetValueOrDefault));
+
+        Assert.Contains(
+            M3AutomaticAcceptanceOptions.FailureModeVariable,
+            ex.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FailureMode_Alone_CannotArmAcceptance()
+    {
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            [M3AutomaticAcceptanceOptions.FailureModeVariable] =
+                M3AutomaticAcceptanceOptions.SupportedFailureMode,
+        };
 
         Assert.Throws<InvalidOperationException>(() =>
             M3AutomaticAcceptanceOptions.FromLookup(values.GetValueOrDefault));
