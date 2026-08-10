@@ -67,8 +67,8 @@ public sealed class DesktopClassificationPolicyResolverTests
         var decision = Assert.IsType<DesktopItemClassificationDecision>(result.Decision);
         Assert.Equal("Course", decision.Category);
         Assert.Equal(userZone, decision.TargetZoneId);
-        Assert.Equal(DesktopItemClassificationSource.ExplicitUserRule, decision.Source);
-        Assert.False(decision.RequiresUserConfirmation);
+        Assert.Equal(DesktopItemClassificationSource.UserRule, decision.Source);
+        Assert.False(result.RequiresUserConfirmation);
         Assert.Equal(confirmedAiRule.RuleId, result.CategoryRuleId);
         Assert.Equal(confirmedAiRule.RuleId, result.TargetZoneRuleId);
         Assert.False(result.HasConflict);
@@ -117,10 +117,11 @@ public sealed class DesktopClassificationPolicyResolverTests
         var decision = Assert.IsType<DesktopItemClassificationDecision>(withLayoutOverride.Decision);
         Assert.Equal("Development", decision.Category);
         Assert.Equal(explicitLayoutZone, decision.TargetZoneId);
-        Assert.Equal(DesktopItemClassificationSource.ExplicitUserRule, decision.Source);
+        Assert.Equal(DesktopItemClassificationSource.UserRule, decision.Source);
         Assert.True(withLayoutOverride.TargetZoneOverriddenByLayoutRule);
         Assert.Null(withLayoutOverride.TargetZoneRuleId);
         Assert.False(withLayoutOverride.HasConflict);
+        Assert.False(withLayoutOverride.RequiresUserConfirmation);
     }
 
     [Fact]
@@ -156,7 +157,7 @@ public sealed class DesktopClassificationPolicyResolverTests
         Assert.Equal(zoneA, decision.TargetZoneId);
         Assert.Equal(ruleA.RuleId, result.CategoryRuleId);
         Assert.Equal(ruleA.RuleId, result.TargetZoneRuleId);
-        Assert.True(decision.RequiresUserConfirmation);
+        Assert.True(result.RequiresUserConfirmation);
         Assert.True(result.HasConflict);
         Assert.Equal(2, result.Conflicts.Count);
         Assert.Contains(result.Conflicts, conflict => conflict.Field == DesktopClassificationPolicyField.Category);
@@ -193,7 +194,7 @@ public sealed class DesktopClassificationPolicyResolverTests
         var decision = Assert.IsType<DesktopItemClassificationDecision>(aiOnly.Decision);
         Assert.Equal("Notes", decision.Category);
         Assert.Equal(validZone, decision.TargetZoneId);
-        Assert.True(decision.RequiresUserConfirmation);
+        Assert.True(aiOnly.RequiresUserConfirmation);
         Assert.Equal(DesktopItemClassificationSource.AiProvider, decision.Source);
         Assert.Empty(aiOnly.MatchedRuleIds);
 
