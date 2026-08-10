@@ -138,7 +138,7 @@ contentAnalysisEnabled = false
 → Provider receives no body text
 ```
 
-开启后，只有文件系统项目且存在本地路径时才尝试提取。
+开启后，也只有 `ItemKind.File` 的普通文件系统项目且存在本地路径时才尝试提取。文件夹、快捷方式和系统项目保持 metadata-only，不为了正文分析产生无意义 File IO。
 
 ## Provider 不接收本地路径
 
@@ -260,6 +260,7 @@ M4-05 新增独立行为覆盖：
 - bounded DSL / unknown Zone / extra field fail closed；
 - Rule request Zone enumerable 只枚举到 Max+1；
 - content gate 关闭时 extractor 0 调用；
+- Folder 即使像文本文件也不会进入 extractor；
 - bounded byte / char extraction；
 - unsupported / binary-like input 不产生 excerpt；
 - Provider 请求含 excerpt 时不含 path / StableId；
