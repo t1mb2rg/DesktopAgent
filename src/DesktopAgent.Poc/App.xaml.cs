@@ -90,11 +90,18 @@ public partial class App : System.Windows.Application
 
         if (m3AutomaticAcceptance.IsEnabled)
         {
+            var safeFailureDescription = m3AutomaticAcceptance.InjectPreWriterFailure
+                ? "\n\nB07-D SAFE FAILURE INJECTION ENABLED\n"
+                    + "本次进程会在 Coordinator 已通过 fresh/scope gates 后、创建 safety snapshot 时故意失败。\n"
+                    + "该位置早于 recovery checkpoint 与第一笔 Writer；用于验证 Failure → Cooldown → Fuse，桌面 Writer 不应被调用。"
+                : string.Empty;
+
             var answer = MessageBox.Show(
                 "M3 AUTOMATIC ACCEPTANCE ARMED\n\n"
                 + "本次 Debug 进程允许 unattended REAL desktop writes。\n"
                 + "这不是普通 DesktopAgent 运行模式。\n\n"
-                + m3AutomaticAcceptance.Describe() + "\n\n"
+                + m3AutomaticAcceptance.Describe()
+                + safeFailureDescription + "\n\n"
                 + "启动后 RequestedMode 仍默认为 Suggestion。"
                 + "只有你随后从 tray 明确选择 Automatic，自动执行链才可能进入真实 M2 Coordinator / Writer。\n\n"
                 + "确认本次进程用于受控实机验收并继续？",
@@ -192,8 +199,10 @@ public partial class App : System.Windows.Application
                     new SqliteDesktopLayoutSnapshotStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
                 services.AddSingleton<IDesktopLayoutSafetySnapshotFactory>(sp =>
-                    new DefaultSafetySnapshotFactory(
-                        sp.GetRequiredService<DesktopLayoutSnapshotFactory>()));
+                    m3AutomaticAcceptance.InjectPreWriterFailure
+                        ? new M3AcceptanceFailingSafetySnapshotFactory()
+                        : new DefaultSafetySnapshotFactory(
+                            sp.GetRequiredService<DesktopLayoutSnapshotFactory>()));
                 services.AddSingleton<RecoveryOrchestrator>();
                 services.AddSingleton<PersistedRecoveryCoordinator>();
                 services.AddSingleton<TargetDisplayLayoutExecutionCoordinator>();
