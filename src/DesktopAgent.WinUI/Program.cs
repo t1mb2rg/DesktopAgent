@@ -1,5 +1,4 @@
 using Microsoft.UI.Dispatching;
-using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 
 namespace DesktopAgent.WinUI;
@@ -25,7 +24,7 @@ public static class Program
 
         instance.Activated += OnActivated;
 
-        Application.Start(_ =>
+        Microsoft.UI.Xaml.Application.Start(_ =>
         {
             var context = new DispatcherQueueSynchronizationContext(
                 DispatcherQueue.GetForCurrentThread());
