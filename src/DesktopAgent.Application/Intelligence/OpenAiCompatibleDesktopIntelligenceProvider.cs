@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,7 @@ namespace DesktopAgent.Application.Intelligence;
 public sealed class OpenAiCompatibleDesktopIntelligenceProvider : IDesktopIntelligenceProvider
 {
     private const int MaxResponseBytes = 256 * 1024;
+    private const int ReadBufferBytes = 8 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -147,13 +149,13 @@ confidence must be between 0 and 1 inclusive.
             {
                 zone_id = zone.ZoneId,
                 name = zone.Name,
-            }).ToArray(),
+            }),
         };
 
         var requestBody = new
         {
             model = _options.Model,
-            messages = new object[]
+            messages = new[]
             {
                 new { role = "system", content = SystemPrompt },
                 new
@@ -165,7 +167,6 @@ confidence must be between 0 and 1 inclusive.
             },
             response_format = new { type = "json_object" },
             stream = false,
-            temperature = 0,
         };
 
         var endpoint = new Uri(
@@ -208,7 +209,7 @@ confidence must be between 0 and 1 inclusive.
         {
             return IntelligenceProviderResult.Failure(
                 IntelligenceProviderStatus.InvalidResponse,
-                "Provider 响应缺少 choices[0].message.content。 ");
+                "Provider 响应缺少 choices[0].message.content。");
         }
 
         ClassificationPayload? payload;
@@ -283,26 +284,35 @@ confidence must be between 0 and 1 inclusive.
 
         await using var stream = await content.ReadAsStreamAsync(cancellationToken)
             .ConfigureAwait(false);
-        using var buffer = new MemoryStream(capacity: 8 * 1024);
-        var chunk = new byte[8 * 1024];
-        var total = 0;
+        using var buffer = new MemoryStream(capacity: ReadBufferBytes);
+        var chunk = ArrayPool<byte>.Shared.Rent(ReadBufferBytes);
 
-        while (true)
+        try
         {
-            var read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken)
-                .ConfigureAwait(false);
-            if (read == 0)
-                break;
+            var total = 0;
+            while (true)
+            {
+                var read = await stream.ReadAsync(
+                        chunk.AsMemory(0, ReadBufferBytes),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (read == 0)
+                    break;
 
-            total += read;
-            if (total > MaxResponseBytes)
-                return null;
+                total += read;
+                if (total > MaxResponseBytes)
+                    return null;
 
-            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken)
-                .ConfigureAwait(false);
+                await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, total);
         }
-
-        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, total);
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(chunk);
+        }
     }
 
     private sealed class ChatCompletionResponse
