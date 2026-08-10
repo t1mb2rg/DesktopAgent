@@ -14,13 +14,20 @@ public sealed class DesktopProductSettings
     public string? AiModel { get; }
     public string? AiSecretReference { get; }
 
+    /// <summary>
+    /// 用户当前选择的布局模板。它只是日常工作流偏好，不表示模板已被执行，
+    /// 也不授予 Writer 或无人值守执行权限。
+    /// </summary>
+    public Guid? ActiveLayoutTemplateId { get; }
+
     public DesktopProductSettings(
         DesktopAutomationMode automationMode,
         bool firstRunCompleted,
         bool aiEnabled,
         Uri? aiBaseUri,
         string? aiModel,
-        string? aiSecretReference)
+        string? aiSecretReference,
+        Guid? activeLayoutTemplateId = null)
     {
         if (!Enum.IsDefined(automationMode))
             throw new ArgumentOutOfRangeException(nameof(automationMode));
@@ -54,13 +61,27 @@ public sealed class DesktopProductSettings
         if (aiEnabled && aiBaseUri is null)
             throw new ArgumentException("启用 AI 前必须先配置 BaseUri 与 Model。", nameof(aiEnabled));
 
+        if (activeLayoutTemplateId == Guid.Empty)
+            throw new ArgumentException("ActiveLayoutTemplateId 不能为 Guid.Empty。", nameof(activeLayoutTemplateId));
+
         AutomationMode = automationMode;
         FirstRunCompleted = firstRunCompleted;
         AiEnabled = aiEnabled;
         AiBaseUri = aiBaseUri;
         AiModel = normalizedModel;
         AiSecretReference = normalizedSecretReference;
+        ActiveLayoutTemplateId = activeLayoutTemplateId;
     }
+
+    public DesktopProductSettings WithActiveLayoutTemplate(Guid? templateId)
+        => new(
+            AutomationMode,
+            FirstRunCompleted,
+            AiEnabled,
+            AiBaseUri,
+            AiModel,
+            AiSecretReference,
+            templateId);
 
     public static DesktopProductSettings CreateDefault()
         => new(
@@ -69,5 +90,6 @@ public sealed class DesktopProductSettings
             aiEnabled: false,
             aiBaseUri: null,
             aiModel: null,
-            aiSecretReference: null);
+            aiSecretReference: null,
+            activeLayoutTemplateId: null);
 }
