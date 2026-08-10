@@ -30,13 +30,13 @@ public sealed class RecoverySchemaV5MigrationTests : IDisposable
     }
 
     [Fact]
-    public async Task FreshDatabase_UsesV5WithoutLegacyRecoveryFlags()
+    public async Task FreshDatabase_UsesCurrentSchemaWithoutLegacyRecoveryFlags()
     {
         var store = new SqliteRecoverySessionStore(_dbPath);
         await store.InitializeAsync();
 
         using var connection = OpenRawConnection();
-        Assert.Equal(5, ReadUserVersion(connection));
+        Assert.Equal(6, ReadUserVersion(connection));
         Assert.False(ColumnExists(connection, "desktop_layout_recovery_sessions", "requires_manual_recovery"));
         Assert.False(ColumnExists(connection, "desktop_layout_recovery_sessions", "is_position_uncertain"));
         Assert.True(ColumnExists(connection, "desktop_layout_recovery_sessions", "lifecycle"));
@@ -155,7 +155,7 @@ public sealed class RecoverySchemaV5MigrationTests : IDisposable
         await store.InitializeAsync();
 
         using var upgraded = OpenRawConnection();
-        Assert.Equal(5, ReadUserVersion(upgraded));
+        Assert.Equal(6, ReadUserVersion(upgraded));
         Assert.False(ColumnExists(upgraded, "desktop_layout_recovery_sessions", "requires_manual_recovery"));
         Assert.False(ColumnExists(upgraded, "desktop_layout_recovery_sessions", "is_position_uncertain"));
 
