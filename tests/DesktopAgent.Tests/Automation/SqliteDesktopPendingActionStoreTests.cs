@@ -127,6 +127,40 @@ public sealed class SqliteDesktopPendingActionStoreTests : IDisposable
         Assert.Equal(DesktopAutomationPolicyReason.NoExecutableDecision, loaded.QueueReason);
     }
 
+    [Fact]
+    public async Task LongValuesValidInM4_RoundTripWithoutM5Narrowing()
+    {
+        var store = new SqliteDesktopPendingActionStore(_dbPath);
+        await store.InitializeAsync();
+
+        var stableId = new string('s', 2200);
+        var displayName = new string('d', 600);
+        var category = new string('c', 160);
+        var explanation = new string('e', 2200);
+        var action = new DesktopPendingAction(
+            Guid.NewGuid(),
+            new DateTimeOffset(2026, 8, 10, 4, 0, 0, TimeSpan.Zero),
+            null,
+            new DesktopItemFacts(stableId, displayName, ItemKind.File, ".txt", false, true),
+            new DesktopItemClassificationDecision(
+                category,
+                null,
+                0.75,
+                DesktopItemClassificationSource.AiProvider,
+                explanation),
+            DesktopAutomationAuthorizationBasis.AiOnly,
+            DesktopAutomationPolicyReason.AiOnlyUnconfirmed);
+
+        await store.SaveAsync(action);
+        var loaded = await store.GetAsync(action.PendingActionId);
+
+        Assert.NotNull(loaded);
+        Assert.Equal(stableId, loaded.Item.StableId);
+        Assert.Equal(displayName, loaded.Item.DisplayName);
+        Assert.Equal(category, loaded.Decision!.Category);
+        Assert.Equal(explanation, loaded.Decision.Explanation);
+    }
+
     private static DesktopPendingAction CreateAction(
         Guid id,
         DateTimeOffset createdAtUtc,
