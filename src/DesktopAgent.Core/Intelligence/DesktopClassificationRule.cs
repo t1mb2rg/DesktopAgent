@@ -93,10 +93,6 @@ public sealed class DesktopClassificationRuleCondition
         return true;
     }
 
-    /// <summary>
-    /// 有界 glob matcher，只支持 '*' 与 '?'，OrdinalIgnoreCase。
-    /// 不使用 Regex，因此没有正则回溯或用户提供脚本的执行面。
-    /// </summary>
     private static bool GlobMatches(string pattern, string value)
     {
         var patternIndex = 0;
@@ -142,7 +138,8 @@ public sealed class DesktopClassificationRuleCondition
 }
 
 /// <summary>
-/// M4 语义分类规则。Category 必填；TargetZoneId 可选，因此 Category 不与某个 Zone 永久绑定。
+/// M4 语义分类规则。Category 始终是全局语义；可选 TargetZone 必须同时绑定 TargetTemplateId，
+/// 防止持久化后把某个模板内部的 ZoneId 错当成跨模板事实。
 /// </summary>
 public sealed class DesktopClassificationRule
 {
@@ -150,6 +147,7 @@ public sealed class DesktopClassificationRule
     public string Name { get; }
     public DesktopClassificationRuleCondition Condition { get; }
     public string Category { get; }
+    public Guid? TargetTemplateId { get; }
     public Guid? TargetZoneId { get; }
     public DesktopClassificationRuleAuthority Authority { get; }
     public DesktopClassificationRuleProvenance Provenance { get; }
@@ -161,6 +159,7 @@ public sealed class DesktopClassificationRule
         string name,
         DesktopClassificationRuleCondition condition,
         string category,
+        Guid? targetTemplateId,
         Guid? targetZoneId,
         DesktopClassificationRuleAuthority authority,
         DesktopClassificationRuleProvenance provenance,
@@ -174,8 +173,12 @@ public sealed class DesktopClassificationRule
         Condition = condition ?? throw new ArgumentNullException(nameof(condition));
         if (string.IsNullOrWhiteSpace(category))
             throw new ArgumentException("Category 不能为空。", nameof(category));
+        if (targetTemplateId == Guid.Empty)
+            throw new ArgumentException("TargetTemplateId 不能为 Guid.Empty。", nameof(targetTemplateId));
         if (targetZoneId == Guid.Empty)
             throw new ArgumentException("TargetZoneId 不能为 Guid.Empty。", nameof(targetZoneId));
+        if (targetTemplateId.HasValue != targetZoneId.HasValue)
+            throw new ArgumentException("TargetTemplateId 与 TargetZoneId 必须同时存在或同时为 null。", nameof(targetZoneId));
         if (!Enum.IsDefined(authority))
             throw new ArgumentOutOfRangeException(nameof(authority));
         if (!Enum.IsDefined(provenance))
@@ -197,6 +200,7 @@ public sealed class DesktopClassificationRule
         RuleId = ruleId;
         Name = name;
         Category = category;
+        TargetTemplateId = targetTemplateId;
         TargetZoneId = targetZoneId;
         Authority = authority;
         Provenance = provenance;
@@ -211,4 +215,12 @@ public sealed class DesktopClassificationRule
             DesktopClassificationRuleAuthority.DeterministicLocal => DesktopItemClassificationSource.LocalRule,
             _ => throw new InvalidOperationException($"未知 Authority：{Authority}。"),
         };
+
+    public Guid? GetTargetZoneForTemplate(Guid activeTemplateId)
+    {
+        if (activeTemplateId == Guid.Empty)
+            throw new ArgumentException("ActiveTemplateId 不能为 Guid.Empty。", nameof(activeTemplateId));
+
+        return TargetTemplateId == activeTemplateId ? TargetZoneId : null;
+    }
 }
