@@ -6,7 +6,7 @@ namespace DesktopAgent.Tests.Intelligence;
 public sealed class DesktopItemIntelligenceContractTests
 {
     [Fact]
-    public void Facts_Valid_PreservesExactValues()
+    public void Facts_Valid_PreservesExactValuesAndAllowsUnknownExtension()
     {
         var facts = new DesktopItemFacts(
             "  stable-id  ",
@@ -22,24 +22,19 @@ public sealed class DesktopItemIntelligenceContractTests
         Assert.Equal(".PDF", facts.FileExtension);
         Assert.False(facts.IsSystemItem);
         Assert.True(facts.IsFileSystemItem);
+
+        var systemItem = new DesktopItemFacts("id", "回收站", ItemKind.SystemItem, null, true, false);
+        Assert.Null(systemItem.FileExtension);
     }
 
     [Fact]
-    public void Facts_NullExtension_IsAllowed()
+    public void Facts_InvalidIdentity_Fails()
     {
-        var facts = new DesktopItemFacts("id", "回收站", ItemKind.SystemItem, null, true, false);
-        Assert.Null(facts.FileExtension);
-    }
-
-    [Fact]
-    public void Facts_EmptyStableId_Fails()
-        => Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DesktopItemFacts("", "name", ItemKind.File, ".txt", false, true));
-
-    [Fact]
-    public void Facts_EmptyDisplayName_Fails()
-        => Assert.Throws<ArgumentException>(() =>
+        Assert.Throws<ArgumentException>(() =>
             new DesktopItemFacts("id", "", ItemKind.File, ".txt", false, true));
+    }
 
     [Fact]
     public void Facts_UndefinedItemKind_Fails()
@@ -47,44 +42,39 @@ public sealed class DesktopItemIntelligenceContractTests
             new DesktopItemFacts("id", "name", (ItemKind)99, null, false, false));
 
     [Fact]
-    public void Facts_EmptyExtension_Fails()
-        => Assert.Throws<ArgumentException>(() =>
-            new DesktopItemFacts("id", "name", ItemKind.File, "", false, true));
-
-    [Fact]
-    public void Facts_ExtensionWithoutDot_Fails()
-        => Assert.Throws<ArgumentException>(() =>
-            new DesktopItemFacts("id", "name", ItemKind.File, "pdf", false, true));
-
-    [Fact]
-    public void Suggestion_Valid_AllowsSemanticOnlyResult()
+    public void Facts_InvalidExtension_Fails()
     {
-        var suggestion = new DesktopItemClassificationSuggestion(
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopItemFacts("id", "name", ItemKind.File, "", false, true));
+        Assert.Throws<ArgumentException>(() =>
+            new DesktopItemFacts("id", "name", ItemKind.File, "pdf", false, true));
+    }
+
+    [Fact]
+    public void Suggestion_Valid_SupportsSemanticOnlyAndZoneRecommendation()
+    {
+        var semanticOnly = new DesktopItemClassificationSuggestion(
             "CourseDocument",
             null,
             0.87,
             "文件名和类型与课程资料一致。",
             DesktopItemClassificationSource.AiProvider);
 
-        Assert.Equal("CourseDocument", suggestion.Category);
-        Assert.Null(suggestion.SuggestedZoneId);
-        Assert.Equal(0.87, suggestion.Confidence);
-        Assert.Equal(DesktopItemClassificationSource.AiProvider, suggestion.Source);
-    }
+        Assert.Equal("CourseDocument", semanticOnly.Category);
+        Assert.Null(semanticOnly.SuggestedZoneId);
+        Assert.Equal(0.87, semanticOnly.Confidence);
+        Assert.Equal(DesktopItemClassificationSource.AiProvider, semanticOnly.Source);
 
-    [Fact]
-    public void Suggestion_Valid_AllowsZoneRecommendation()
-    {
         var zoneId = Guid.NewGuid();
-        var suggestion = new DesktopItemClassificationSuggestion(
+        var withZone = new DesktopItemClassificationSuggestion(
             "Development",
             zoneId,
             1d,
             "用户已有明确偏好。",
             DesktopItemClassificationSource.UserProfile);
 
-        Assert.Equal(zoneId, suggestion.SuggestedZoneId);
-        Assert.Equal(1d, suggestion.Confidence);
+        Assert.Equal(zoneId, withZone.SuggestedZoneId);
+        Assert.Equal(1d, withZone.Confidence);
     }
 
     [Theory]
@@ -148,13 +138,4 @@ public sealed class DesktopItemIntelligenceContractTests
                 0.5,
                 DesktopItemClassificationSource.LocalRule,
                 ""));
-
-    [Fact]
-    public void ClassificationSource_NumericOrder_DoesNotEncodePriority()
-    {
-        Assert.True(Enum.IsDefined(DesktopItemClassificationSource.UserRule));
-        Assert.True(Enum.IsDefined(DesktopItemClassificationSource.LocalRule));
-        Assert.True(Enum.IsDefined(DesktopItemClassificationSource.UserProfile));
-        Assert.True(Enum.IsDefined(DesktopItemClassificationSource.AiProvider));
-    }
 }
