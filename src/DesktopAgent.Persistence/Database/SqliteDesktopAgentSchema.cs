@@ -326,8 +326,8 @@ internal static class SqliteDesktopAgentSchema
                 pending_action_id    TEXT PRIMARY KEY NOT NULL,
                 created_at_utc       TEXT NOT NULL,
                 template_id          TEXT NULL,
-                stable_id            TEXT NOT NULL CHECK(stable_id != '' AND LENGTH(stable_id) <= 2048),
-                display_name         TEXT NOT NULL CHECK(TRIM(display_name) != '' AND LENGTH(display_name) <= 512),
+                stable_id            TEXT NOT NULL CHECK(stable_id != ''),
+                display_name         TEXT NOT NULL CHECK(TRIM(display_name) != ''),
                 file_extension       TEXT NULL,
                 item_kind            INTEGER NOT NULL CHECK(item_kind IN (0,1,2,3,4)),
                 is_system_item       INTEGER NOT NULL CHECK(is_system_item IN (0,1)),
@@ -347,12 +347,10 @@ internal static class SqliteDesktopAgentSchema
                      proposed_confidence IS NULL AND proposed_source IS NULL AND explanation IS NULL)
                     OR
                     (proposed_category IS NOT NULL AND TRIM(proposed_category) != '' AND
-                     LENGTH(proposed_category) <= 128 AND
                      proposed_confidence IS NOT NULL AND
                      proposed_confidence >= 0.0 AND proposed_confidence <= 1.0 AND
                      proposed_source IS NOT NULL AND proposed_source IN (0,1,2,3) AND
-                     explanation IS NOT NULL AND TRIM(explanation) != '' AND
-                     LENGTH(explanation) <= 2048)
+                     explanation IS NOT NULL AND TRIM(explanation) != '')
                 )
             );
 
