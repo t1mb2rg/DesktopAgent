@@ -38,6 +38,8 @@ public sealed partial class MainWindow : Window
         Title = "DesktopAgent";
 
         PendingList.ItemsSource = _pendingItems;
+        LayoutsView.Children.Clear();
+        LayoutsView.Children.Add(new LayoutManagementView());
         ShellNavigation.SelectedItem = ShellNavigation.MenuItems[0];
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -153,6 +155,10 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            // LayoutManagementView 也可以更新 ActiveLayoutTemplateId。
+            // 保存设置前重新读取，避免用 MainWindow 的旧快照把跨页偏好覆盖掉。
+            _settings = await _settingsStore.GetAsync();
+
             if (AutomationModeCombo.SelectedIndex is < 0 or > 2)
                 throw new InvalidOperationException("请选择有效的 Automation Mode。");
 
@@ -188,7 +194,8 @@ public sealed partial class MainWindow : Window
                 AiEnabledToggle.IsOn,
                 baseUri,
                 model,
-                secretReference);
+                secretReference,
+                _settings.ActiveLayoutTemplateId);
 
             if (candidate.AiBaseUri is not null)
             {
@@ -226,6 +233,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            _settings = await _settingsStore.GetAsync();
             var reference = _settings.AiSecretReference ?? DefaultAiSecretReference;
             var removed = await _secretStore.DeleteSecretAsync(reference);
 
@@ -237,7 +245,8 @@ public sealed partial class MainWindow : Window
                     _settings.AiEnabled,
                     _settings.AiBaseUri,
                     _settings.AiModel,
-                    aiSecretReference: null);
+                    aiSecretReference: null,
+                    activeLayoutTemplateId: _settings.ActiveLayoutTemplateId);
                 await _settingsStore.SaveAsync(_settings);
             }
 
