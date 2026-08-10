@@ -51,7 +51,7 @@ public sealed class DesktopItemFacts
         {
             if (fileExtension.Length == 0)
                 throw new ArgumentException("FileExtension 应使用 null 表示不可用，不能使用空字符串。", nameof(fileExtension));
-            if (!fileExtension.StartsWith('.', StringComparison.Ordinal))
+            if (!fileExtension.StartsWith(".", StringComparison.Ordinal))
                 throw new ArgumentException("FileExtension 必须以 '.' 开头。", nameof(fileExtension));
         }
 
