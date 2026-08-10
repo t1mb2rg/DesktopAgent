@@ -24,12 +24,12 @@ public static class Program
 
         instance.Activated += OnActivated;
 
-        Microsoft.UI.Xaml.Application.Start(_ =>
+        Microsoft.UI.Xaml.Application.Start(initializationCallbackParams =>
         {
             var context = new DispatcherQueueSynchronizationContext(
                 DispatcherQueue.GetForCurrentThread());
             SynchronizationContext.SetSynchronizationContext(context);
-            _ = new App();
+            new App();
         });
 
         return 0;
