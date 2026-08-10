@@ -170,6 +170,10 @@ public sealed partial class MainWindow : Window
             var model = modelText.Length == 0 ? null : modelText;
             var newSecret = AiApiKeyPasswordBox.Password;
             var hasNewSecret = newSecret.Length > 0;
+
+            if (hasNewSecret && baseUri is null)
+                throw new ArgumentException("填写 API Key 前请先配置 AI Base URI 与 Model。");
+
             var secretReference = hasNewSecret
                 ? DefaultAiSecretReference
                 : _settings.AiSecretReference;
