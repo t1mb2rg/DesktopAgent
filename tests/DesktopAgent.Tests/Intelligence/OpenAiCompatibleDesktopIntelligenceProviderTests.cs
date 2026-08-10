@@ -28,6 +28,8 @@ public sealed class OpenAiCompatibleDesktopIntelligenceProviderTests
         Assert.Throws<ArgumentException>(() =>
             new OpenAiCompatibleProviderOptions(new Uri("ftp://example.test"), "model"));
         Assert.Throws<ArgumentException>(() =>
+            new OpenAiCompatibleProviderOptions(new Uri("https://user:password@example.test/v1"), "model"));
+        Assert.Throws<ArgumentException>(() =>
             new OpenAiCompatibleProviderOptions(new Uri("https://example.test/v1?q=1"), "model"));
         Assert.Throws<ArgumentException>(() =>
             new OpenAiCompatibleProviderOptions(new Uri("https://example.test"), " "));
@@ -93,7 +95,7 @@ public sealed class OpenAiCompatibleDesktopIntelligenceProviderTests
         Assert.Equal("deepseek-v4-pro", root.GetProperty("model").GetString());
         Assert.Equal("json_object", root.GetProperty("response_format").GetProperty("type").GetString());
         Assert.False(root.GetProperty("stream").GetBoolean());
-        Assert.Equal(0, root.GetProperty("temperature").GetInt32());
+        Assert.False(root.TryGetProperty("temperature", out _));
 
         var messages = root.GetProperty("messages");
         Assert.Equal(2, messages.GetArrayLength());
