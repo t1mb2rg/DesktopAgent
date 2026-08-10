@@ -1,3 +1,4 @@
+using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.Intelligence;
 
 namespace DesktopAgent.Application.Intelligence;
@@ -47,7 +48,9 @@ public sealed class DesktopContentAwareClassificationRequestBuilder
                     "内容分析已关闭，未读取正文。"));
         }
 
-        if (!item.IsFileSystemItem || string.IsNullOrWhiteSpace(localFilePath))
+        if (!item.IsFileSystemItem ||
+            item.ItemKind != ItemKind.File ||
+            string.IsNullOrWhiteSpace(localFilePath))
         {
             return new DesktopContentAwareClassificationBuildResult(
                 new DesktopItemClassificationRequest(
@@ -56,7 +59,7 @@ public sealed class DesktopContentAwareClassificationRequestBuilder
                     contentAnalysisEnabled: true),
                 DesktopTextExtractionResult.WithoutExcerpt(
                     DesktopTextExtractionStatus.NotApplicable,
-                    "当前项目没有可用于正文分析的本地文件路径。"));
+                    "当前项目不是可读取正文的普通本地文件。"));
         }
 
         var extraction = await _extractor
