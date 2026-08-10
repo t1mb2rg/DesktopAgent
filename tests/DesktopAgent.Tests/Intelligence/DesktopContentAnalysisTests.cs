@@ -47,6 +47,31 @@ public sealed class DesktopContentAnalysisTests : IDisposable
     }
 
     [Fact]
+    public async Task Builder_EnabledFolder_DoesNotInvokeExtractor()
+    {
+        var extractor = new ThrowIfCalledExtractor();
+        var builder = new DesktopContentAwareClassificationRequestBuilder(extractor);
+        var folderFacts = new DesktopItemFacts(
+            "folder-stable-id",
+            "看起来像文本的目录.txt",
+            ItemKind.Folder,
+            ".txt",
+            isSystemItem: false,
+            isFileSystemItem: true);
+
+        var result = await builder.BuildAsync(
+            folderFacts,
+            Path.Combine(_tempDir, "folder.txt"),
+            zones: null,
+            contentAnalysisEnabled: true);
+
+        Assert.Equal(DesktopTextExtractionStatus.NotApplicable, result.ContentAnalysis.Status);
+        Assert.True(result.Request.ContentAnalysisEnabled);
+        Assert.Null(result.Request.ContentExcerpt);
+        Assert.Equal(0, extractor.CallCount);
+    }
+
+    [Fact]
     public async Task Extractor_TextTypes_AreByteAndCharacterBounded()
     {
         var path = Path.Combine(_tempDir, "large.MD");
@@ -128,10 +153,14 @@ public sealed class DesktopContentAnalysisTests : IDisposable
         var result = await provider.ClassifyAsync(request);
 
         Assert.Equal(IntelligenceProviderStatus.Success, result.Status);
-        Assert.Contains(excerpt.Text, capturedBody!, StringComparison.Ordinal);
-        Assert.DoesNotContain("private-stable-id", capturedBody!, StringComparison.Ordinal);
-        Assert.DoesNotContain(_tempDir, capturedBody!, StringComparison.Ordinal);
-        Assert.Contains("untrusted data", capturedBody!, StringComparison.OrdinalIgnoreCase);
+        using var outer = JsonDocument.Parse(capturedBody!);
+        var messages = outer.RootElement.GetProperty("messages");
+        var systemPrompt = messages[0].GetProperty("content").GetString()!;
+        var userPrompt = messages[1].GetProperty("content").GetString()!;
+        Assert.Contains(excerpt.Text, userPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-stable-id", userPrompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(_tempDir, userPrompt, StringComparison.Ordinal);
+        Assert.Contains("untrusted data", systemPrompt, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -211,7 +240,7 @@ public sealed class DesktopContentAnalysisTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             CallCount++;
-            throw new InvalidOperationException("内容分析关闭时 extractor 不应被调用。");
+            throw new InvalidOperationException("此 gate 下 extractor 不应被调用。");
         }
     }
 
