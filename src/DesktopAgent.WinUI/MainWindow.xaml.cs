@@ -84,6 +84,8 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            ShellNavigation.SelectedItem = ShellNavigation.FooterMenuItems[0];
+            ShowSection("settings");
             SettingsStatusBar.Severity = InfoBarSeverity.Error;
             SettingsStatusBar.Title = "无法读取产品设置";
             SettingsStatusBar.Message = ex.Message;
@@ -166,18 +168,16 @@ public sealed partial class MainWindow : Window
             }
 
             var model = modelText.Length == 0 ? null : modelText;
-            var secretReference = _settings.AiSecretReference;
             var newSecret = AiApiKeyPasswordBox.Password;
-
-            if (newSecret.Length > 0)
-            {
-                secretReference = DefaultAiSecretReference;
-                await _secretStore.SaveSecretAsync(secretReference, newSecret);
-            }
+            var hasNewSecret = newSecret.Length > 0;
+            var secretReference = hasNewSecret
+                ? DefaultAiSecretReference
+                : _settings.AiSecretReference;
 
             if (baseUri is null)
                 secretReference = null;
 
+            // 先形成并校验完整候选配置，再写 Secret，避免“设置失败但新 Key 已落盘”。
             var candidate = new DesktopProductSettings(
                 mode,
                 _settings.FirstRunCompleted || markFirstRunCompleted,
@@ -193,6 +193,9 @@ public sealed partial class MainWindow : Window
                     candidate.AiModel!,
                     candidate.AiSecretReference);
             }
+
+            if (hasNewSecret)
+                await _secretStore.SaveSecretAsync(DefaultAiSecretReference, newSecret);
 
             await _settingsStore.SaveAsync(candidate);
             _settings = candidate;
