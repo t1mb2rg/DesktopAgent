@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Productization;
 using DesktopAgent.Persistence.DesktopLayouts;
@@ -423,8 +424,7 @@ public sealed partial class LayoutManagementView : UserControl
         string StateText,
         string PositionText)
     {
-        public static LayoutPreviewListItem From(
-            Core.DesktopLayouts.Templates.Preview.DesktopLayoutRuleAwarePreviewItem item)
+        public static LayoutPreviewListItem From(DesktopLayoutRuleAwarePreviewItem item)
         {
             var target = item.TargetPosition.HasValue
                 ? $"({item.TargetPosition.Value.X}, {item.TargetPosition.Value.Y})"
