@@ -8,12 +8,8 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 5;
+    internal const int CurrentVersion = 6;
 
-    /// <summary>
-    /// 初始化或升级数据库。幂等。始终在事务内确保所有表和索引存在。
-    /// 即使版本标记已是当前版本，也会重新验证完整 Schema。
-    /// </summary>
     public static void Initialize(SqliteConnection connection, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -27,7 +23,6 @@ internal static class SqliteDesktopAgentSchema
                 $"数据库 user_version={version}，超过当前支持的最高版本 {CurrentVersion}。");
 
         using var tx = connection.BeginTransaction();
-
         try
         {
             EnsureV1Schema(connection, tx);
@@ -35,6 +30,7 @@ internal static class SqliteDesktopAgentSchema
             EnsureV3Schema(connection, tx);
             EnsureV4Schema(connection, tx);
             EnsureV5Schema(connection, tx);
+            EnsureV6Schema(connection, tx);
 
             if (version < CurrentVersion)
             {
@@ -59,25 +55,25 @@ internal static class SqliteDesktopAgentSchema
         cmd.Transaction = transaction;
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS desktop_layout_snapshots (
-                snapshot_id              TEXT PRIMARY KEY NOT NULL,
-                created_at_utc           TEXT NOT NULL,
+                snapshot_id                TEXT PRIMARY KEY NOT NULL,
+                created_at_utc             TEXT NOT NULL,
                 target_monitor_device_name TEXT NULL,
-                connection_method        INTEGER NOT NULL,
-                format_version           INTEGER NOT NULL CHECK(format_version > 0),
-                icon_count               INTEGER NOT NULL CHECK(icon_count >= 0)
+                connection_method          INTEGER NOT NULL,
+                format_version             INTEGER NOT NULL CHECK(format_version > 0),
+                icon_count                 INTEGER NOT NULL CHECK(icon_count >= 0)
             );
 
             CREATE TABLE IF NOT EXISTS desktop_layout_snapshot_items (
-                snapshot_id        TEXT NOT NULL,
-                ordinal            INTEGER NOT NULL,
-                stable_id          TEXT NOT NULL,
-                display_name       TEXT NOT NULL,
-                parsing_name       TEXT NULL,
-                item_kind          INTEGER NOT NULL,
-                x                  INTEGER NOT NULL,
-                y                  INTEGER NOT NULL,
+                snapshot_id         TEXT NOT NULL,
+                ordinal             INTEGER NOT NULL,
+                stable_id           TEXT NOT NULL,
+                display_name        TEXT NOT NULL,
+                parsing_name        TEXT NULL,
+                item_kind           INTEGER NOT NULL,
+                x                   INTEGER NOT NULL,
+                y                   INTEGER NOT NULL,
                 monitor_device_name TEXT NULL,
-                is_system_item     INTEGER NOT NULL CHECK(is_system_item IN (0, 1)),
+                is_system_item      INTEGER NOT NULL CHECK(is_system_item IN (0, 1)),
                 is_file_system_item INTEGER NOT NULL CHECK(is_file_system_item IN (0, 1)),
                 PRIMARY KEY (snapshot_id, ordinal),
                 FOREIGN KEY (snapshot_id)
@@ -115,17 +111,17 @@ internal static class SqliteDesktopAgentSchema
             );
 
             CREATE TABLE IF NOT EXISTS desktop_layout_template_zones (
-                template_id     TEXT NOT NULL,
-                ordinal         INTEGER NOT NULL CHECK(ordinal >= 0),
-                zone_id         TEXT NOT NULL,
-                name            TEXT NOT NULL CHECK(TRIM(name) != ''),
-                left_value      INTEGER NOT NULL CHECK(left_value >= 0),
-                top_value       INTEGER NOT NULL CHECK(top_value >= 0),
-                right_value     INTEGER NOT NULL CHECK(right_value <= 10000),
-                bottom_value    INTEGER NOT NULL CHECK(bottom_value <= 10000),
-                sort_order      INTEGER NOT NULL CHECK(sort_order >= 0),
-                placement_flow  INTEGER NOT NULL CHECK(placement_flow IN (0, 1)),
-                max_item_count  INTEGER NULL CHECK(max_item_count IS NULL OR max_item_count > 0),
+                template_id    TEXT NOT NULL,
+                ordinal        INTEGER NOT NULL CHECK(ordinal >= 0),
+                zone_id        TEXT NOT NULL,
+                name           TEXT NOT NULL CHECK(TRIM(name) != ''),
+                left_value     INTEGER NOT NULL CHECK(left_value >= 0),
+                top_value      INTEGER NOT NULL CHECK(top_value >= 0),
+                right_value    INTEGER NOT NULL CHECK(right_value <= 10000),
+                bottom_value   INTEGER NOT NULL CHECK(bottom_value <= 10000),
+                sort_order     INTEGER NOT NULL CHECK(sort_order >= 0),
+                placement_flow INTEGER NOT NULL CHECK(placement_flow IN (0, 1)),
+                max_item_count INTEGER NULL CHECK(max_item_count IS NULL OR max_item_count > 0),
                 CHECK(right_value > left_value),
                 CHECK(bottom_value > top_value),
                 PRIMARY KEY (template_id, ordinal),
@@ -146,15 +142,12 @@ internal static class SqliteDesktopAgentSchema
     {
         using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
-        // DesktopLayoutIconRuleKind enum values:
-        //   Exclude = 0, Pin = 1, ZoneOverride = 2
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS desktop_layout_template_icon_rules (
-                template_id     TEXT NOT NULL,
-                stable_id       TEXT NOT NULL,
-                rule_kind       INTEGER NOT NULL
-                    CHECK(rule_kind IN (0, 1, 2)),
-                target_zone_id  TEXT NULL,
+                template_id    TEXT NOT NULL,
+                stable_id      TEXT NOT NULL,
+                rule_kind      INTEGER NOT NULL CHECK(rule_kind IN (0, 1, 2)),
+                target_zone_id TEXT NULL,
                 PRIMARY KEY (template_id, stable_id),
                 FOREIGN KEY (template_id)
                     REFERENCES desktop_layout_templates(template_id)
@@ -174,20 +167,11 @@ internal static class SqliteDesktopAgentSchema
     {
         using var cmd = connection.CreateCommand();
         cmd.Transaction = transaction;
-        // RecoverySessionLifecycle enum values:
-        //   Ready=0, Executing=1, Completed=2, FailedAndRolledBack=3,
-        //   FailedRollbackIncomplete=4, PositionUncertain=5
-        // AttemptPhase: Forward=0, Rollback=1
-        //
-        // 注意：v4 历史 Schema 包含 requires_manual_recovery / is_position_uncertain。
-        // Fresh DB 也先建立该历史形态，再由 EnsureV5Schema 幂等迁移到当前形态，
-        // 从而让 v0→v5 与 v4→v5 共用同一条迁移路径。
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS desktop_layout_recovery_sessions (
                 session_id                  TEXT PRIMARY KEY NOT NULL,
                 safety_snapshot_id          TEXT NOT NULL,
-                target_device_name          TEXT NOT NULL
-                    CHECK(TRIM(target_device_name) != ''),
+                target_device_name          TEXT NOT NULL CHECK(TRIM(target_device_name) != ''),
                 started_at_utc              TEXT NOT NULL,
                 lifecycle                   INTEGER NOT NULL,
                 requires_manual_recovery    INTEGER NOT NULL,
@@ -195,9 +179,8 @@ internal static class SqliteDesktopAgentSchema
                 last_failed_step_index      INTEGER NULL,
                 source_restore_plan_json    TEXT NOT NULL,
                 execution_plan_json         TEXT NOT NULL,
-                plan_payload_format_version INTEGER NOT NULL
-                    CHECK(plan_payload_format_version > 0),
-                completed_forward_step_indexes_json        TEXT NOT NULL,
+                plan_payload_format_version INTEGER NOT NULL CHECK(plan_payload_format_version > 0),
+                completed_forward_step_indexes_json         TEXT NOT NULL,
                 completed_rollback_source_step_indexes_json TEXT NOT NULL,
                 forward_failure_type        TEXT NULL,
                 forward_failure_message     TEXT NULL,
@@ -206,10 +189,8 @@ internal static class SqliteDesktopAgentSchema
                 verification_result_json    TEXT NULL,
                 revision                    INTEGER NOT NULL CHECK(revision > 0),
                 updated_at_utc              TEXT NOT NULL,
-                forward_attempt_count       INTEGER NOT NULL
-                    CHECK(forward_attempt_count >= 0),
-                rollback_attempt_count      INTEGER NOT NULL
-                    CHECK(rollback_attempt_count >= 0)
+                forward_attempt_count       INTEGER NOT NULL CHECK(forward_attempt_count >= 0),
+                rollback_attempt_count      INTEGER NOT NULL CHECK(rollback_attempt_count >= 0)
             );
 
             CREATE TABLE IF NOT EXISTS desktop_layout_recovery_attempts (
@@ -242,20 +223,97 @@ internal static class SqliteDesktopAgentSchema
             );
 
             CREATE INDEX IF NOT EXISTS idx_recovery_sessions_lifecycle
-                ON desktop_layout_recovery_sessions
-                    (lifecycle, started_at_utc DESC);
+                ON desktop_layout_recovery_sessions (lifecycle, started_at_utc DESC);
         ";
         cmd.ExecuteNonQuery();
     }
 
     private static void EnsureV5Schema(SqliteConnection connection, SqliteTransaction transaction)
     {
-        // v5 删除两个可完全由 Lifecycle → Disposition 推导出的冗余持久化列。
-        // 旧列没有独立事实权；保留它们只会制造可漂移的重复状态。
         DropColumnIfExists(connection, transaction,
             "desktop_layout_recovery_sessions", "requires_manual_recovery");
         DropColumnIfExists(connection, transaction,
             "desktop_layout_recovery_sessions", "is_position_uncertain");
+    }
+
+    private static void EnsureV6Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS desktop_classification_rules (
+                rule_id            TEXT PRIMARY KEY NOT NULL,
+                name               TEXT NOT NULL CHECK(TRIM(name) != ''),
+                stable_id          TEXT NULL,
+                file_extension     TEXT NULL,
+                file_name_pattern  TEXT NULL,
+                item_kind          INTEGER NULL CHECK(item_kind IS NULL OR item_kind IN (0,1,2,3,4)),
+                category           TEXT NOT NULL CHECK(TRIM(category) != ''),
+                target_template_id TEXT NULL,
+                target_zone_id     TEXT NULL,
+                authority          INTEGER NOT NULL CHECK(authority IN (0,1)),
+                provenance         INTEGER NOT NULL CHECK(provenance IN (0,1,2,3)),
+                priority           INTEGER NOT NULL CHECK(priority BETWEEN -10000 AND 10000),
+                is_enabled         INTEGER NOT NULL CHECK(is_enabled IN (0,1)),
+                CHECK(stable_id IS NOT NULL OR file_extension IS NOT NULL OR
+                      file_name_pattern IS NOT NULL OR item_kind IS NOT NULL),
+                CHECK(file_extension IS NULL OR
+                      (LENGTH(file_extension) > 1 AND SUBSTR(file_extension, 1, 1) = '.')),
+                CHECK(file_name_pattern IS NULL OR
+                      (TRIM(file_name_pattern) != '' AND LENGTH(file_name_pattern) <= 256)),
+                CHECK((target_template_id IS NULL AND target_zone_id IS NULL) OR
+                      (target_template_id IS NOT NULL AND target_zone_id IS NOT NULL))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_classification_rules_enabled_authority_priority
+                ON desktop_classification_rules
+                    (is_enabled DESC, authority ASC, priority DESC, rule_id ASC);
+
+            CREATE TABLE IF NOT EXISTS desktop_user_category_zone_preferences (
+                preference_id    TEXT PRIMARY KEY NOT NULL,
+                template_id      TEXT NOT NULL,
+                category         TEXT NOT NULL COLLATE NOCASE CHECK(TRIM(category) != ''),
+                preferred_zone_id TEXT NOT NULL,
+                confidence       REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
+                evidence_count   INTEGER NOT NULL CHECK(evidence_count > 0),
+                confirmed_at_utc TEXT NOT NULL,
+                FOREIGN KEY (template_id)
+                    REFERENCES desktop_layout_templates(template_id)
+                    ON DELETE CASCADE,
+                UNIQUE(template_id, category)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_preferences_template_category
+                ON desktop_user_category_zone_preferences (template_id, category COLLATE NOCASE);
+
+            CREATE TABLE IF NOT EXISTS desktop_classification_evidence (
+                evidence_id        TEXT PRIMARY KEY NOT NULL,
+                observed_at_utc    TEXT NOT NULL,
+                template_id        TEXT NULL,
+                stable_id          TEXT NOT NULL CHECK(stable_id != ''),
+                display_name       TEXT NOT NULL CHECK(TRIM(display_name) != ''),
+                file_extension     TEXT NULL,
+                item_kind          INTEGER NOT NULL CHECK(item_kind IN (0,1,2,3,4)),
+                proposed_category  TEXT NOT NULL CHECK(TRIM(proposed_category) != ''),
+                proposed_zone_id   TEXT NULL,
+                proposed_source    INTEGER NOT NULL CHECK(proposed_source IN (0,1,2,3)),
+                feedback_kind      INTEGER NOT NULL CHECK(feedback_kind IN (0,1,2)),
+                final_category     TEXT NULL,
+                final_zone_id      TEXT NULL,
+                CHECK(file_extension IS NULL OR
+                      (LENGTH(file_extension) > 1 AND SUBSTR(file_extension, 1, 1) = '.')),
+                CHECK((proposed_zone_id IS NULL AND final_zone_id IS NULL) OR template_id IS NOT NULL),
+                CHECK(
+                    (feedback_kind IN (0,1) AND final_category IS NOT NULL AND TRIM(final_category) != '')
+                    OR
+                    (feedback_kind = 2 AND final_category IS NULL AND final_zone_id IS NULL)
+                )
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_classification_evidence_observed_desc
+                ON desktop_classification_evidence (observed_at_utc DESC, evidence_id ASC);
+        ";
+        cmd.ExecuteNonQuery();
     }
 
     private static void DropColumnIfExists(
