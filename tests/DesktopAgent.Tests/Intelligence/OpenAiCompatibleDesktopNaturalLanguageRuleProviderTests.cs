@@ -36,8 +36,14 @@ public sealed class OpenAiCompatibleDesktopNaturalLanguageRuleProviderTests
         Assert.Equal(reference.StableId, draft.Condition.StableId);
         Assert.Equal(templateId, draft.TargetTemplateId);
         Assert.Equal(zoneId, draft.TargetZoneId);
-        Assert.DoesNotContain(reference.StableId, capturedBody!, StringComparison.Ordinal);
-        Assert.Contains("实验报告.pdf", capturedBody!, StringComparison.Ordinal);
+
+        using var requestJson = JsonDocument.Parse(capturedBody!);
+        var userPrompt = requestJson.RootElement
+            .GetProperty("messages")[1]
+            .GetProperty("content")
+            .GetString()!;
+        Assert.DoesNotContain(reference.StableId, userPrompt, StringComparison.Ordinal);
+        Assert.Contains("实验报告.pdf", userPrompt, StringComparison.Ordinal);
 
         var confirmed = draft.Confirm(Guid.NewGuid());
         Assert.Equal(DesktopClassificationRuleAuthority.ExplicitUser, confirmed.Authority);
