@@ -97,21 +97,30 @@ public sealed class DesktopClassificationPolicyResolverTests
             defaultToolZone,
             DesktopClassificationRuleAuthority.DeterministicLocal,
             DesktopClassificationRuleProvenance.BuiltIn);
-        var layoutOverride = DesktopLayoutIconRule.ForZoneOverride(item.StableId, explicitLayoutZone);
 
-        var result = DesktopClassificationPolicyResolver.Resolve(
+        var withoutLayoutOverride = DesktopClassificationPolicyResolver.Resolve(
+            item,
+            new[] { localZoneRule, explicitCategoryOnly },
+            new[] { defaultToolZone, explicitLayoutZone });
+        var withoutOverrideDecision = Assert.IsType<DesktopItemClassificationDecision>(withoutLayoutOverride.Decision);
+        Assert.Equal("Development", withoutOverrideDecision.Category);
+        Assert.Equal(defaultToolZone, withoutOverrideDecision.TargetZoneId);
+        Assert.Equal(localZoneRule.RuleId, withoutLayoutOverride.TargetZoneRuleId);
+
+        var layoutOverride = DesktopLayoutIconRule.ForZoneOverride(item.StableId, explicitLayoutZone);
+        var withLayoutOverride = DesktopClassificationPolicyResolver.Resolve(
             item,
             new[] { localZoneRule, explicitCategoryOnly },
             new[] { defaultToolZone, explicitLayoutZone },
             matchingLayoutRule: layoutOverride);
 
-        var decision = Assert.IsType<DesktopItemClassificationDecision>(result.Decision);
+        var decision = Assert.IsType<DesktopItemClassificationDecision>(withLayoutOverride.Decision);
         Assert.Equal("Development", decision.Category);
         Assert.Equal(explicitLayoutZone, decision.TargetZoneId);
         Assert.Equal(DesktopItemClassificationSource.ExplicitUserRule, decision.Source);
-        Assert.True(result.TargetZoneOverriddenByLayoutRule);
-        Assert.Null(result.TargetZoneRuleId);
-        Assert.False(result.HasConflict);
+        Assert.True(withLayoutOverride.TargetZoneOverriddenByLayoutRule);
+        Assert.Null(withLayoutOverride.TargetZoneRuleId);
+        Assert.False(withLayoutOverride.HasConflict);
     }
 
     [Fact]
@@ -155,7 +164,7 @@ public sealed class DesktopClassificationPolicyResolverTests
     }
 
     [Fact]
-    public void Resolve_AiOnlyRemainsConfirmableAndInvalidZoneConfigurationFailsClosed()
+    public void Resolve_AiOnlyRemainsConfirmableAndOnlyMatchingDanglingZoneFailsClosed()
     {
         var item = CreateFacts("unknown", "notes.xyz", ItemKind.File, ".xyz");
         var validZone = Guid.NewGuid();
@@ -167,9 +176,17 @@ public sealed class DesktopClassificationPolicyResolverTests
             "看起来像笔记",
             DesktopItemClassificationSource.AiProvider);
 
+        var unrelatedDanglingRule = CreateRule(
+            Guid.NewGuid(),
+            "另一类文件的旧 Zone",
+            new DesktopClassificationRuleCondition(fileExtension: ".pdf"),
+            "Document",
+            invalidZone,
+            DesktopClassificationRuleAuthority.ExplicitUser,
+            DesktopClassificationRuleProvenance.UserAuthored);
         var aiOnly = DesktopClassificationPolicyResolver.Resolve(
             item,
-            Array.Empty<DesktopClassificationRule>(),
+            new[] { unrelatedDanglingRule },
             new[] { validZone },
             aiSuggestion);
 
@@ -178,10 +195,11 @@ public sealed class DesktopClassificationPolicyResolverTests
         Assert.Equal(validZone, decision.TargetZoneId);
         Assert.True(decision.RequiresUserConfirmation);
         Assert.Equal(DesktopItemClassificationSource.AiProvider, decision.Source);
+        Assert.Empty(aiOnly.MatchedRuleIds);
 
-        var brokenRule = CreateRule(
+        var matchingDanglingRule = CreateRule(
             Guid.NewGuid(),
-            "悬空 Zone",
+            "当前项目悬空 Zone",
             new DesktopClassificationRuleCondition(fileExtension: ".xyz"),
             "Notes",
             invalidZone,
@@ -189,7 +207,7 @@ public sealed class DesktopClassificationPolicyResolverTests
             DesktopClassificationRuleProvenance.UserAuthored);
         Assert.Throws<ArgumentException>(() => DesktopClassificationPolicyResolver.Resolve(
             item,
-            new[] { brokenRule },
+            new[] { matchingDanglingRule },
             new[] { validZone }));
     }
 
