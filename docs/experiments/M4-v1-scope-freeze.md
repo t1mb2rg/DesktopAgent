@@ -38,6 +38,27 @@ AI、Prompt、历史行为或长期记忆本身永远不是 Writer 授权。
 
 M0–M3 已冻结的 fresh-boundary、Recovery、Writer、Cooldown 和 Fuse 语义继续保持。
 
+## 语义布局与物理坐标边界
+
+AI 不学习、持久化或直接输出最终桌面物理坐标。
+
+M4 负责表达“这个项目是什么、应当属于哪个区域、是否建议创建怎样的逻辑区域和长期规则”；M2 继续负责把已经验证的逻辑布局意图映射为当前显示器环境中的实际 slot 和物理坐标。
+
+```text
+Desktop item facts
+→ AI / Rules / Profile
+→ Category / Zone intent / RuleDraft
+→ local Policy validation
+→ existing M2 Zone / slot planning
+→ current display work area + icon spacing
+→ physical coordinates
+→ existing M3 / Coordinator / Writer safety chain
+```
+
+首次使用阶段允许 AI 提出 ZoneDraft，例如推荐“开发 / 课程 / 当前工作 / 常驻快捷方式”等逻辑区域，以及归一化的相对布局意图；最终像素坐标必须由本地确定性 Planner 根据当前工作区、DPI、显示器拓扑、容量和图标间距计算。
+
+因此显示器分辨率、DPI、拓扑或 DeviceName 改变时，语义分类和逻辑区域仍可保持有效，而不会把旧像素坐标当作长期事实。
+
 ## AI Provider 策略
 
 v1.0 使用通用 OpenAI-compatible 协议边界，而不是把 Core 绑定到某一家模型提供方。
@@ -122,6 +143,25 @@ v1.0 的长期记忆由 DesktopAgent 自己拥有，不能依赖某一家模型 
 重复行为可以形成 Preference 或 RuleDraft 建议，但正式长期规则仍需要明确的产品策略或用户确认，不做静默黑箱自学习。
 
 Provider-side memory、embedding 检索、RAG 和长期语义记忆保留给后续版本探索。
+
+## M4 开发期代码卫生与测试策略
+
+M4 在新增智能能力的同时执行持续性代码卫生，不单独扩展新的功能里程碑：
+
+- 新代码保持 UI-agnostic、职责清晰并避免不必要的中间集合和长期对象持有；
+- 开发触及旧代码时，若低风险、测试覆盖明确，可顺手整理重复逻辑、过长职责、无界缓存、未释放订阅 / Timer / Watcher 和明显分配热点；
+- 不为了代码外观或少量内存收益重写已经完成真机验收的 Recovery、Coordinator、Writer 和 M3 safety semantics；
+- SQLite 保存长期历史，内存只保留当前需要的有限工作集；
+- AI 上下文、行为历史和内容提取必须有明确上限，禁止无界增长。
+
+测试数量本身不是目标。M4 开发期间同步审计触及区域的测试：
+
+- 删除真正重复、已经不再保护独立行为的测试；
+- 合并同一契约下机械性的重复测试；
+- 保留独立边界、协议解析、故障降级和安全回归测试；
+- Writer、Recovery、Rollback、fresh Observation、stale topology、Coordinator、Cooldown、Fuse 和 fail-closed 回归测试不因“减少数量”而删除。
+
+M5 再执行发布级系统 Profiling 和完整测试套件审计，包括 idle CPU / memory / wake-up、启动时间、长期运行、数据库增长、正式 WinUI 3 Product UI 资源占用，以及测试耗时和重复覆盖情况。
 
 ## M4 子阶段
 
