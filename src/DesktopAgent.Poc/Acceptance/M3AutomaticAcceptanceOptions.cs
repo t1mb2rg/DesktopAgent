@@ -3,6 +3,12 @@ using DesktopAgent.Application.DesktopAutomation;
 
 namespace DesktopAgent.Poc.Acceptance;
 
+public enum M3AutomaticAcceptanceFailureMode
+{
+    None = 0,
+    FailBeforeWriterAtSafetySnapshot = 1,
+}
+
 /// <summary>
 /// M3-B 实机 unattended write 验收专用配置。
 /// 普通 PoC 不使用本配置；仅 Debug composition root 显式读取环境变量。
@@ -14,8 +20,10 @@ public sealed record M3AutomaticAcceptanceOptions
     public const string MaxMovesVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_MAX_MOVES";
     public const string MaxStepsVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_MAX_STEPS";
     public const string AllowStagingVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_ALLOW_STAGING";
+    public const string FailureModeVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_FAILURE_MODE";
 
     public const string SupportedMode = "ValidatedOpen";
+    public const string SupportedFailureMode = "FailBeforeWriterAtSafetySnapshot";
     public const string RequiredArmValue =
         "I_UNDERSTAND_THIS_ALLOWS_UNATTENDED_REAL_DESKTOP_WRITES";
 
@@ -26,6 +34,10 @@ public sealed record M3AutomaticAcceptanceOptions
     public int MaxMoveCount { get; }
     public int MaxExecutionStepCount { get; }
     public bool AllowTemporaryStaging { get; }
+    public M3AutomaticAcceptanceFailureMode FailureMode { get; }
+
+    public bool InjectPreWriterFailure =>
+        FailureMode == M3AutomaticAcceptanceFailureMode.FailBeforeWriterAtSafetySnapshot;
 
     public DesktopAutomationCandidateRiskPolicySettings RiskSettings =>
         new(MaxMoveCount, MaxExecutionStepCount, AllowTemporaryStaging);
@@ -34,12 +46,14 @@ public sealed record M3AutomaticAcceptanceOptions
         bool isEnabled,
         int maxMoveCount,
         int maxExecutionStepCount,
-        bool allowTemporaryStaging)
+        bool allowTemporaryStaging,
+        M3AutomaticAcceptanceFailureMode failureMode)
     {
         IsEnabled = isEnabled;
         MaxMoveCount = maxMoveCount;
         MaxExecutionStepCount = maxExecutionStepCount;
         AllowTemporaryStaging = allowTemporaryStaging;
+        FailureMode = failureMode;
     }
 
     public static M3AutomaticAcceptanceOptions Disabled { get; } =
@@ -47,7 +61,8 @@ public sealed record M3AutomaticAcceptanceOptions
             false,
             M3AutomationPoCDefaults.RiskSettings.MaxMoveCount,
             M3AutomationPoCDefaults.RiskSettings.MaxExecutionStepCount,
-            M3AutomationPoCDefaults.RiskSettings.AllowTemporaryStaging);
+            M3AutomationPoCDefaults.RiskSettings.AllowTemporaryStaging,
+            M3AutomaticAcceptanceFailureMode.None);
 
     public static M3AutomaticAcceptanceOptions FromEnvironment() =>
         FromLookup(Environment.GetEnvironmentVariable);
@@ -62,12 +77,14 @@ public sealed record M3AutomaticAcceptanceOptions
         var maxMovesText = lookup(MaxMovesVariable);
         var maxStepsText = lookup(MaxStepsVariable);
         var allowStagingText = lookup(AllowStagingVariable);
+        var failureModeText = lookup(FailureModeVariable);
 
         if (mode is null
             && arm is null
             && maxMovesText is null
             && maxStepsText is null
-            && allowStagingText is null)
+            && allowStagingText is null
+            && failureModeText is null)
         {
             return Disabled;
         }
@@ -95,12 +112,14 @@ public sealed record M3AutomaticAcceptanceOptions
         var allowStaging = ParseExplicitBoolean(
             allowStagingText,
             AllowStagingVariable);
+        var failureMode = ParseFailureMode(failureModeText);
 
         return new M3AutomaticAcceptanceOptions(
             true,
             maxMoves,
             maxSteps,
-            allowStaging);
+            allowStaging,
+            failureMode);
     }
 
     public DesktopAutomationRuntimePolicy CreateValidatedRuntimePolicy(
@@ -117,7 +136,8 @@ public sealed record M3AutomaticAcceptanceOptions
     }
 
     public string Describe() => IsEnabled
-        ? $"Mode={SupportedMode}; MaxMoves={MaxMoveCount}; MaxSteps={MaxExecutionStepCount}; AllowStaging={AllowTemporaryStaging}"
+        ? $"Mode={SupportedMode}; MaxMoves={MaxMoveCount}; MaxSteps={MaxExecutionStepCount}; "
+            + $"AllowStaging={AllowTemporaryStaging}; FailureMode={FailureMode}"
         : "Disabled";
 
     private static int ParseBoundedPositiveInt(
@@ -149,5 +169,16 @@ public sealed record M3AutomaticAcceptanceOptions
             "false" => false,
             _ => throw new InvalidOperationException(
                 $"{variable} 必须精确为 true 或 false。M3 automatic acceptance 未启用。"),
+        };
+
+    private static M3AutomaticAcceptanceFailureMode ParseFailureMode(string? text) =>
+        text switch
+        {
+            null => M3AutomaticAcceptanceFailureMode.None,
+            SupportedFailureMode =>
+                M3AutomaticAcceptanceFailureMode.FailBeforeWriterAtSafetySnapshot,
+            _ => throw new InvalidOperationException(
+                $"{FailureModeVariable} 若提供，必须精确为 {SupportedFailureMode}。"
+                + "M3 automatic acceptance 未启用。"),
         };
 }
