@@ -157,10 +157,18 @@ public sealed class DesktopContentAnalysisTests : IDisposable
         var messages = outer.RootElement.GetProperty("messages");
         var systemPrompt = messages[0].GetProperty("content").GetString()!;
         var userPrompt = messages[1].GetProperty("content").GetString()!;
-        Assert.Contains(excerpt.Text, userPrompt, StringComparison.Ordinal);
+        const string inputPrefix = "Classify this desktop item. Input JSON:\n";
+        Assert.StartsWith(inputPrefix, userPrompt, StringComparison.Ordinal);
         Assert.DoesNotContain("private-stable-id", userPrompt, StringComparison.Ordinal);
         Assert.DoesNotContain(_tempDir, userPrompt, StringComparison.Ordinal);
         Assert.Contains("untrusted data", systemPrompt, StringComparison.OrdinalIgnoreCase);
+
+        using var input = JsonDocument.Parse(userPrompt[inputPrefix.Length..]);
+        var item = input.RootElement.GetProperty("item");
+        var sentExcerpt = input.RootElement.GetProperty("content_excerpt");
+        Assert.False(item.TryGetProperty("stable_id", out _));
+        Assert.Equal(excerpt.Text, sentExcerpt.GetProperty("text").GetString());
+        Assert.Equal(".txt", sentExcerpt.GetProperty("source_extension").GetString());
     }
 
     [Fact]
