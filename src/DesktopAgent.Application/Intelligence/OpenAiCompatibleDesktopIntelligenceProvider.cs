@@ -1,6 +1,3 @@
-using System.Buffers;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DesktopAgent.Core.Intelligence;
@@ -13,9 +10,6 @@ namespace DesktopAgent.Application.Intelligence;
 /// </summary>
 public sealed class OpenAiCompatibleDesktopIntelligenceProvider : IDesktopIntelligenceProvider
 {
-    private const int MaxResponseBytes = 256 * 1024;
-    private const int ReadBufferBytes = 8 * 1024;
-
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true,
@@ -36,18 +30,17 @@ The JSON object must have exactly this semantic shape:
 confidence must be between 0 and 1 inclusive.
 """;
 
-    private readonly HttpClient _httpClient;
-    private readonly OpenAiCompatibleProviderOptions _options;
-    private readonly IIntelligenceSecretResolver _secretResolver;
+    private readonly OpenAiCompatibleChatClient _chatClient;
 
     public OpenAiCompatibleDesktopIntelligenceProvider(
         HttpClient httpClient,
         OpenAiCompatibleProviderOptions options,
         IIntelligenceSecretResolver secretResolver)
     {
-        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _options = options ?? throw new ArgumentNullException(nameof(options));
-        _secretResolver = secretResolver ?? throw new ArgumentNullException(nameof(secretResolver));
+        _chatClient = new OpenAiCompatibleChatClient(
+            httpClient ?? throw new ArgumentNullException(nameof(httpClient)),
+            options ?? throw new ArgumentNullException(nameof(options)),
+            secretResolver ?? throw new ArgumentNullException(nameof(secretResolver)));
     }
 
     public async Task<IntelligenceProviderResult> ClassifyAsync(
@@ -56,90 +49,24 @@ confidence must be between 0 and 1 inclusive.
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        string? apiKey = null;
-        if (_options.SecretReference is not null)
-        {
-            try
-            {
-                apiKey = await _secretResolver
-                    .ResolveSecretAsync(_options.SecretReference, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return IntelligenceProviderResult.Failure(
-                    IntelligenceProviderStatus.Cancelled,
-                    "解析 Provider Secret 时调用被取消。");
-            }
+        var chatResult = await _chatClient.CompleteJsonAsync(
+                SystemPrompt,
+                BuildUserPrompt(request),
+                cancellationToken)
+            .ConfigureAwait(false);
 
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                return IntelligenceProviderResult.Failure(
-                    IntelligenceProviderStatus.NotConfigured,
-                    "配置引用了 API Secret，但当前 Secret Resolver 没有返回可用值。");
-            }
-        }
-
-        using var message = BuildRequestMessage(request, apiKey);
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_options.Timeout);
-
-        try
-        {
-            using var response = await _httpClient.SendAsync(
-                    message,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    timeoutCts.Token)
-                .ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return IntelligenceProviderResult.Failure(
-                    IntelligenceProviderStatus.Unavailable,
-                    $"Provider 返回 HTTP {(int)response.StatusCode}。",
-                    (int)response.StatusCode);
-            }
-
-            var body = await ReadLimitedUtf8Async(response.Content, timeoutCts.Token)
-                .ConfigureAwait(false);
-            if (body is null)
-            {
-                return IntelligenceProviderResult.Failure(
-                    IntelligenceProviderStatus.InvalidResponse,
-                    $"Provider 响应超过 {MaxResponseBytes} bytes 上限。");
-            }
-
-            return ParseResponse(body, request);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        if (chatResult.Status != IntelligenceProviderStatus.Success)
         {
             return IntelligenceProviderResult.Failure(
-                IntelligenceProviderStatus.Cancelled,
-                "Provider 调用被调用方取消。");
+                chatResult.Status,
+                chatResult.DiagnosticMessage,
+                chatResult.HttpStatusCode);
         }
-        catch (OperationCanceledException)
-        {
-            return IntelligenceProviderResult.Failure(
-                IntelligenceProviderStatus.Timeout,
-                $"Provider 调用超过 {_options.Timeout.TotalSeconds:0.###} 秒超时。");
-        }
-        catch (HttpRequestException ex)
-        {
-            return IntelligenceProviderResult.Failure(
-                IntelligenceProviderStatus.Unavailable,
-                $"Provider 网络请求失败：{ex.Message}");
-        }
-        catch (IOException ex)
-        {
-            return IntelligenceProviderResult.Failure(
-                IntelligenceProviderStatus.Unavailable,
-                $"Provider 响应流读取失败：{ex.Message}");
-        }
+
+        return ParseClassificationPayload(chatResult.Content!, request);
     }
 
-    private HttpRequestMessage BuildRequestMessage(
-        DesktopItemClassificationRequest request,
-        string? apiKey)
+    private static string BuildUserPrompt(DesktopItemClassificationRequest request)
     {
         var itemContext = new
         {
@@ -158,66 +85,14 @@ confidence must be between 0 and 1 inclusive.
             }),
         };
 
-        var requestBody = new
-        {
-            model = _options.Model,
-            messages = new[]
-            {
-                new { role = "system", content = SystemPrompt },
-                new
-                {
-                    role = "user",
-                    content = "Classify this desktop item. Input JSON:\n" +
-                              JsonSerializer.Serialize(itemContext, JsonOptions),
-                },
-            },
-            response_format = new { type = "json_object" },
-            stream = false,
-        };
-
-        var endpoint = new Uri(
-            _options.BaseUri.AbsoluteUri.TrimEnd('/') + "/chat/completions",
-            UriKind.Absolute);
-
-        var message = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(
-                JsonSerializer.Serialize(requestBody, JsonOptions),
-                Encoding.UTF8,
-                "application/json"),
-        };
-        message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-        if (apiKey is not null)
-            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-        return message;
+        return "Classify this desktop item. Input JSON:\n" +
+               JsonSerializer.Serialize(itemContext, JsonOptions);
     }
 
-    private static IntelligenceProviderResult ParseResponse(
-        string body,
+    private static IntelligenceProviderResult ParseClassificationPayload(
+        string content,
         DesktopItemClassificationRequest request)
     {
-        ChatCompletionResponse? completion;
-        try
-        {
-            completion = JsonSerializer.Deserialize<ChatCompletionResponse>(body, JsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            return IntelligenceProviderResult.Failure(
-                IntelligenceProviderStatus.InvalidResponse,
-                $"Provider 外层响应不是有效 JSON：{ex.Message}");
-        }
-
-        var content = completion?.Choices?.FirstOrDefault()?.Message?.Content;
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return IntelligenceProviderResult.Failure(
-                IntelligenceProviderStatus.InvalidResponse,
-                "Provider 响应缺少 choices[0].message.content。");
-        }
-
         ClassificationPayload? payload;
         try
         {
@@ -265,13 +140,13 @@ confidence must be between 0 and 1 inclusive.
 
         try
         {
-            var suggestion = new DesktopItemClassificationSuggestion(
-                payload.Category,
-                suggestedZoneId,
-                payload.Confidence.Value,
-                payload.Reason,
-                DesktopItemClassificationSource.AiProvider);
-            return IntelligenceProviderResult.Success(suggestion);
+            return IntelligenceProviderResult.Success(
+                new DesktopItemClassificationSuggestion(
+                    payload.Category,
+                    suggestedZoneId,
+                    payload.Confidence.Value,
+                    payload.Reason,
+                    DesktopItemClassificationSource.AiProvider));
         }
         catch (ArgumentException ex)
         {
@@ -279,64 +154,6 @@ confidence must be between 0 and 1 inclusive.
                 IntelligenceProviderStatus.InvalidResponse,
                 $"Provider 分类结果未通过 Core 契约校验：{ex.Message}");
         }
-    }
-
-    private static async Task<string?> ReadLimitedUtf8Async(
-        HttpContent content,
-        CancellationToken cancellationToken)
-    {
-        if (content.Headers.ContentLength is > MaxResponseBytes)
-            return null;
-
-        await using var stream = await content.ReadAsStreamAsync(cancellationToken)
-            .ConfigureAwait(false);
-        using var buffer = new MemoryStream(capacity: ReadBufferBytes);
-        var chunk = ArrayPool<byte>.Shared.Rent(ReadBufferBytes);
-
-        try
-        {
-            var total = 0;
-            while (true)
-            {
-                var read = await stream.ReadAsync(
-                        chunk.AsMemory(0, ReadBufferBytes),
-                        cancellationToken)
-                    .ConfigureAwait(false);
-                if (read == 0)
-                    break;
-
-                total += read;
-                if (total > MaxResponseBytes)
-                    return null;
-
-                await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
-            return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, total);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(chunk);
-        }
-    }
-
-    private sealed class ChatCompletionResponse
-    {
-        [JsonPropertyName("choices")]
-        public List<ChatChoice>? Choices { get; init; }
-    }
-
-    private sealed class ChatChoice
-    {
-        [JsonPropertyName("message")]
-        public ChatMessage? Message { get; init; }
-    }
-
-    private sealed class ChatMessage
-    {
-        [JsonPropertyName("content")]
-        public string? Content { get; init; }
     }
 
     private sealed class ClassificationPayload
