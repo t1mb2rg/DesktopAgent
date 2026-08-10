@@ -8,8 +8,6 @@ namespace DesktopAgent.Core.Automation;
 /// </summary>
 public sealed class DesktopPendingAction
 {
-    public const int MaxExplanationLength = 2048;
-
     public Guid PendingActionId { get; }
     public DateTimeOffset CreatedAtUtc { get; }
     public Guid? TemplateId { get; }
@@ -51,8 +49,6 @@ public sealed class DesktopPendingAction
 
         if (decision?.TargetZoneId.HasValue == true && !templateId.HasValue)
             throw new ArgumentException("Decision 包含 TargetZoneId 时必须同时记录 TemplateId。", nameof(templateId));
-        if (decision is not null && decision.Explanation.Length > MaxExplanationLength)
-            throw new ArgumentOutOfRangeException(nameof(decision), $"Decision Explanation 最多 {MaxExplanationLength} 字符。");
 
         PendingActionId = pendingActionId;
         CreatedAtUtc = createdAtUtc;
