@@ -6,6 +6,9 @@ namespace DesktopAgent.Tests.Intelligence;
 
 public sealed class DesktopClassificationPolicyResolverTests
 {
+    private static readonly Guid ActiveTemplateId =
+        Guid.Parse("00000000-0000-0000-0000-00000000a401");
+
     [Fact]
     public void Condition_CombinesBoundedFactsAndSafeGlob()
     {
@@ -60,9 +63,10 @@ public sealed class DesktopClassificationPolicyResolverTests
 
         var result = DesktopClassificationPolicyResolver.Resolve(
             item,
+            ActiveTemplateId,
             new[] { localRule, confirmedAiRule },
             new[] { localZone, userZone, aiZone },
-            aiSuggestion);
+            aiSuggestion: aiSuggestion);
 
         var decision = Assert.IsType<DesktopItemClassificationDecision>(result.Decision);
         Assert.Equal("Course", decision.Category);
@@ -100,6 +104,7 @@ public sealed class DesktopClassificationPolicyResolverTests
 
         var withoutLayoutOverride = DesktopClassificationPolicyResolver.Resolve(
             item,
+            ActiveTemplateId,
             new[] { localZoneRule, explicitCategoryOnly },
             new[] { defaultToolZone, explicitLayoutZone });
         var withoutOverrideDecision = Assert.IsType<DesktopItemClassificationDecision>(withoutLayoutOverride.Decision);
@@ -110,6 +115,7 @@ public sealed class DesktopClassificationPolicyResolverTests
         var layoutOverride = DesktopLayoutIconRule.ForZoneOverride(item.StableId, explicitLayoutZone);
         var withLayoutOverride = DesktopClassificationPolicyResolver.Resolve(
             item,
+            ActiveTemplateId,
             new[] { localZoneRule, explicitCategoryOnly },
             new[] { defaultToolZone, explicitLayoutZone },
             matchingLayoutRule: layoutOverride);
@@ -122,6 +128,75 @@ public sealed class DesktopClassificationPolicyResolverTests
         Assert.Null(withLayoutOverride.TargetZoneRuleId);
         Assert.False(withLayoutOverride.HasConflict);
         Assert.False(withLayoutOverride.RequiresUserConfirmation);
+    }
+
+    [Fact]
+    public void Resolve_ConfirmedProfileSitsBetweenExplicitAndLocalZoneAuthority()
+    {
+        var item = CreateFacts("report", "course.pdf", ItemKind.File, ".pdf");
+        var localZone = Guid.NewGuid();
+        var profileZone = Guid.NewGuid();
+        var explicitZone = Guid.NewGuid();
+
+        var explicitCategoryOnly = CreateRule(
+            Guid.NewGuid(),
+            "用户确认这是课程资料",
+            new DesktopClassificationRuleCondition(stableId: item.StableId),
+            "Course",
+            null,
+            DesktopClassificationRuleAuthority.ExplicitUser,
+            DesktopClassificationRuleProvenance.UserAuthored);
+        var localZoneRule = CreateRule(
+            Guid.NewGuid(),
+            "PDF 默认区",
+            new DesktopClassificationRuleCondition(fileExtension: ".pdf"),
+            "Document",
+            localZone,
+            DesktopClassificationRuleAuthority.DeterministicLocal,
+            DesktopClassificationRuleProvenance.BuiltIn);
+        var preference = new DesktopCategoryZonePreference(
+            Guid.NewGuid(),
+            ActiveTemplateId,
+            "course",
+            profileZone,
+            confidence: 0.9,
+            evidenceCount: 4,
+            new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+
+        var profileWins = DesktopClassificationPolicyResolver.Resolve(
+            item,
+            ActiveTemplateId,
+            new[] { localZoneRule, explicitCategoryOnly },
+            new[] { localZone, profileZone, explicitZone },
+            userProfilePreference: preference);
+
+        var profileDecision = Assert.IsType<DesktopItemClassificationDecision>(profileWins.Decision);
+        Assert.Equal("Course", profileDecision.Category);
+        Assert.Equal(profileZone, profileDecision.TargetZoneId);
+        Assert.Equal(preference.PreferenceId, profileWins.TargetZonePreferenceId);
+        Assert.Null(profileWins.TargetZoneRuleId);
+        Assert.False(profileWins.RequiresUserConfirmation);
+
+        var explicitZoneRule = CreateRule(
+            Guid.NewGuid(),
+            "用户明确指定课程区",
+            new DesktopClassificationRuleCondition(stableId: item.StableId),
+            "Course",
+            explicitZone,
+            DesktopClassificationRuleAuthority.ExplicitUser,
+            DesktopClassificationRuleProvenance.UserAuthored);
+
+        var explicitWins = DesktopClassificationPolicyResolver.Resolve(
+            item,
+            ActiveTemplateId,
+            new[] { localZoneRule, explicitCategoryOnly, explicitZoneRule },
+            new[] { localZone, profileZone, explicitZone },
+            userProfilePreference: preference);
+
+        var explicitDecision = Assert.IsType<DesktopItemClassificationDecision>(explicitWins.Decision);
+        Assert.Equal(explicitZone, explicitDecision.TargetZoneId);
+        Assert.Equal(explicitZoneRule.RuleId, explicitWins.TargetZoneRuleId);
+        Assert.Null(explicitWins.TargetZonePreferenceId);
     }
 
     [Fact]
@@ -149,6 +224,7 @@ public sealed class DesktopClassificationPolicyResolverTests
 
         var result = DesktopClassificationPolicyResolver.Resolve(
             item,
+            ActiveTemplateId,
             new[] { ruleB, ruleA },
             new[] { zoneA, zoneB });
 
@@ -187,9 +263,10 @@ public sealed class DesktopClassificationPolicyResolverTests
             DesktopClassificationRuleProvenance.UserAuthored);
         var aiOnly = DesktopClassificationPolicyResolver.Resolve(
             item,
+            ActiveTemplateId,
             new[] { unrelatedDanglingRule },
             new[] { validZone },
-            aiSuggestion);
+            aiSuggestion: aiSuggestion);
 
         var decision = Assert.IsType<DesktopItemClassificationDecision>(aiOnly.Decision);
         Assert.Equal("Notes", decision.Category);
@@ -208,6 +285,7 @@ public sealed class DesktopClassificationPolicyResolverTests
             DesktopClassificationRuleProvenance.UserAuthored);
         Assert.Throws<ArgumentException>(() => DesktopClassificationPolicyResolver.Resolve(
             item,
+            ActiveTemplateId,
             new[] { matchingDanglingRule },
             new[] { validZone }));
     }
@@ -226,6 +304,7 @@ public sealed class DesktopClassificationPolicyResolverTests
             name,
             condition,
             category,
+            targetZoneId.HasValue ? ActiveTemplateId : null,
             targetZoneId,
             authority,
             provenance,
