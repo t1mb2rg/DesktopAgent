@@ -4,7 +4,7 @@ namespace DesktopAgent.Application.Intelligence;
 
 /// <summary>
 /// UI 无关的桌面项目分类请求。
-/// M4-01 只包含当前分类所需的最小事实和已有 Zone 候选；后续 Profile / first-run context 可在不改变执行边界的前提下扩展。
+/// 正文上下文只能由显式启用的本地 content-analysis gate 注入；请求本身不包含文件路径。
 /// </summary>
 public sealed class DesktopItemClassificationRequest
 {
@@ -12,14 +12,32 @@ public sealed class DesktopItemClassificationRequest
 
     public DesktopItemFacts Item { get; }
     public IReadOnlyList<IntelligenceZoneOption> Zones => _zones;
+    public bool ContentAnalysisEnabled { get; }
+    public DesktopItemContentExcerpt? ContentExcerpt { get; }
 
     public DesktopItemClassificationRequest(
         DesktopItemFacts item,
-        IEnumerable<IntelligenceZoneOption>? zones = null)
+        IEnumerable<IntelligenceZoneOption>? zones = null,
+        bool contentAnalysisEnabled = false,
+        DesktopItemContentExcerpt? contentExcerpt = null)
     {
         Item = item ?? throw new ArgumentNullException(nameof(item));
+        if (!contentAnalysisEnabled && contentExcerpt is not null)
+        {
+            throw new ArgumentException(
+                "ContentAnalysisEnabled=false 时不能携带 ContentExcerpt。",
+                nameof(contentExcerpt));
+        }
 
-        var copied = zones?.ToArray() ?? Array.Empty<IntelligenceZoneOption>();
+        var copied = zones?
+            .Take(DesktopClassificationPolicyResolver.MaxZonesPerResolution + 1)
+            .ToArray() ?? Array.Empty<IntelligenceZoneOption>();
+        if (copied.Length > DesktopClassificationPolicyResolver.MaxZonesPerResolution)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(zones),
+                $"单次分类请求最多支持 {DesktopClassificationPolicyResolver.MaxZonesPerResolution} 个 Zone。");
+        }
         if (copied.Any(static zone => zone is null))
             throw new ArgumentException("Zones 不能包含 null。", nameof(zones));
 
@@ -30,5 +48,7 @@ public sealed class DesktopItemClassificationRequest
             throw new ArgumentException($"Zones 包含重复 ZoneId：{duplicate.Key}。", nameof(zones));
 
         _zones = Array.AsReadOnly(copied);
+        ContentAnalysisEnabled = contentAnalysisEnabled;
+        ContentExcerpt = contentExcerpt;
     }
 }
