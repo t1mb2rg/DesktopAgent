@@ -24,6 +24,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DesktopAgent.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\DesktopAgent.Core\DesktopAgent.Core.csproj" />
     <ProjectReference Include="..\DesktopAgent.Application\DesktopAgent.Application.csproj" />
     <ProjectReference Include="..\DesktopAgent.WindowsInterop\DesktopAgent.WindowsInterop.csproj" />
