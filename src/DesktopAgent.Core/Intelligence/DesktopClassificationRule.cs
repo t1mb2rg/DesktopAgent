@@ -47,7 +47,7 @@ public sealed class DesktopClassificationRuleCondition
         {
             if (string.IsNullOrWhiteSpace(fileExtension))
                 throw new ArgumentException("FileExtension 应使用 null 表示未指定，不能是空白。", nameof(fileExtension));
-            if (!fileExtension.StartsWith('.', StringComparison.Ordinal) || fileExtension.Length == 1)
+            if (!fileExtension.StartsWith(".", StringComparison.Ordinal) || fileExtension.Length == 1)
                 throw new ArgumentException("FileExtension 必须形如 .pdf。", nameof(fileExtension));
         }
         if (fileNamePattern is not null)
@@ -67,8 +67,6 @@ public sealed class DesktopClassificationRuleCondition
         FileNamePattern = fileNamePattern;
         ItemKind = itemKind;
 
-        // 精确身份远比文件名模式更具体；文件名模式又比扩展名 / ItemKind 更具体。
-        // 分值只负责同 authority / priority 的 tie-break，不跨越 authority 或显式 Priority。
         SpecificityScore =
             (StableId is null ? 0 : 1000) +
             (FileNamePattern is null ? 0 : 100) +
@@ -96,7 +94,7 @@ public sealed class DesktopClassificationRuleCondition
     }
 
     /// <summary>
-    /// 线性回退式 glob matcher，只支持 '*' 与 '?'，OrdinalIgnoreCase。
+    /// 有界 glob matcher，只支持 '*' 与 '?'，OrdinalIgnoreCase。
     /// 不使用 Regex，因此没有正则回溯或用户提供脚本的执行面。
     /// </summary>
     private static bool GlobMatches(string pattern, string value)
@@ -209,8 +207,8 @@ public sealed class DesktopClassificationRule
     public DesktopItemClassificationSource ClassificationSource
         => Authority switch
         {
-            DesktopClassificationRuleAuthority.ExplicitUser => DesktopItemClassificationSource.ExplicitUserRule,
-            DesktopClassificationRuleAuthority.DeterministicLocal => DesktopItemClassificationSource.DeterministicLocalRule,
+            DesktopClassificationRuleAuthority.ExplicitUser => DesktopItemClassificationSource.UserRule,
+            DesktopClassificationRuleAuthority.DeterministicLocal => DesktopItemClassificationSource.LocalRule,
             _ => throw new InvalidOperationException($"未知 Authority：{Authority}。"),
         };
 }
