@@ -1,6 +1,11 @@
 using System.Collections.ObjectModel;
+using DesktopAgent.Application.Intelligence;
+using DesktopAgent.Core.Automation;
+using DesktopAgent.Core.Productization;
 using DesktopAgent.Persistence.Automation;
 using DesktopAgent.Persistence.DesktopLayouts;
+using DesktopAgent.Persistence.Productization;
+using DesktopAgent.WindowsInterop.Intelligence;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -10,14 +15,21 @@ namespace DesktopAgent.WinUI;
 public sealed partial class MainWindow : Window
 {
     private const int PendingDisplayLimit = 100;
+    private const string DefaultAiSecretReference = "openai-compatible-api-key";
 
     private readonly AppWindow _appWindow;
     private readonly TrayIconHost _trayIcon;
     private readonly SqliteDesktopPendingActionStore _pendingStore =
         new(DesktopAgentDataPaths.DefaultDatabasePath);
+    private readonly JsonDesktopProductSettingsStore _settingsStore =
+        new(DesktopAgentDataPaths.DefaultSettingsPath);
+    private readonly DpapiIntelligenceSecretStore _secretStore =
+        new(DesktopAgentDataPaths.DefaultSecretsDirectory);
     private readonly ObservableCollection<PendingActionListItem> _pendingItems = new();
 
+    private DesktopProductSettings _settings = DesktopProductSettings.CreateDefault();
     private bool _pendingStoreInitialized;
+    private bool _settingsLoaded;
     private bool _exitRequested;
 
     public MainWindow()
@@ -45,6 +57,61 @@ public sealed partial class MainWindow : Window
         Activate();
     }
 
+    private async void ShellNavigation_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_settingsLoaded)
+            return;
+
+        _settingsLoaded = true;
+        await LoadSettingsAsync();
+    }
+
+    private async Task LoadSettingsAsync()
+    {
+        SettingsStatusBar.IsOpen = false;
+
+        try
+        {
+            await _settingsStore.InitializeAsync();
+            _settings = await _settingsStore.GetAsync();
+            await ApplySettingsToUiAsync();
+
+            if (!_settings.FirstRunCompleted)
+            {
+                ShellNavigation.SelectedItem = ShellNavigation.FooterMenuItems[0];
+                ShowSection("settings");
+            }
+        }
+        catch (Exception ex)
+        {
+            SettingsStatusBar.Severity = InfoBarSeverity.Error;
+            SettingsStatusBar.Title = "无法读取产品设置";
+            SettingsStatusBar.Message = ex.Message;
+            SettingsStatusBar.IsOpen = true;
+        }
+    }
+
+    private async Task ApplySettingsToUiAsync()
+    {
+        AutomationModeCombo.SelectedIndex = (int)_settings.AutomationMode;
+        AiEnabledToggle.IsOn = _settings.AiEnabled;
+        AiEndpointTextBox.Text = _settings.AiBaseUri?.AbsoluteUri ?? string.Empty;
+        AiModelTextBox.Text = _settings.AiModel ?? string.Empty;
+        AiApiKeyPasswordBox.Password = string.Empty;
+        HomeAutomationModeText.Text = _settings.AutomationMode.ToString();
+
+        FirstRunInfoBar.IsOpen = !_settings.FirstRunCompleted;
+        CompleteFirstRunButton.Visibility = _settings.FirstRunCompleted
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+        var hasSecret = _settings.AiSecretReference is not null &&
+            await _secretStore.ContainsSecretAsync(_settings.AiSecretReference);
+        AiSecretStatusText.Text = hasSecret
+            ? "API Key 已由 Windows DPAPI 安全保存。PasswordBox 不会回显现有 Key。"
+            : "当前没有已保存的 API Key。本地无认证 Provider 可以保持此状态。";
+    }
+
     private async void NavigationView_SelectionChanged(
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
@@ -70,6 +137,118 @@ public sealed partial class MainWindow : Window
         SettingsView.Visibility = string.Equals(tag, "settings", StringComparison.Ordinal)
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    private async void SaveSettings_Click(object sender, RoutedEventArgs e)
+        => await SaveSettingsAsync(markFirstRunCompleted: false);
+
+    private async void CompleteFirstRun_Click(object sender, RoutedEventArgs e)
+        => await SaveSettingsAsync(markFirstRunCompleted: true);
+
+    private async Task SaveSettingsAsync(bool markFirstRunCompleted)
+    {
+        SettingsStatusBar.IsOpen = false;
+
+        try
+        {
+            if (AutomationModeCombo.SelectedIndex is < 0 or > 2)
+                throw new InvalidOperationException("请选择有效的 Automation Mode。");
+
+            var mode = (DesktopAutomationMode)AutomationModeCombo.SelectedIndex;
+            var endpointText = AiEndpointTextBox.Text.Trim();
+            var modelText = AiModelTextBox.Text.Trim();
+
+            Uri? baseUri = null;
+            if (endpointText.Length > 0)
+            {
+                if (!Uri.TryCreate(endpointText, UriKind.Absolute, out baseUri))
+                    throw new ArgumentException("AI Base URI 不是有效的绝对 URI。");
+            }
+
+            var model = modelText.Length == 0 ? null : modelText;
+            var secretReference = _settings.AiSecretReference;
+            var newSecret = AiApiKeyPasswordBox.Password;
+
+            if (newSecret.Length > 0)
+            {
+                secretReference = DefaultAiSecretReference;
+                await _secretStore.SaveSecretAsync(secretReference, newSecret);
+            }
+
+            if (baseUri is null)
+                secretReference = null;
+
+            var candidate = new DesktopProductSettings(
+                mode,
+                _settings.FirstRunCompleted || markFirstRunCompleted,
+                AiEnabledToggle.IsOn,
+                baseUri,
+                model,
+                secretReference);
+
+            if (candidate.AiBaseUri is not null)
+            {
+                _ = new OpenAiCompatibleProviderOptions(
+                    candidate.AiBaseUri,
+                    candidate.AiModel!,
+                    candidate.AiSecretReference);
+            }
+
+            await _settingsStore.SaveAsync(candidate);
+            _settings = candidate;
+            await ApplySettingsToUiAsync();
+
+            SettingsStatusBar.Severity = InfoBarSeverity.Success;
+            SettingsStatusBar.Title = markFirstRunCompleted ? "首次设置已完成" : "设置已保存";
+            SettingsStatusBar.Message = "保存设置不会发起 AI 请求，也不会触发桌面移动。";
+            SettingsStatusBar.IsOpen = true;
+        }
+        catch (Exception ex)
+        {
+            AiApiKeyPasswordBox.Password = string.Empty;
+            SettingsStatusBar.Severity = InfoBarSeverity.Error;
+            SettingsStatusBar.Title = "设置未保存";
+            SettingsStatusBar.Message = ex.Message;
+            SettingsStatusBar.IsOpen = true;
+        }
+    }
+
+    private async void RemoveApiKey_Click(object sender, RoutedEventArgs e)
+    {
+        SettingsStatusBar.IsOpen = false;
+
+        try
+        {
+            var reference = _settings.AiSecretReference ?? DefaultAiSecretReference;
+            var removed = await _secretStore.DeleteSecretAsync(reference);
+
+            if (_settings.AiSecretReference is not null)
+            {
+                _settings = new DesktopProductSettings(
+                    _settings.AutomationMode,
+                    _settings.FirstRunCompleted,
+                    _settings.AiEnabled,
+                    _settings.AiBaseUri,
+                    _settings.AiModel,
+                    aiSecretReference: null);
+                await _settingsStore.SaveAsync(_settings);
+            }
+
+            AiApiKeyPasswordBox.Password = string.Empty;
+            await ApplySettingsToUiAsync();
+
+            SettingsStatusBar.Severity = InfoBarSeverity.Success;
+            SettingsStatusBar.Title = removed ? "API Key 已删除" : "没有已保存的 API Key";
+            SettingsStatusBar.Message = "settings.json 只保留非秘密 Provider 配置。";
+            SettingsStatusBar.IsOpen = true;
+        }
+        catch (Exception ex)
+        {
+            SettingsStatusBar.Severity = InfoBarSeverity.Error;
+            SettingsStatusBar.Title = "无法删除 API Key";
+            SettingsStatusBar.Message = ex.Message;
+            SettingsStatusBar.IsOpen = true;
+        }
     }
 
     private async void RefreshPending_Click(object sender, RoutedEventArgs e)
