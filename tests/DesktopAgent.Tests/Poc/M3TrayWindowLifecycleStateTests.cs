@@ -100,11 +100,14 @@ public sealed class M3TrayWindowLifecycleStateTests
                 ?.GetValue(_instance)
                 ?? throw new MissingMemberException(StateType.FullName, name));
 
-        private object? Invoke(string name) =>
-            StateType.GetMethod(
+        private object? Invoke(string name)
+        {
+            var method = StateType.GetMethod(
                 name,
                 BindingFlags.Instance | BindingFlags.Public)
-                ?.Invoke(_instance, null)
-            ?? throw new MissingMethodException(StateType.FullName, name);
+                ?? throw new MissingMethodException(StateType.FullName, name);
+
+            return method.Invoke(_instance, null);
+        }
     }
 }
