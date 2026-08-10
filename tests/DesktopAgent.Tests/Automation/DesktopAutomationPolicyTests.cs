@@ -10,6 +10,9 @@ public sealed class DesktopAutomationPolicyTests
         var safety = Resolve(
             DesktopAutomationMode.Automatic,
             DesktopAutomationAuthorizationBasis.DirectUserRequest,
+            hasExecutableDecision: false,
+            requiresUserResolution: true,
+            canDefer: false,
             isSafetyBlocked: true,
             isLayoutEditing: true);
 
@@ -19,6 +22,9 @@ public sealed class DesktopAutomationPolicyTests
         var layoutEditing = Resolve(
             DesktopAutomationMode.Automatic,
             DesktopAutomationAuthorizationBasis.DirectUserRequest,
+            hasExecutableDecision: false,
+            requiresUserResolution: true,
+            canDefer: false,
             isLayoutEditing: true);
 
         Assert.Equal(DesktopAutomationDisposition.Block, layoutEditing.Disposition);
@@ -26,7 +32,7 @@ public sealed class DesktopAutomationPolicyTests
     }
 
     [Fact]
-    public void Resolve_DirectUserRequestIsAutoInEveryMode()
+    public void Resolve_DirectUserRequestIsAutoInEveryModeButCannotBypassResolution()
     {
         foreach (var mode in Enum.GetValues<DesktopAutomationMode>())
         {
@@ -37,6 +43,17 @@ public sealed class DesktopAutomationPolicyTests
             Assert.Equal(DesktopAutomationDisposition.Auto, result.Disposition);
             Assert.Equal(DesktopAutomationPolicyReason.DirectUserRequest, result.Reason);
         }
+
+        var immediateConflict = Resolve(
+            DesktopAutomationMode.Manual,
+            DesktopAutomationAuthorizationBasis.DirectUserRequest,
+            requiresUserResolution: true,
+            canDefer: false);
+
+        Assert.Equal(DesktopAutomationDisposition.Ask, immediateConflict.Disposition);
+        Assert.Equal(
+            DesktopAutomationPolicyReason.UserResolutionRequired,
+            immediateConflict.Reason);
     }
 
     [Fact]
@@ -143,8 +160,12 @@ public sealed class DesktopAutomationPolicyTests
     }
 
     [Fact]
-    public void Resolve_NoAuthorizationQueuesAndInvalidEnumsFailClosed()
+    public void Resolve_DefaultModeNoAuthorizationAndInvalidEnumsFollowContract()
     {
+        Assert.Equal(
+            DesktopAutomationMode.Assisted,
+            DesktopAutomationPolicy.DefaultMode);
+
         foreach (var mode in Enum.GetValues<DesktopAutomationMode>())
         {
             var noAuthorization = Resolve(
