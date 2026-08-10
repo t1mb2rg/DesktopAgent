@@ -2,35 +2,243 @@
     x:Class="DesktopAgent.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Padding="32" RowSpacing="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
+    <Grid>
+        <NavigationView x:Name="ShellNavigation"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False"
+                        IsPaneToggleButtonVisible="True"
+                        PaneDisplayMode="Left"
+                        SelectionChanged="NavigationView_SelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="概览" Tag="home">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Home" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="待确认" Tag="pending">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Clock" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="布局" Tag="layouts">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="View" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
 
-        <StackPanel Spacing="8">
-            <TextBlock Text="DesktopAgent" FontSize="28" FontWeight="SemiBold" />
-            <TextBlock Text="M5-00 WinUI 3 feasibility shell" Opacity="0.72" />
-        </StackPanel>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="设置" Tag="settings">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Setting" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
 
-        <Border Grid.Row="1" Padding="16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-            <StackPanel Spacing="6">
-                <TextBlock Text="● Product shell running" FontWeight="SemiBold" />
-                <TextBlock Text="x64 · unpackaged · Windows App SDK 2.3.1" />
-                <TextBlock Text="关闭窗口会隐藏到通知区域；再次启动或点击托盘图标会恢复窗口。" TextWrapping="Wrap" />
-            </StackPanel>
-        </Border>
+            <Grid Padding="32,24,32,32">
+                <Grid x:Name="HomeView">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="2"
-                   Text="此窗口只用于验证 Product UI 生命周期，不会开启 production unattended automation，也不会调用 Writer。"
-                   TextWrapping="Wrap"
-                   Opacity="0.72" />
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="DesktopAgent" FontSize="30" FontWeight="SemiBold" />
+                        <TextBlock Text="让桌面保持有序，同时把最终决定留在你手里。"
+                                   Opacity="0.72" />
+                    </StackPanel>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="12">
-            <Button Content="隐藏到托盘" Click="Hide_Click" />
-            <Button Content="显式退出" Click="Exit_Click" />
-        </StackPanel>
+                    <Grid Grid.Row="1" Margin="0,24,0,0" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Padding="18"
+                                CornerRadius="10"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="7">
+                                <TextBlock Text="自动化策略" FontWeight="SemiBold" />
+                                <TextBlock Text="Assisted" FontSize="24" />
+                                <TextBlock Text="当前产品默认合同。已确认的长期规则可以自动通过，新 AI 判断仍进入待确认队列。"
+                                           TextWrapping="Wrap"
+                                           Opacity="0.72" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1"
+                                Padding="18"
+                                CornerRadius="10"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="7">
+                                <TextBlock Text="安全状态" FontWeight="SemiBold" />
+                                <TextBlock Text="Writer 未接入" FontSize="24" />
+                                <TextBlock Text="M5-03 只建立产品壳与只读 Pending Queue，不会触发真实桌面移动。"
+                                           TextWrapping="Wrap"
+                                           Opacity="0.72" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Row="2"
+                            Margin="0,12,0,0"
+                            Padding="18"
+                            CornerRadius="10"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="5">
+                                <TextBlock Text="产品壳生命周期" FontWeight="SemiBold" />
+                                <TextBlock Text="关闭窗口仍会隐藏到托盘；再次启动或点击托盘图标会恢复现有单实例窗口。"
+                                           TextWrapping="Wrap"
+                                           Opacity="0.72" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button Content="隐藏到托盘" Click="Hide_Click" />
+                                <Button Content="显式退出" Click="Exit_Click" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <InfoBar Grid.Row="3"
+                             Margin="0,12,0,0"
+                             IsOpen="True"
+                             IsClosable="False"
+                             Severity="Informational"
+                             Title="M5-03 Physical Gate"
+                             Message="导航、Pending Queue 与托盘生命周期将在真实 Windows 客户端完成最后验收。" />
+                </Grid>
+
+                <Grid x:Name="PendingView" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="待确认" FontSize="30" FontWeight="SemiBold" />
+                            <TextBlock x:Name="PendingSummaryText"
+                                       Text="正在读取 Pending Queue…"
+                                       Opacity="0.72" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Content="刷新"
+                                VerticalAlignment="Center"
+                                Click="RefreshPending_Click" />
+                    </Grid>
+
+                    <InfoBar x:Name="PendingStatusBar"
+                             Grid.Row="1"
+                             Margin="0,16,0,0"
+                             IsOpen="False"
+                             IsClosable="False" />
+
+                    <Grid Grid.Row="2" Margin="0,16,0,0">
+                        <ListView x:Name="PendingList"
+                                  Visibility="Collapsed"
+                                  SelectionMode="None">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Margin="0,0,0,8"
+                                            Padding="16"
+                                            CornerRadius="10"
+                                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                        <Grid RowSpacing="7" ColumnSpacing="16">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       FontSize="17"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding CreatedAtText}"
+                                                       Opacity="0.62" />
+
+                                            <TextBlock Grid.Row="1"
+                                                       Text="{Binding DecisionText}"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Row="1"
+                                                       Grid.Column="1"
+                                                       Text="{Binding QueueReasonText}"
+                                                       Opacity="0.72" />
+
+                                            <TextBlock Grid.Row="2"
+                                                       Grid.ColumnSpan="2"
+                                                       Text="{Binding ExplanationText}"
+                                                       TextWrapping="Wrap"
+                                                       Opacity="0.68" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <StackPanel x:Name="PendingEmptyState"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="8">
+                            <SymbolIcon Symbol="Accept" />
+                            <TextBlock Text="现在没有待确认项目" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                            <TextBlock Text="新的 AI-only 判断或可延期冲突会出现在这里。"
+                                       Opacity="0.68"
+                                       HorizontalAlignment="Center" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <Grid x:Name="LayoutsView" Visibility="Collapsed">
+                    <StackPanel Spacing="10" MaxWidth="760" HorizontalAlignment="Left">
+                        <TextBlock Text="布局" FontSize="30" FontWeight="SemiBold" />
+                        <TextBlock Text="布局管理入口已经占位。布局预览、编辑与 Atomic Commit 会在 M5-05 接入。"
+                                   TextWrapping="Wrap"
+                                   Opacity="0.72" />
+                        <InfoBar IsOpen="True"
+                                 IsClosable="False"
+                                 Severity="Informational"
+                                 Title="当前仍为安全占位"
+                                 Message="进入本页不会调用 Writer，也不会改变桌面位置。" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid x:Name="SettingsView" Visibility="Collapsed">
+                    <StackPanel Spacing="10" MaxWidth="760" HorizontalAlignment="Left">
+                        <TextBlock Text="设置" FontSize="30" FontWeight="SemiBold" />
+                        <TextBlock Text="Automation Mode、首次运行与 AI Provider 配置将在 M5-04 接入。"
+                                   TextWrapping="Wrap"
+                                   Opacity="0.72" />
+                        <Border Padding="16"
+                                CornerRadius="10"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="默认 Automation Mode" FontWeight="SemiBold" />
+                                <TextBlock Text="Assisted" FontSize="22" />
+                                <TextBlock Text="这里目前只展示已冻结的产品默认合同，不提供修改入口。"
+                                           TextWrapping="Wrap"
+                                           Opacity="0.68" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </NavigationView>
     </Grid>
 </Window>
