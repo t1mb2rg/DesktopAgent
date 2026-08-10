@@ -194,7 +194,7 @@ public sealed class OpenAiCompatibleDesktopIntelligenceProviderTests
     }
 
     [Fact]
-    public async Task Provider_HttpFailureAndOversizedResponse_DegradeWithoutSuggestion()
+    public async Task Provider_TransportAndOversizedFailures_DegradeWithoutSuggestion()
     {
         var responses = new Queue<HttpResponseMessage>(new[]
         {
@@ -211,11 +211,20 @@ public sealed class OpenAiCompatibleDesktopIntelligenceProviderTests
         var unavailable = await provider.ClassifyAsync(request);
         var oversized = await provider.ClassifyAsync(request);
 
+        using var ioClient = CreateClient((_, _) => throw new IOException("response stream interrupted"));
+        var ioProvider = CreateProvider(
+            ioClient,
+            new OpenAiCompatibleProviderOptions(new Uri("https://example.test/v1"), "model"),
+            secret: null);
+        var streamInterrupted = await ioProvider.ClassifyAsync(request);
+
         Assert.Equal(IntelligenceProviderStatus.Unavailable, unavailable.Status);
         Assert.Equal((int)HttpStatusCode.ServiceUnavailable, unavailable.HttpStatusCode);
         Assert.Equal(IntelligenceProviderStatus.InvalidResponse, oversized.Status);
+        Assert.Equal(IntelligenceProviderStatus.Unavailable, streamInterrupted.Status);
         Assert.Null(unavailable.Suggestion);
         Assert.Null(oversized.Suggestion);
+        Assert.Null(streamInterrupted.Suggestion);
     }
 
     [Fact]
