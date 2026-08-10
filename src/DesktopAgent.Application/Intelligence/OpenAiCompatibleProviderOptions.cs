@@ -23,6 +23,8 @@ public sealed class OpenAiCompatibleProviderOptions
             throw new ArgumentException("BaseUri 必须是绝对 URI。", nameof(baseUri));
         if (BaseUri.Scheme is not ("http" or "https"))
             throw new ArgumentException("BaseUri 只支持 http 或 https。", nameof(baseUri));
+        if (!string.IsNullOrEmpty(BaseUri.UserInfo))
+            throw new ArgumentException("BaseUri 不能内嵌用户名或密码；认证必须通过 SecretReference。", nameof(baseUri));
         if (!string.IsNullOrEmpty(BaseUri.Query) || !string.IsNullOrEmpty(BaseUri.Fragment))
             throw new ArgumentException("BaseUri 不能包含 query 或 fragment。", nameof(baseUri));
         if (string.IsNullOrWhiteSpace(model))
@@ -36,7 +38,7 @@ public sealed class OpenAiCompatibleProviderOptions
             resolvedTimeout > TimeSpan.FromMinutes(5))
         {
             throw new ArgumentOutOfRangeException(nameof(timeout),
-                "Timeout 必须在 (0, 5 分钟] 范围内。无界等待不属于 v1.0 Provider 契约。 ");
+                "Timeout 必须在 (0, 5 分钟] 范围内。无界等待不属于 v1.0 Provider 契约。");
         }
 
         Model = model;
