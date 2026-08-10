@@ -8,10 +8,6 @@ public enum DesktopClassificationPolicyField
     TargetZone = 1,
 }
 
-/// <summary>
-/// 同一决策层级出现互相矛盾结果时的可审计冲突。
-/// Resolver 仍使用稳定 tie-break 得到可重复结果，但会要求用户确认。
-/// </summary>
 public sealed class DesktopClassificationPolicyConflict
 {
     private readonly IReadOnlyList<string> _candidateKeys;
@@ -44,7 +40,6 @@ public sealed class DesktopClassificationPolicyConflict
     }
 }
 
-/// <summary>一次分类 Policy 解析的完整、UI 无关结果。</summary>
 public sealed class DesktopClassificationPolicyResult
 {
     private readonly IReadOnlyList<Guid> _matchedRuleIds;
@@ -53,6 +48,7 @@ public sealed class DesktopClassificationPolicyResult
     public DesktopItemClassificationDecision? Decision { get; }
     public Guid? CategoryRuleId { get; }
     public Guid? TargetZoneRuleId { get; }
+    public Guid? TargetZonePreferenceId { get; }
     public bool TargetZoneOverriddenByLayoutRule { get; }
     public bool RequiresUserConfirmation { get; }
     public IReadOnlyList<Guid> MatchedRuleIds => _matchedRuleIds;
@@ -63,6 +59,7 @@ public sealed class DesktopClassificationPolicyResult
         DesktopItemClassificationDecision? decision,
         Guid? categoryRuleId,
         Guid? targetZoneRuleId,
+        Guid? targetZonePreferenceId,
         bool targetZoneOverriddenByLayoutRule,
         bool requiresUserConfirmation,
         IEnumerable<Guid> matchedRuleIds,
@@ -71,6 +68,7 @@ public sealed class DesktopClassificationPolicyResult
         Decision = decision;
         CategoryRuleId = categoryRuleId;
         TargetZoneRuleId = targetZoneRuleId;
+        TargetZonePreferenceId = targetZonePreferenceId;
         TargetZoneOverriddenByLayoutRule = targetZoneOverriddenByLayoutRule;
         RequiresUserConfirmation = requiresUserConfirmation;
         _matchedRuleIds = Array.AsReadOnly(matchedRuleIds.ToArray());
@@ -79,8 +77,8 @@ public sealed class DesktopClassificationPolicyResult
 }
 
 /// <summary>
-/// M4 分类 Policy：分别解析 Category 与 TargetZone，再组合为 ClassificationDecision。
-/// M2 StableId ZoneOverride 只覆盖 TargetZone；Exclude / Pin 仍完全属于下游布局执行语义。
+/// M4 分类 Policy。Category 与 TargetZone 分别决策；Zone 相关输入始终以 activeTemplateId 为边界。
+/// TargetZone authority：M2 ZoneOverride > ExplicitUser Rule > confirmed UserProfile > Local Rule > AI。
 /// </summary>
 public static class DesktopClassificationPolicyResolver
 {
@@ -89,12 +87,16 @@ public static class DesktopClassificationPolicyResolver
 
     public static DesktopClassificationPolicyResult Resolve(
         DesktopItemFacts item,
+        Guid activeTemplateId,
         IEnumerable<DesktopClassificationRule> rules,
         IEnumerable<Guid> validZoneIds,
+        DesktopCategoryZonePreference? userProfilePreference = null,
         DesktopItemClassificationSuggestion? aiSuggestion = null,
         DesktopLayoutIconRule? matchingLayoutRule = null)
     {
         ArgumentNullException.ThrowIfNull(item);
+        if (activeTemplateId == Guid.Empty)
+            throw new ArgumentException("ActiveTemplateId 不能为 Guid.Empty。", nameof(activeTemplateId));
         ArgumentNullException.ThrowIfNull(rules);
         ArgumentNullException.ThrowIfNull(validZoneIds);
 
@@ -112,6 +114,9 @@ public static class DesktopClassificationPolicyResolver
         if (copiedZoneIds.Any(static zoneId => zoneId == Guid.Empty))
             throw new ArgumentException("validZoneIds 不能包含 Guid.Empty。", nameof(validZoneIds));
         var zoneIds = copiedZoneIds.ToHashSet();
+
+        if (userProfilePreference is not null && userProfilePreference.TemplateId != activeTemplateId)
+            throw new ArgumentException("UserProfile Preference 必须属于当前 activeTemplateId。", nameof(userProfilePreference));
 
         if (matchingLayoutRule is not null)
         {
@@ -142,15 +147,16 @@ public static class DesktopClassificationPolicyResolver
             if (!rule.IsEnabled || !rule.Condition.Matches(item))
                 continue;
 
-            if (rule.TargetZoneId.HasValue && !zoneIds.Contains(rule.TargetZoneId.Value))
+            var targetZoneForActiveTemplate = rule.GetTargetZoneForTemplate(activeTemplateId);
+            if (targetZoneForActiveTemplate.HasValue && !zoneIds.Contains(targetZoneForActiveTemplate.Value))
             {
                 throw new ArgumentException(
-                    $"命中规则 {rule.RuleId} 指向当前布局不存在的 TargetZoneId {rule.TargetZoneId}。",
+                    $"命中规则 {rule.RuleId} 在当前模板指向不存在的 TargetZoneId {targetZoneForActiveTemplate}。",
                     nameof(rules));
             }
 
             matchedRuleIds.Add(rule.RuleId);
-            candidates.Add(PolicyCandidate.FromRule(rule));
+            candidates.Add(PolicyCandidate.FromRule(rule, targetZoneForActiveTemplate));
         }
 
         if (aiSuggestion is not null)
@@ -162,8 +168,20 @@ public static class DesktopClassificationPolicyResolver
 
         var conflicts = new List<DesktopClassificationPolicyConflict>(capacity: 2);
         var categoryWinner = SelectCategoryWinner(candidates, conflicts);
-        var zoneWinner = SelectZoneWinner(candidates, layoutZoneOverride, conflicts);
 
+        PolicyCandidate? profileCandidate = null;
+        if (categoryWinner is not null &&
+            userProfilePreference is not null &&
+            string.Equals(
+                categoryWinner.Category,
+                userProfilePreference.Category,
+                StringComparison.OrdinalIgnoreCase) &&
+            zoneIds.Contains(userProfilePreference.PreferredZoneId))
+        {
+            profileCandidate = PolicyCandidate.FromUserProfile(userProfilePreference);
+        }
+
+        var zoneWinner = SelectZoneWinner(candidates, profileCandidate, layoutZoneOverride, conflicts);
         matchedRuleIds.Sort();
 
         if (categoryWinner is null)
@@ -172,6 +190,7 @@ public static class DesktopClassificationPolicyResolver
                 null,
                 null,
                 zoneWinner?.RuleId,
+                zoneWinner?.PreferenceId,
                 zoneWinner?.IsLayoutZoneOverride == true,
                 conflicts.Count > 0,
                 matchedRuleIds,
@@ -195,6 +214,7 @@ public static class DesktopClassificationPolicyResolver
             decision,
             categoryWinner.RuleId,
             zoneWinner?.RuleId,
+            zoneWinner?.PreferenceId,
             zoneWinner?.IsLayoutZoneOverride == true,
             requiresUserConfirmation,
             matchedRuleIds,
@@ -234,13 +254,18 @@ public static class DesktopClassificationPolicyResolver
 
     private static PolicyCandidate? SelectZoneWinner(
         IReadOnlyList<PolicyCandidate> candidates,
+        PolicyCandidate? profileCandidate,
         PolicyCandidate? layoutZoneOverride,
         ICollection<DesktopClassificationPolicyConflict> conflicts)
     {
         if (layoutZoneOverride is not null)
             return layoutZoneOverride;
 
-        var zoneCandidates = candidates
+        IEnumerable<PolicyCandidate> allZoneCandidates = candidates;
+        if (profileCandidate is not null)
+            allZoneCandidates = candidates.Append(profileCandidate);
+
+        var zoneCandidates = allZoneCandidates
             .Where(static candidate => candidate.TargetZoneId.HasValue)
             .OrderBy(static candidate => candidate, PolicyCandidateComparer.Instance)
             .ToArray();
@@ -294,6 +319,7 @@ public static class DesktopClassificationPolicyResolver
         public int Priority { get; }
         public int Specificity { get; }
         public Guid? RuleId { get; }
+        public Guid? PreferenceId { get; }
         public string SourceDescription { get; }
         public bool IsLayoutZoneOverride { get; }
 
@@ -307,6 +333,7 @@ public static class DesktopClassificationPolicyResolver
             int priority,
             int specificity,
             Guid? ruleId,
+            Guid? preferenceId,
             string sourceDescription,
             bool isLayoutZoneOverride)
         {
@@ -319,22 +346,39 @@ public static class DesktopClassificationPolicyResolver
             Priority = priority;
             Specificity = specificity;
             RuleId = ruleId;
+            PreferenceId = preferenceId;
             SourceDescription = sourceDescription;
             IsLayoutZoneOverride = isLayoutZoneOverride;
         }
 
-        public static PolicyCandidate FromRule(DesktopClassificationRule rule)
+        public static PolicyCandidate FromRule(DesktopClassificationRule rule, Guid? targetZoneId)
             => new(
                 $"rule:{rule.RuleId:D}",
                 rule.Category,
-                rule.TargetZoneId,
+                targetZoneId,
                 1d,
                 rule.ClassificationSource,
-                rule.Authority == DesktopClassificationRuleAuthority.ExplicitUser ? 0 : 1,
+                rule.Authority == DesktopClassificationRuleAuthority.ExplicitUser ? 0 : 2,
                 rule.Priority,
                 rule.Condition.SpecificityScore,
                 rule.RuleId,
+                null,
                 $"规则“{rule.Name}”({rule.Provenance})",
+                false);
+
+        public static PolicyCandidate FromUserProfile(DesktopCategoryZonePreference preference)
+            => new(
+                $"profile:{preference.PreferenceId:D}",
+                null,
+                preference.PreferredZoneId,
+                preference.Confidence,
+                DesktopItemClassificationSource.UserProfile,
+                1,
+                0,
+                0,
+                null,
+                preference.PreferenceId,
+                $"已确认用户偏好(Evidence={preference.EvidenceCount})",
                 false);
 
         public static PolicyCandidate FromAi(DesktopItemClassificationSuggestion suggestion)
@@ -344,9 +388,10 @@ public static class DesktopClassificationPolicyResolver
                 suggestion.SuggestedZoneId,
                 suggestion.Confidence,
                 DesktopItemClassificationSource.AiProvider,
-                2,
+                3,
                 0,
                 0,
+                null,
                 null,
                 "AI Suggestion",
                 false);
@@ -361,6 +406,7 @@ public static class DesktopClassificationPolicyResolver
                 -1,
                 int.MaxValue,
                 int.MaxValue,
+                null,
                 null,
                 "M2 StableId ZoneOverride",
                 true);
