@@ -98,12 +98,28 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
             .GetProperty("messages")[1]
             .GetProperty("content")
             .GetString()!;
-        Assert.Contains("item-0001", userContent, StringComparison.Ordinal);
-        Assert.Contains("existing-zone-0001", userContent, StringComparison.Ordinal);
-        Assert.Contains("开发相关的放右边", userContent, StringComparison.Ordinal);
-        Assert.Contains("用户之前说希望桌面按用途分组", userContent, StringComparison.Ordinal);
-        Assert.DoesNotContain("stable-secret-vscode", userContent, StringComparison.Ordinal);
-        Assert.DoesNotContain(existingZoneId.ToString(), userContent, StringComparison.OrdinalIgnoreCase);
+
+        const string inputMarker = "Input JSON:\n";
+        var markerIndex = userContent.IndexOf(inputMarker, StringComparison.Ordinal);
+        Assert.True(markerIndex >= 0);
+        var contextJson = userContent[(markerIndex + inputMarker.Length)..];
+        using var contextDocument = JsonDocument.Parse(contextJson);
+        var context = contextDocument.RootElement;
+
+        Assert.Equal(
+            "开发相关的放右边，课程资料不要混进去。",
+            context.GetProperty("latest_user_guidance").GetString());
+        Assert.Equal(
+            "用户之前说希望桌面按用途分组。",
+            context.GetProperty("previous_intent_summary").GetString());
+        Assert.Equal(
+            "item-0001",
+            context.GetProperty("items")[0].GetProperty("item_ref").GetString());
+        Assert.Equal(
+            "existing-zone-0001",
+            context.GetProperty("existing_zones")[0].GetProperty("existing_zone_ref").GetString());
+        Assert.DoesNotContain("stable-secret-vscode", contextJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(existingZoneId.ToString(), contextJson, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
