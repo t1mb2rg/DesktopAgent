@@ -73,6 +73,7 @@ public sealed class SqliteDesktopUserProfileStore : IDesktopUserProfileStore
                  @confidence, @evidence_count, @confirmed_at_utc)
             ON CONFLICT(template_id, category) DO UPDATE SET
                 preference_id     = excluded.preference_id,
+                category          = excluded.category,
                 preferred_zone_id = excluded.preferred_zone_id,
                 confidence        = excluded.confidence,
                 evidence_count    = excluded.evidence_count,
