@@ -30,8 +30,11 @@ public sealed class DesktopFirstRunUnderstandingRequest
     {
         ArgumentNullException.ThrowIfNull(items);
 
-        var copiedItems = items.ToArray();
-        var copiedZones = existingZones?.ToArray() ?? Array.Empty<IntelligenceZoneOption>();
+        // 只枚举到“允许上限 + 1”。这样上限不仅约束最终契约，也约束构造请求时的瞬时内存分配。
+        var copiedItems = items.Take(MaxItems + 1).ToArray();
+        var copiedZones = existingZones?
+            .Take(MaxExistingZones + 1)
+            .ToArray() ?? Array.Empty<IntelligenceZoneOption>();
 
         if (copiedItems.Length == 0)
             throw new ArgumentException("首次理解至少需要一个桌面项目。", nameof(items));
