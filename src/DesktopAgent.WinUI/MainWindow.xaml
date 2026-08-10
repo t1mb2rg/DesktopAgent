@@ -8,7 +8,8 @@
                         IsSettingsVisible="False"
                         IsPaneToggleButtonVisible="True"
                         PaneDisplayMode="Left"
-                        SelectionChanged="NavigationView_SelectionChanged">
+                        SelectionChanged="NavigationView_SelectionChanged"
+                        Loaded="ShellNavigation_Loaded">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="概览" Tag="home">
                     <NavigationViewItem.Icon>
@@ -61,8 +62,8 @@
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <StackPanel Spacing="7">
                                 <TextBlock Text="自动化策略" FontWeight="SemiBold" />
-                                <TextBlock Text="Assisted" FontSize="24" />
-                                <TextBlock Text="当前产品默认合同。已确认的长期规则可以自动通过，新 AI 判断仍进入待确认队列。"
+                                <TextBlock x:Name="HomeAutomationModeText" Text="Assisted" FontSize="24" />
+                                <TextBlock Text="Mode 只决定允许的后台自动化上限；Automatic 也不会把 AI-only 判断升级成 Writer authority。"
                                            TextWrapping="Wrap"
                                            Opacity="0.72" />
                             </StackPanel>
@@ -75,7 +76,7 @@
                             <StackPanel Spacing="7">
                                 <TextBlock Text="安全状态" FontWeight="SemiBold" />
                                 <TextBlock Text="Writer 未接入" FontSize="24" />
-                                <TextBlock Text="M5-03 只建立产品壳与只读 Pending Queue，不会触发真实桌面移动。"
+                                <TextBlock Text="M5-04 只增加设置与 Secret Store，不会触发真实桌面移动。"
                                            TextWrapping="Wrap"
                                            Opacity="0.72" />
                             </StackPanel>
@@ -110,8 +111,8 @@
                              IsOpen="True"
                              IsClosable="False"
                              Severity="Informational"
-                             Title="M5-03 Physical Gate"
-                             Message="导航、Pending Queue 与托盘生命周期将在真实 Windows 客户端完成最后验收。" />
+                             Title="M5-04 安全边界"
+                             Message="保存设置不会调用 AI，也不会打开 Writer；API Key 只进入 Windows DPAPI Secret Store。" />
                 </Grid>
 
                 <Grid x:Name="PendingView" Visibility="Collapsed">
@@ -220,23 +221,81 @@
                 </Grid>
 
                 <Grid x:Name="SettingsView" Visibility="Collapsed">
-                    <StackPanel Spacing="10" MaxWidth="760" HorizontalAlignment="Left">
-                        <TextBlock Text="设置" FontSize="30" FontWeight="SemiBold" />
-                        <TextBlock Text="Automation Mode、首次运行与 AI Provider 配置将在 M5-04 接入。"
-                                   TextWrapping="Wrap"
-                                   Opacity="0.72" />
-                        <Border Padding="16"
-                                CornerRadius="10"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="默认 Automation Mode" FontWeight="SemiBold" />
-                                <TextBlock Text="Assisted" FontSize="22" />
-                                <TextBlock Text="这里目前只展示已冻结的产品默认合同，不提供修改入口。"
-                                           TextWrapping="Wrap"
-                                           Opacity="0.68" />
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
+                            <TextBlock Text="设置" FontSize="30" FontWeight="SemiBold" />
+                            <TextBlock Text="配置自动化上限与 OpenAI-compatible Provider。保存配置本身不会发起 AI 请求。"
+                                       TextWrapping="Wrap"
+                                       Opacity="0.72" />
+
+                            <InfoBar x:Name="FirstRunInfoBar"
+                                     IsOpen="False"
+                                     IsClosable="False"
+                                     Severity="Informational"
+                                     Title="首次运行设置"
+                                     Message="先选择自动化模式。AI 可以暂时保持关闭，之后随时回来配置。" />
+
+                            <Border Padding="16"
+                                    CornerRadius="10"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Automation Mode" FontSize="18" FontWeight="SemiBold" />
+                                    <ComboBox x:Name="AutomationModeCombo" Header="自动化模式" SelectedIndex="1">
+                                        <ComboBoxItem Content="Manual · 仅当前明确请求直接执行" />
+                                        <ComboBoxItem Content="Assisted · 已确认长期策略可自动通过（默认）" />
+                                        <ComboBoxItem Content="Automatic · 本地确定性策略也可自动通过" />
+                                    </ComboBox>
+                                    <TextBlock Text="Automatic 仍不会让 AI-only 判断直接 AUTO；AI-only 继续进入 Pending Queue。"
+                                               TextWrapping="Wrap"
+                                               Opacity="0.68" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Padding="16"
+                                    CornerRadius="10"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="AI Provider" FontSize="18" FontWeight="SemiBold" />
+                                    <ToggleSwitch x:Name="AiEnabledToggle"
+                                                  Header="启用 AI 辅助理解"
+                                                  OffContent="关闭"
+                                                  OnContent="启用" />
+                                    <TextBox x:Name="AiEndpointTextBox"
+                                             Header="Base URI"
+                                             PlaceholderText="https://api.example.com/v1 或 http://127.0.0.1:8000/v1" />
+                                    <TextBox x:Name="AiModelTextBox"
+                                             Header="Model"
+                                             PlaceholderText="例如 Qwen2.5-7B-Instruct" />
+                                    <PasswordBox x:Name="AiApiKeyPasswordBox"
+                                                 Header="API Key（可选）"
+                                                 PlaceholderText="留空表示保留现有 Key；本地无认证服务可一直留空" />
+                                    <TextBlock x:Name="AiSecretStatusText"
+                                               Text="尚未读取 Secret 状态。"
+                                               TextWrapping="Wrap"
+                                               Opacity="0.68" />
+                                    <Button Content="移除已保存 API Key"
+                                            HorizontalAlignment="Left"
+                                            Click="RemoveApiKey_Click" />
+                                    <TextBlock Text="真实 API Key 不写入 settings.json 或 SQLite；Windows 端只落 DPAPI 保护后的 blob。"
+                                               TextWrapping="Wrap"
+                                               Opacity="0.68" />
+                                </StackPanel>
+                            </Border>
+
+                            <InfoBar x:Name="SettingsStatusBar"
+                                     IsOpen="False"
+                                     IsClosable="True" />
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button Content="保存设置" Click="SaveSettings_Click" />
+                                <Button x:Name="CompleteFirstRunButton"
+                                        Content="完成首次设置"
+                                        Visibility="Collapsed"
+                                        Click="CompleteFirstRun_Click" />
                             </StackPanel>
-                        </Border>
-                    </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
             </Grid>
         </NavigationView>
