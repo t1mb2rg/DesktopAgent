@@ -21,6 +21,8 @@ public sealed class DesktopOverlayAppearanceSettings
     public const double MaxFillOpacity = 0.35d;
     public const double MinCornerRadiusDip = 0d;
     public const double MaxCornerRadiusDip = 32d;
+    public const uint DefaultZoneColorRgb = 0x0078D4u;
+    public const uint MaxZoneColorRgb = 0x00FF_FFFFu;
 
     public DesktopOverlayAppearancePreset Preset { get; }
     public double BorderThicknessDip { get; }
@@ -28,12 +30,18 @@ public sealed class DesktopOverlayAppearanceSettings
     public double FillOpacity { get; }
     public double CornerRadiusDip { get; }
 
+    /// <summary>
+    /// Zone 的 24-bit RGB 主题色，格式为 0xRRGGBB。Alpha 由 BorderOpacity / FillOpacity 分别控制。
+    /// </summary>
+    public uint ZoneColorRgb { get; }
+
     public DesktopOverlayAppearanceSettings(
         DesktopOverlayAppearancePreset preset,
         double borderThicknessDip,
         double borderOpacity,
         double fillOpacity,
-        double cornerRadiusDip)
+        double cornerRadiusDip,
+        uint zoneColorRgb = DefaultZoneColorRgb)
     {
         if (!Enum.IsDefined(preset))
             throw new ArgumentOutOfRangeException(nameof(preset));
@@ -57,25 +65,39 @@ public sealed class DesktopOverlayAppearanceSettings
         {
             throw new ArgumentOutOfRangeException(nameof(cornerRadiusDip));
         }
+        if (zoneColorRgb > MaxZoneColorRgb)
+            throw new ArgumentOutOfRangeException(nameof(zoneColorRgb));
 
         Preset = preset;
         BorderThicknessDip = borderThicknessDip;
         BorderOpacity = borderOpacity;
         FillOpacity = fillOpacity;
         CornerRadiusDip = cornerRadiusDip;
+        ZoneColorRgb = zoneColorRgb;
     }
 
     public DesktopOverlayAppearanceSettings WithCustomValues(
         double borderThicknessDip,
         double borderOpacity,
         double fillOpacity,
-        double cornerRadiusDip)
+        double cornerRadiusDip,
+        uint? zoneColorRgb = null)
         => new(
             DesktopOverlayAppearancePreset.Custom,
             borderThicknessDip,
             borderOpacity,
             fillOpacity,
-            cornerRadiusDip);
+            cornerRadiusDip,
+            zoneColorRgb ?? ZoneColorRgb);
+
+    public DesktopOverlayAppearanceSettings WithZoneColor(uint zoneColorRgb)
+        => new(
+            DesktopOverlayAppearancePreset.Custom,
+            BorderThicknessDip,
+            BorderOpacity,
+            FillOpacity,
+            CornerRadiusDip,
+            zoneColorRgb);
 
     public static DesktopOverlayAppearanceSettings FromPreset(DesktopOverlayAppearancePreset preset)
         => preset switch
