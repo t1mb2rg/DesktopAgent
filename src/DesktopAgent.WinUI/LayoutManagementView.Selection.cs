@@ -93,7 +93,6 @@ public sealed partial class LayoutManagementView
         var rules = await _ruleStore.GetAsync(selected.TemplateId)
             ?? throw new InvalidDataException("布局存在，但 RuleSet 缺失。拒绝进入半状态展示。");
 
-        // 若用户在异步读取期间已经切换了选择，旧请求不再覆盖新上下文。
         if (LayoutTemplateList.SelectedItem is LayoutTemplateListItem current &&
             current.TemplateId != selected.TemplateId)
         {
