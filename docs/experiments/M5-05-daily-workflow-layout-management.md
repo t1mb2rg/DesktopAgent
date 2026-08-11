@@ -4,7 +4,7 @@
 
 把 M2/M4 已冻结的布局模板、规则、只读桌面观察和预览规划能力接入 WinUI 产品壳，形成可以日常使用的布局管理工作流。
 
-M5-05 只解决“创建 / 编辑元数据 / 预览影响 / 原子保存 / 选择当前布局”。本阶段仍不执行真实桌面移动。
+M5-05 只解决“创建 / 编辑元数据 / 预览影响 / 原子保存 / 选择当前布局 / Overlay 展示偏好”。本阶段仍不执行真实桌面移动。
 
 ## 产品链路
 
@@ -83,7 +83,7 @@ Layout Workbench
 Settings
 ```
 
-布局页改为三栏工作台：
+布局页为三栏工作台：
 
 ```text
 布局列表 | 可视化桌面画布 | 轻量属性
@@ -91,87 +91,86 @@ Settings
 
 产品文案遵循“主界面讲发生了什么，详细信息再讲系统内部为什么”的原则，避免将 Policy、Observation、Writer 等开发合同作为常驻说明墙。
 
-### Selection = passive preview/detail
-
-产品交互原则冻结为：**选中对象立即展示其被动预览 / 详情；显式按钮只保留给真正改变状态、解锁编辑或触发昂贵动作的操作。**
-
-布局页因此区分浏览态与编辑态：
-
-- 单击已保存布局，中央 Zone 画布和右侧属性立即出现；
-- 浏览态字段保持只读，但 Fresh Preview / Desktop Overlay 可以直接使用；
-- 只有显式点击“编辑”才解锁名称、目标屏、预设与保存，同时进入 `Layout Editing → Automation BLOCK`；
-- 编辑中尝试切换其他布局会恢复当前选择，避免未保存修改被静默丢失；
-- 异步读取旧 Selection 若已经过期，不得覆盖用户刚切换到的新上下文。
+产品交互原则：**Selection = passive preview/detail**。选择布局立即展示 Zone 与主要属性；显式“编辑”只用于真正修改布局元数据并进入 Layout Editing / Automation BLOCK。显示偏好（如 Zone 颜色）不借用布局编辑授权，但仍要求显式“应用颜色”才持久化。
 
 AI 助手先建立一级导航与产品空状态；真实对话能力后续接入时，AI 生成的方案必须产出同一个 `LayoutDraft` 合同，再进入布局工作台继续可视化编辑，而不是另建一套 AI-only 布局模型。
 
 ## Desktop Zone Overlay
 
-M5-05 将最初的“会话级细线框”提升为产品化分区框展示层。
+### 安全窗口边界
 
-### Z-order / 安全边界
+真实 Windows Gate 曾发现首版 Overlay 使用 `WS_EX_TOPMOST + HWND_TOPMOST`，导致分区线覆盖所有普通程序并出现卡死/关闭。该实现已经废弃。
 
-首轮真实 Windows Gate 暴露过 `WS_EX_TOPMOST + HWND_TOPMOST` 导致 Overlay 覆盖普通应用并出现卡死退出。Directed Repair 后继续冻结以下边界：
+当前 Overlay：
 
-- Overlay 由 `GetShellWindow()` 返回的 Windows Shell desktop window 拥有；
-- 明确不使用 `WS_EX_TOPMOST` / `HWND_TOPMOST`；
-- layered + no-activate + click-through；
-- Shell desktop 不可用时 fail closed，不回退为全局悬浮窗；
-- managed 绘制异常不允许穿过 native WndProc 终止产品进程；
-- `PAINTSTRUCT` 保持 x64 正确 native 布局；
-- Overlay 只消费 `DisplayDescriptor + Zone + Appearance`，不读取或写入图标位置，不拥有 Writer。
+- 由 Windows Shell desktop window owning；
+- non-topmost；
+- click-through + no-activate；
+- 普通应用窗口自然覆盖它；
+- Shell desktop 不可用时 fail closed；
+- native WndProc 绘制异常隔离；
+- x64 `PAINTSTRUCT` 使用正确 blittable 布局；
+- 不读取或写入图标位置；
+- 不引用 Writer。
 
-真实 Windows 已确认 Z-order Directed Repair 后：普通应用可以自然盖住 Overlay，桌面鼠标操作正常，不再卡死/退出。
+用户已在真实 Windows 重测确认 Z-order / 鼠标穿透 / 进程稳定性通过。
 
-### 圆角分区框外观
+### 外观设置
 
-Overlay 不再只画 1px 辅助线。每个 Zone 以轻量卡片式分区框表达：
+Overlay 从“调试细线”提升为可配置圆角分区框。全局外观由 `DesktopOverlayAppearanceSettings` 描述：
 
-- 边框可调粗细；
-- 边框透明度与框内填充透明度独立；
-- Zone 使用圆角；
-- Zone 名称以轻量标签显示；
-- Zone 之间留少量视觉间隙，让“区域”比单根分割线更容易理解。
+- Light：2px / 34% border / 3.5% fill / 14px radius；
+- Standard：3px / 52% border / 7.5% fill / 16px radius；
+- Strong：4px / 74% border / 14% fill / 18px radius；
+- Custom：高级参数或主题颜色变化后进入自定义；
+- 默认主题色 `#0078D4`。
 
-由于传统 `SetLayeredWindowAttributes` 对单个窗口只有一个全局 alpha，边框与填充不能在同一 GDI layered window 中拥有独立透明度。M5-05 因此使用每个目标显示器最多两个轻量 Shell-owned overlay layer：
+高级范围：边框 1–8px、边框透明度 10–100%、填充透明度 0–35%、圆角 0–32px、24-bit RGB 主题色。
+
+Renderer 每个目标显示器最多固定两个轻量 Shell-owned 窗口：
 
 ```text
-Chrome layer  → 边框 + Zone label（BorderOpacity）
-Fill layer    → 圆角填充（FillOpacity）
+Chrome layer → 圆角边框 + Zone label
+Fill layer   → 圆角填充
 ```
 
-窗口数量保持固定为每屏最多 2 个，不回退到最初“每个 Zone 多个顶层窗口”的高风险实现。
+两个 layer 分别使用 BorderOpacity / FillOpacity，因此透明度真正独立。颜色变化不增加窗口数量。
 
-### 用户外观设置
+设置页使用 PowerToys 风格双级预览：
 
-`DesktopOverlayAppearanceSettings` 为纯视觉设置，不携带执行权限。默认提供：
+1. 内嵌小桌面实时预览；
+2. ColorPicker 可视化选色，Hex 只是辅助显示；
+3. 显式“在桌面上预览”显示安全示例 Zone；
+4. Slider / ColorPicker 调整不会立即写 settings.json；
+5. “应用”才持久化，“取消”恢复上次已保存值；
+6. 真实桌面预览使用约 120ms 防抖，避免拖动时频繁重建 native window。
 
-- 轻量 Light；
-- 标准 Standard；
-- 明显 Strong；
-- 高级参数变化后进入 Custom。
+### 逐 Zone 颜色
 
-高级自定义首批开放：
+不同 Zone 可以覆盖全局主题色，但颜色**不进入 `DesktopLayoutZone` 领域模型**。该领域对象继续只承载几何、排序、放置和容量语义。
 
-- `BorderThicknessDip`：1–8；
-- `BorderOpacity`：10%–100%；
-- `FillOpacity`：0%–35%；
-- `CornerRadiusDip`：0–32。
+逐 Zone 颜色由独立 `DesktopOverlayZoneColorPreferences` 持有：
 
-外观保存在现有 `settings.json` 的可选 `overlayAppearance` 节点中，继续使用 formatVersion=1。旧 M5-04 / 早期 M5-05 设置文件没有此节点时按 Standard 读取，不要求用户清设置。
+```text
+Global ZoneColorRgb
+       ↓
+Zone 无 override → 继承全局
+Zone 有 override → 使用自己的 RGB
+```
 
-MainWindow 或布局页保存其他产品偏好时必须保留 OverlayAppearance，避免跨页旧快照把视觉设置覆盖掉。
+产品行为：
 
-### 双级预览
+- 布局页右侧 Zone 列表支持单选；
+- 选择保存好的 Zone 后可以开启“单独颜色”并通过 ColorPicker 选色；
+- 中央布局画布立即按有效 Zone 颜色刷新；
+- 已打开 Desktop Overlay 时约 120ms 后刷新真实桌面颜色；
+- 用户必须显式点击“应用颜色”才写入产品设置；
+- “还原”恢复上次已应用颜色；
+- 存在未应用颜色时阻止切换布局 / 新建 / 替换分区 / 保存布局，避免静默丢失；
+- 新布局先保存得到稳定 ZoneId 后，才能保存逐 Zone 颜色；
+- 全局厚度、透明度、圆角仍由所有 Zone 共享，本阶段只允许逐 Zone 覆盖颜色。
 
-设置页参考 PowerToys 的直接反馈方式：
-
-1. **内嵌实时预览**：右侧示意桌面始终显示两个 Zone，拖动参数立即更新；
-2. **真实桌面临时预览**：用户显式点击后，在主显示器显示安全的两栏示例框。
-
-真实桌面预览只验证外观，不使用真实图标位置、不执行布局、不生成 WriterCommand。滑块连续拖动时 native Overlay 刷新使用短防抖，避免每个像素都频繁销毁 / 重建窗口。
-
-点击“应用”才写入正式产品设置并更新本进程后续 Overlay 的默认外观；点击“取消”恢复已保存设置并清理真实桌面临时预览。
+逐 Zone 颜色作为 formatVersion=1 的可选 `overlayZoneColors` 持久化；旧配置缺少字段时为空集合。MainWindow 的 Automation / AI 设置保存以及 ActiveLayout 更新都保留该偏好，避免跨页旧快照覆盖。
 
 ## Atomic Save
 
@@ -197,8 +196,6 @@ Template 与 RuleSet 仍由两个 Store 管理。M5-05 把原 PoC 的逻辑原�
 - AI 获得 Writer authority；
 - 自动化可以跳过 Fresh Replan。
 
-此字段作为 formatVersion=1 的可选新增字段持久化，旧 M5-04 settings.json 缺少该字段时继续按 null 读取。
-
 ## Pending Queue 产品边界
 
 M5-05 保留 Pending Queue 为只读。
@@ -210,32 +207,16 @@ M5-02 Confirm Once / Confirm & Remember 会删除 Pending 项并返回仅供后�
 - Layout Editing → Automation Policy BLOCK；
 - Preview 只读，不产生 WriterCommand；
 - Preview 每次从新鲜 DesktopObservation 生成；
-- Desktop Overlay 只显示 Zone / Appearance 元数据，鼠标穿透，不拥有 Writer；
-- Overlay 外观设置只写非秘密产品偏好；
+- Desktop Overlay 只显示 Zone 元数据与 presentation preferences；
+- 外观/颜色设置不授予任何执行权限；
 - “保存”只保存 Template / Rules 元数据；
 - “使用”只保存 ActiveLayoutTemplateId；
 - 产品壳不构造 `DesktopShellIconPositionWriter`；
 - 不打开 production unattended gate；
 - 不修改 Recovery safety semantics；
+- 不修改共享 SQLite schema；
 - 不移动任何真实桌面图标。
 
-## Physical Windows Gate
+## 当前验证状态
 
-CI 与 Scope Audit 通过后，在真实 Windows 11 x64 验证：
-
-1. 概览 / AI 助手 / 待确认 / 布局 / 设置五个入口可正常切换；
-2. AI 助手页面以产品空状态出现，未连接的发送入口明确 disabled；
-3. 单击已保存布局后直接出现 Zone 画布和只读属性，不要求先点“编辑”；
-4. 浏览态可直接 Fresh Preview / Desktop Overlay；显式编辑才解锁字段并显示 Automation BLOCK 状态；
-5. 新建布局默认得到左右两栏草稿，四种预设在画布中对应 1 / 2 / 3 / 4 个 Zone；
-6. Fresh Preview 显示目标点 / 轨迹与移动 / 保持 / 目标屏摘要；
-7. “详细影响”仍可看到 Observation 与精确条目，默认不抢占主视觉；
-8. 设置页出现桌面分区框外观卡，Light / Standard / Strong 可切换；
-9. 边框粗细、边框透明度、填充透明度、圆角四个参数能实时改变右侧小预览；
-10. 点击“在桌面上预览”后，主屏显示两栏示例圆角框，普通应用可盖住它，鼠标穿透；
-11. 桌面预览开启时拖动参数，示例框稳定刷新，不出现卡死 / 闪退 / 全局置顶；
-12. “取消”恢复已保存参数并关闭临时桌面预览；“应用”后 settings.json 出现 overlayAppearance；
-13. 重启后设置页恢复已保存外观；不先访问设置页，直接从布局页打开 Overlay 也使用已保存外观；
-14. Layout Overlay 与 Settings Desktop Preview 均不会改变任何真实桌面图标位置；
-15. 新布局 V1 → 编辑保存 V2、ActiveLayoutTemplateId 持久化、单实例 / 托盘 / 显式退出无回归；
-16. 全程不存在 Writer / unattended desktop movement。
+最近一次真正启动并完整执行的 CI 为 Actions #344 / HEAD `de1ce7d...`：1841 / 1841 PASS，Debug / Release PASS。之后 GitHub Actions 受账户 billing / spending-limit 外部 Gate 阻塞，runner 未启动，因此最新 Overlay Appearance / Color / per-Zone Color 代码由本机 Debug build + 真实 Windows UI Gate 临时承担验证，待 Actions 恢复后补完整 CI。
