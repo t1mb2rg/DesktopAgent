@@ -218,7 +218,8 @@ public sealed partial class MainWindow : Window
                 model,
                 secretReference,
                 _settings.ActiveLayoutTemplateId,
-                _settings.OverlayAppearance);
+                _settings.OverlayAppearance,
+                _settings.OverlayZoneColors);
 
             if (candidate.AiBaseUri is not null)
             {
@@ -270,7 +271,8 @@ public sealed partial class MainWindow : Window
                     _settings.AiModel,
                     aiSecretReference: null,
                     activeLayoutTemplateId: _settings.ActiveLayoutTemplateId,
-                    overlayAppearance: _settings.OverlayAppearance);
+                    overlayAppearance: _settings.OverlayAppearance,
+                    overlayZoneColors: _settings.OverlayZoneColors);
                 await _settingsStore.SaveAsync(_settings);
             }
 
