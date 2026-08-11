@@ -5,6 +5,7 @@ using DesktopAgent.Core.Productization;
 using DesktopAgent.Persistence.Automation;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.Productization;
+using DesktopAgent.WindowsInterop.DesktopOverlays;
 using DesktopAgent.WindowsInterop.Intelligence;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -114,6 +115,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ApplySettingsToUiAsync()
     {
+        DesktopZoneOverlayHost.DefaultAppearance = _settings.OverlayAppearance;
         AutomationModeCombo.SelectedIndex = (int)_settings.AutomationMode;
         AiEnabledToggle.IsOn = _settings.AiEnabled;
         AiEndpointTextBox.Text = _settings.AiBaseUri?.AbsoluteUri ?? string.Empty;
