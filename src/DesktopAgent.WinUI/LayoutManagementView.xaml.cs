@@ -172,6 +172,28 @@ public sealed partial class LayoutManagementView : UserControl
         }
     }
 
+    private async Task<bool> EnsureDraftForSelectedLayoutAsync()
+    {
+        if (_draft is not null)
+            return true;
+
+        if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
+        {
+            ShowError("请选择布局", "先在左侧选择一个布局，或新建一个布局。 ");
+            return false;
+        }
+
+        await EnsureStoresAsync();
+        var template = await _templateStore.GetAsync(selected.TemplateId)
+            ?? throw new InvalidOperationException("所选布局已不存在，请刷新列表。");
+        var rules = await _ruleStore.GetAsync(selected.TemplateId)
+            ?? throw new InvalidDataException("布局存在，但 RuleSet 缺失。拒绝进入半状态编辑。");
+
+        _draft = DesktopLayoutEditDraft.FromPersisted(template, rules);
+        LoadDraftIntoEditor(_draft);
+        return true;
+    }
+
     private async void SetActiveLayout_Click(object sender, RoutedEventArgs e)
     {
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
@@ -232,14 +254,11 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async void PreviewLayout_Click(object sender, RoutedEventArgs e)
     {
-        if (_draft is null)
-        {
-            ShowError("还没有布局", "先新建或打开一个布局。 ");
-            return;
-        }
-
         try
         {
+            if (!await EnsureDraftForSelectedLayoutAsync())
+                return;
+
             var draft = BuildDraftFromEditor();
             LayoutCanvasStatusText.Text = "正在读取当前桌面…";
             var preview = await CapturePreviewAsync(draft);
@@ -264,14 +283,11 @@ public sealed partial class LayoutManagementView : UserControl
             return;
         }
 
-        if (_draft is null)
-        {
-            ShowError("还没有布局", "先新建或打开一个布局。 ");
-            return;
-        }
-
         try
         {
+            if (!await EnsureDraftForSelectedLayoutAsync())
+                return;
+
             var draft = BuildDraftFromEditor();
             LayoutCanvasStatusText.Text = "正在定位目标显示器…";
             var preview = await CapturePreviewAsync(draft);
