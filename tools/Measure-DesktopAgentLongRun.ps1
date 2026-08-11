@@ -122,14 +122,8 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
 
     $sample | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8 -Append
 
-    Write-Host ("[{0:HH:mm:ss}] CPU {1,6:N2}% | WS {2,8:N2} MiB | Private {3,8:N2} MiB | Handles {4,5} | GDI {5,5} | USER {6,5}" -f \
-        (Get-Date),
-        $sample.CpuPercent,
-        $sample.WorkingSetMiB,
-        $sample.PrivateMemoryMiB,
-        $sample.HandleCount,
-        $sample.GdiObjects,
-        $sample.UserObjects)
+    $line = "[{0:HH:mm:ss}] CPU {1,6:N2}% | WS {2,8:N2} MiB | Private {3,8:N2} MiB | Handles {4,5} | GDI {5,5} | USER {6,5}" -f (Get-Date), $sample.CpuPercent, $sample.WorkingSetMiB, $sample.PrivateMemoryMiB, $sample.HandleCount, $sample.GdiObjects, $sample.UserObjects
+    Write-Host $line
 
     $sampleIndex++
     $previousTimestamp = $now
