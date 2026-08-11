@@ -24,6 +24,9 @@ public sealed class DesktopOverlayAppearanceSettings
     public const uint DefaultZoneColorRgb = 0x0078D4u;
     public const uint MaxZoneColorRgb = 0x00FF_FFFFu;
 
+    // Overlay renderer 与逐 Zone 偏好都只接受同一种 24-bit RGB 合同。
+    public const uint MaxColorRgb = MaxZoneColorRgb;
+
     public DesktopOverlayAppearancePreset Preset { get; }
     public double BorderThicknessDip { get; }
     public double BorderOpacity { get; }
