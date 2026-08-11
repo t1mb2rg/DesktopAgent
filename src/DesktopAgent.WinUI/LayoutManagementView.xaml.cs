@@ -1,17 +1,20 @@
 using System.Collections.ObjectModel;
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Application.DesktopLayouts.Templates.Preview;
+using DesktopAgent.Core.DesktopLayouts.Execution;
 using DesktopAgent.Core.DesktopLayouts.Templates;
-using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
+using DesktopAgent.Core.Displays;
+using DesktopAgent.Core.Geometry;
 using DesktopAgent.Core.Productization;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.Productization;
-using DesktopAgent.WindowsInterop.DesktopIcons;
-using DesktopAgent.WindowsInterop.DesktopObservations;
+using DesktopAgent.WindowsInterop.DesktopLayouts.Execution;
 using DesktopAgent.WindowsInterop.DesktopOverlays;
-using DesktopAgent.WindowsInterop.Displays;
+using DesktopAgent.WindowsInterop.Shell;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -20,40 +23,29 @@ using Windows.UI;
 
 namespace DesktopAgent.WinUI;
 
-public sealed partial class LayoutManagementView : UserControl
+public sealed partial class LayoutManagementView : UserControl, IDisposable
 {
     private const int LayoutListLimit = 100;
     private const double CanvasInset = 12d;
 
-    private readonly SqliteDesktopLayoutTemplateStore _templateStore =
-        new(DesktopAgentDataPaths.DefaultDatabasePath);
-    private readonly SqliteDesktopLayoutIconRuleStore _ruleStore =
-        new(DesktopAgentDataPaths.DefaultDatabasePath);
-    private readonly JsonDesktopProductSettingsStore _settingsStore =
-        new(DesktopAgentDataPaths.DefaultSettingsPath);
-    private readonly StaThreadExecutor _staThreadExecutor = new();
-    private readonly WindowsDesktopObservationSource _observationSource;
+    private readonly SqliteDesktopLayoutTemplateStore _templateStore = new(DesktopAgentDataPaths.DefaultDatabasePath);
+    private readonly SqliteDesktopLayoutIconRuleStore _ruleStore = new(DesktopAgentDataPaths.DefaultDatabasePath);
+    private readonly JsonDesktopProductSettingsStore _settingsStore = new(DesktopAgentDataPaths.DefaultSettingsPath);
+    private readonly WindowsShellDesktopObservationSource _observationSource = new();
     private readonly DesktopZoneOverlayHost _overlayHost = new();
 
     private readonly ObservableCollection<LayoutTemplateListItem> _templateItems = [];
     private readonly ObservableCollection<LayoutZoneListItem> _zoneItems = [];
     private readonly ObservableCollection<LayoutPreviewListItem> _previewItems = [];
 
-    private DesktopProductSettings _settings = DesktopProductSettings.CreateDefault();
+    private DesktopProductSettings _settings = DesktopProductSettings.Default;
     private DesktopLayoutEditDraft? _draft;
     private DesktopLayoutImpactPreview? _latestPreview;
-    private bool _initialized;
+    private bool _disposed;
 
     public LayoutManagementView()
     {
         InitializeComponent();
-
-        _observationSource = new WindowsDesktopObservationSource(
-            new NativeDisplayTopologyReader(),
-            new DesktopShellIconReader(),
-            new DesktopShellIconPositioningCapabilitiesReader(),
-            _staThreadExecutor);
-
         LayoutTemplateList.ItemsSource = _templateItems;
         LayoutZoneList.ItemsSource = _zoneItems;
         LayoutPreviewList.ItemsSource = _previewItems;
@@ -61,21 +53,25 @@ public sealed partial class LayoutManagementView : UserControl
         Unloaded += LayoutManagementView_Unloaded;
     }
 
-    private async void LayoutManagementView_Loaded(object sender, RoutedEventArgs e)
+    public void Dispose()
     {
-        if (_initialized)
+        if (_disposed)
             return;
 
-        _initialized = true;
+        _disposed = true;
+        _overlayHost.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private async void LayoutManagementView_Loaded(object sender, RoutedEventArgs e)
+    {
         try
         {
-            await EnsureStoresAsync();
             await RefreshLayoutsAsync();
-            RenderLayoutCanvas();
         }
         catch (Exception ex)
         {
-            ShowError("无法初始化布局", ex.Message);
+            ShowError("无法读取布局", ex.Message);
         }
     }
 
@@ -174,24 +170,24 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async Task<bool> EnsureDraftForSelectedLayoutAsync()
     {
+        // 保存布局的 Selection 是当前被动浏览上下文；Preview / Overlay 必须跟随它，
+        // 不能因为内存里还残留上一个 draft 就悄悄预览错布局。
+        if (LayoutTemplateList.SelectedItem is LayoutTemplateListItem selected)
+        {
+            if (_draft is not null && _draft.TemplateId == selected.TemplateId)
+                return true;
+
+            await LoadSelectedLayoutForPassiveViewAsync(selected);
+            SetLayoutInteractionMode(isEditing: false);
+            return true;
+        }
+
+        // 新建布局没有保存列表项，但它本身就是显式编辑中的 draft。
         if (_draft is not null)
             return true;
 
-        if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
-        {
-            ShowError("请选择布局", "先在左侧选择一个布局，或新建一个布局。 ");
-            return false;
-        }
-
-        await EnsureStoresAsync();
-        var template = await _templateStore.GetAsync(selected.TemplateId)
-            ?? throw new InvalidOperationException("所选布局已不存在，请刷新列表。");
-        var rules = await _ruleStore.GetAsync(selected.TemplateId)
-            ?? throw new InvalidDataException("布局存在，但 RuleSet 缺失。拒绝进入半状态编辑。");
-
-        _draft = DesktopLayoutEditDraft.FromPersisted(template, rules);
-        LoadDraftIntoEditor(_draft);
-        return true;
+        ShowError("请选择布局", "先在左侧选择一个布局，或新建一个布局。 ");
+        return false;
     }
 
     private async void SetActiveLayout_Click(object sender, RoutedEventArgs e)
@@ -626,38 +622,36 @@ public sealed partial class LayoutManagementView : UserControl
             => new(
                 summary.TemplateId,
                 summary.Name,
-                $"V{summary.Version} · {summary.ZoneCount} 区",
+                $"V{summary.Version} · {summary.TargetDisplayBinding.Kind}",
                 isActive ? "当前" : string.Empty);
     }
 
     private sealed record LayoutZoneListItem(
+        Guid ZoneId,
         string Name,
         string BoundsText,
         string FlowText)
     {
         public static LayoutZoneListItem From(DesktopLayoutZone zone)
             => new(
+                zone.ZoneId,
                 zone.Name,
-                $"{zone.Bounds.Width / 100d:0.#}% × {zone.Bounds.Height / 100d:0.#}%",
-                zone.PlacementFlow == ZonePlacementFlow.ColumnMajor ? "列" : "行");
+                $"{zone.Bounds.Left},{zone.Bounds.Top} → {zone.Bounds.Right},{zone.Bounds.Bottom}",
+                $"{zone.SortOrder + 1}");
     }
 
     private sealed record LayoutPreviewListItem(
         string DisplayName,
-        string StateText,
-        string PositionText)
+        string CompactText)
     {
-        public string CompactText => $"{StateText} · {PositionText}";
-
-        public static LayoutPreviewListItem From(DesktopLayoutRuleAwarePreviewItem item)
+        public static LayoutPreviewListItem From(DesktopLayoutPlanItem item)
         {
             var target = item.TargetPosition.HasValue
-                ? $"({item.TargetPosition.Value.X}, {item.TargetPosition.Value.Y})"
-                : "—";
+                ? $"→ ({item.TargetPosition.Value.X}, {item.TargetPosition.Value.Y})"
+                : "→ —";
             return new LayoutPreviewListItem(
                 item.Icon.DisplayName,
-                $"{item.Disposition} / {item.PlacementState}",
-                $"({item.CurrentPosition.X}, {item.CurrentPosition.Y}) → {target}");
+                $"{item.Disposition} · {target}");
         }
     }
 }
