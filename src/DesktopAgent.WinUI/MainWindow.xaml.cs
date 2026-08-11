@@ -26,6 +26,7 @@ public sealed partial class MainWindow : Window
     private readonly DpapiIntelligenceSecretStore _secretStore =
         new(DesktopAgentDataPaths.DefaultSecretsDirectory);
     private readonly ObservableCollection<PendingActionListItem> _pendingItems = new();
+    private readonly OverlayAppearanceSettingsView _overlayAppearanceSettingsView = new();
 
     private DesktopProductSettings _settings = DesktopProductSettings.CreateDefault();
     private bool _pendingStoreInitialized;
@@ -40,6 +41,7 @@ public sealed partial class MainWindow : Window
         PendingList.ItemsSource = _pendingItems;
         LayoutsView.Children.Clear();
         LayoutsView.Children.Add(new LayoutManagementView());
+        AttachOverlayAppearanceSettingsView();
         ShellNavigation.SelectedItem = ShellNavigation.MenuItems[0];
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -48,6 +50,21 @@ public sealed partial class MainWindow : Window
         _appWindow.Closing += OnAppWindowClosing;
 
         _trayIcon = new TrayIconHost(hwnd, ShowFromBackground);
+    }
+
+    private void AttachOverlayAppearanceSettingsView()
+    {
+        if (SettingsView.Children.Count == 0 ||
+            SettingsView.Children[0] is not ScrollViewer scrollViewer ||
+            scrollViewer.Content is not StackPanel settingsStack)
+        {
+            throw new InvalidOperationException("设置页结构不符合预期，无法挂载分区框外观面板。 ");
+        }
+
+        // 标题 / 副标题 / 首次运行 / Automation / AI 之后，状态栏与保存按钮之前。
+        settingsStack.Children.Insert(
+            Math.Min(5, settingsStack.Children.Count),
+            _overlayAppearanceSettingsView);
     }
 
     internal void ShowFromBackground()
@@ -158,7 +175,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            // LayoutManagementView 也可以更新 ActiveLayoutTemplateId。
+            // LayoutManagementView / OverlayAppearanceSettingsView 也可以更新产品偏好。
             // 保存设置前重新读取，避免用 MainWindow 的旧快照把跨页偏好覆盖掉。
             _settings = await _settingsStore.GetAsync();
 
@@ -198,7 +215,8 @@ public sealed partial class MainWindow : Window
                 baseUri,
                 model,
                 secretReference,
-                _settings.ActiveLayoutTemplateId);
+                _settings.ActiveLayoutTemplateId,
+                _settings.OverlayAppearance);
 
             if (candidate.AiBaseUri is not null)
             {
@@ -249,7 +267,8 @@ public sealed partial class MainWindow : Window
                     _settings.AiBaseUri,
                     _settings.AiModel,
                     aiSecretReference: null,
-                    activeLayoutTemplateId: _settings.ActiveLayoutTemplateId);
+                    activeLayoutTemplateId: _settings.ActiveLayoutTemplateId,
+                    overlayAppearance: _settings.OverlayAppearance);
                 await _settingsStore.SaveAsync(_settings);
             }
 
