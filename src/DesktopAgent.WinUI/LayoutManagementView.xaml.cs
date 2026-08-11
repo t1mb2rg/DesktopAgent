@@ -91,6 +91,12 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async void RefreshLayouts_Click(object sender, RoutedEventArgs e)
     {
+        if (_zoneColorPreferencesDirty)
+        {
+            ShowInfo("分区颜色尚未应用", "先应用或还原当前颜色修改，再刷新布局列表。", InfoBarSeverity.Informational);
+            return;
+        }
+
         try
         {
             await RefreshLayoutsAsync();
@@ -157,6 +163,7 @@ public sealed partial class LayoutManagementView : UserControl
         try
         {
             await EnsureStoresAsync();
+            _settings = await _settingsStore.GetAsync();
             var template = await _templateStore.GetAsync(selected.TemplateId)
                 ?? throw new InvalidOperationException("所选布局已不存在，请刷新列表。");
             var rules = await _ruleStore.GetAsync(selected.TemplateId)
@@ -184,6 +191,7 @@ public sealed partial class LayoutManagementView : UserControl
         }
 
         await EnsureStoresAsync();
+        _settings = await _settingsStore.GetAsync();
         var template = await _templateStore.GetAsync(selected.TemplateId)
             ?? throw new InvalidOperationException("所选布局已不存在，请刷新列表。");
         var rules = await _ruleStore.GetAsync(selected.TemplateId)
@@ -196,6 +204,12 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async void SetActiveLayout_Click(object sender, RoutedEventArgs e)
     {
+        if (_zoneColorPreferencesDirty)
+        {
+            ShowInfo("分区颜色尚未应用", "先应用或还原当前颜色修改，再切换当前布局。", InfoBarSeverity.Informational);
+            return;
+        }
+
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
         {
             ShowError("请选择布局", "先在左侧选一个要使用的布局。 ");
@@ -226,6 +240,12 @@ public sealed partial class LayoutManagementView : UserControl
         if (_draft is null)
         {
             ShowError("还没有布局", "先新建或打开一个布局。 ");
+            return;
+        }
+
+        if (_zoneColorPreferencesDirty)
+        {
+            ShowInfo("分区颜色尚未应用", "先应用或还原颜色修改，再替换分区。", InfoBarSeverity.Informational);
             return;
         }
 
@@ -292,15 +312,20 @@ public sealed partial class LayoutManagementView : UserControl
             LayoutCanvasStatusText.Text = "正在定位目标显示器…";
             var preview = await CapturePreviewAsync(draft);
 
+            _settings = await _settingsStore.GetAsync();
             ApplyPreviewToUi(preview);
-            _overlayHost.Show(preview.Plan.TargetDisplay, draft.Zones);
+            _overlayHost.Show(
+                preview.Plan.TargetDisplay,
+                draft.Zones,
+                _settings.OverlayAppearance,
+                GetCurrentZoneColorOverridesSnapshot());
             _draft = draft;
             OverlayToggleButton.Content = "▣ 隐藏线框";
             OverlayStateText.Text = "线框显示中 · 鼠标穿透";
 
             ShowInfo(
                 "桌面线框已显示",
-                "它只是一层鼠标穿透的辅助线，不会触碰桌面图标。",
+                "它只是一层鼠标穿透的辅助框，不会触碰桌面图标。",
                 InfoBarSeverity.Success);
         }
         catch (Exception ex)
@@ -363,6 +388,12 @@ public sealed partial class LayoutManagementView : UserControl
             return;
         }
 
+        if (_zoneColorPreferencesDirty)
+        {
+            ShowInfo("分区颜色尚未应用", "先应用或还原颜色修改，再保存布局。", InfoBarSeverity.Informational);
+            return;
+        }
+
         try
         {
             await EnsureStoresAsync();
@@ -396,6 +427,7 @@ public sealed partial class LayoutManagementView : UserControl
         _latestPreview = null;
         _zoneItems.Clear();
         _previewItems.Clear();
+        ClearZoneColorPreferencesForView();
         LayoutEditorPanel.Visibility = Visibility.Collapsed;
         LayoutEmptyEditorState.Visibility = Visibility.Visible;
         EditingBadge.Visibility = Visibility.Collapsed;
@@ -465,6 +497,7 @@ public sealed partial class LayoutManagementView : UserControl
         foreach (var zone in draft.Zones.OrderBy(zone => zone.SortOrder))
             _zoneItems.Add(LayoutZoneListItem.From(zone));
 
+        InitializeZoneColorPreferencesForDraft(draft);
         RenderLayoutCanvas();
     }
 
@@ -484,19 +517,10 @@ public sealed partial class LayoutManagementView : UserControl
         var drawableWidth = Math.Max(1d, width - CanvasInset * 2);
         var drawableHeight = Math.Max(1d, height - CanvasInset * 2);
 
-        var palette = new[]
-        {
-            (R: (byte)0x00, G: (byte)0x78, B: (byte)0xD4),
-            (R: (byte)0x76, G: (byte)0x5A, B: (byte)0xDB),
-            (R: (byte)0x10, G: (byte)0x7C, B: (byte)0x10),
-            (R: (byte)0xCA, G: (byte)0x50, B: (byte)0x10),
-        };
-
         var orderedZones = draft.Zones.OrderBy(zone => zone.SortOrder).ToArray();
-        for (var index = 0; index < orderedZones.Length; index++)
+        foreach (var zone in orderedZones)
         {
-            var zone = orderedZones[index];
-            var color = palette[index % palette.Length];
+            var color = ResolveZoneCanvasColor(zone.ZoneId);
             var left = CanvasInset + drawableWidth * zone.Bounds.Left / NormalizedRect.Scale;
             var top = CanvasInset + drawableHeight * zone.Bounds.Top / NormalizedRect.Scale;
             var zoneWidth = drawableWidth * zone.Bounds.Width / NormalizedRect.Scale;
