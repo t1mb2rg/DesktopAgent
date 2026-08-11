@@ -22,23 +22,42 @@ public sealed class DesktopOverlayAppearanceSettingsTests
         Assert.Equal(borderOpacity, actual.BorderOpacity);
         Assert.Equal(fillOpacity, actual.FillOpacity);
         Assert.Equal(cornerRadius, actual.CornerRadiusDip);
+        Assert.Equal(DesktopOverlayAppearanceSettings.DefaultZoneColorRgb, actual.ZoneColorRgb);
     }
 
     [Fact]
     public void CustomValues_AreValidatedAndPreserved()
     {
+        const uint customColor = 0x8A4FFFu;
         var actual = new DesktopOverlayAppearanceSettings(
             DesktopOverlayAppearancePreset.Custom,
             borderThicknessDip: 5.5d,
             borderOpacity: 0.8d,
             fillOpacity: 0.2d,
-            cornerRadiusDip: 24d);
+            cornerRadiusDip: 24d,
+            zoneColorRgb: customColor);
 
         Assert.Equal(DesktopOverlayAppearancePreset.Custom, actual.Preset);
         Assert.Equal(5.5d, actual.BorderThicknessDip);
         Assert.Equal(0.8d, actual.BorderOpacity);
         Assert.Equal(0.2d, actual.FillOpacity);
         Assert.Equal(24d, actual.CornerRadiusDip);
+        Assert.Equal(customColor, actual.ZoneColorRgb);
+    }
+
+    [Fact]
+    public void ChangingColor_MarksAppearanceCustom_AndPreservesGeometry()
+    {
+        var standard = DesktopOverlayAppearanceSettings.Standard;
+
+        var actual = standard.WithZoneColor(0xFFB900u);
+
+        Assert.Equal(DesktopOverlayAppearancePreset.Custom, actual.Preset);
+        Assert.Equal(0xFFB900u, actual.ZoneColorRgb);
+        Assert.Equal(standard.BorderThicknessDip, actual.BorderThicknessDip);
+        Assert.Equal(standard.BorderOpacity, actual.BorderOpacity);
+        Assert.Equal(standard.FillOpacity, actual.FillOpacity);
+        Assert.Equal(standard.CornerRadiusDip, actual.CornerRadiusDip);
     }
 
     [Theory]
@@ -62,5 +81,18 @@ public sealed class DesktopOverlayAppearanceSettingsTests
                 borderOpacity,
                 fillOpacity,
                 cornerRadius));
+    }
+
+    [Fact]
+    public void ColorOutside24BitRgb_IsRejected()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new DesktopOverlayAppearanceSettings(
+                DesktopOverlayAppearancePreset.Custom,
+                3d,
+                0.5d,
+                0.1d,
+                16d,
+                0x01_000000u));
     }
 }
