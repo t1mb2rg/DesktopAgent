@@ -21,9 +21,15 @@ public sealed class DesktopProductSettings
     public Guid? ActiveLayoutTemplateId { get; }
 
     /// <summary>
-    /// Desktop Zone Overlay 的纯视觉偏好。它不包含执行权限或图标位置。
+    /// Desktop Zone Overlay 的全局视觉偏好。它不包含执行权限或图标位置。
     /// </summary>
     public DesktopOverlayAppearanceSettings OverlayAppearance { get; }
+
+    /// <summary>
+    /// 可选的逐 Zone 颜色覆盖。Zone 未配置时继承 OverlayAppearance.ZoneColorRgb。
+    /// 该数据只属于产品展示偏好，不进入布局规划领域对象。
+    /// </summary>
+    public DesktopOverlayZoneColorPreferences OverlayZoneColors { get; }
 
     public DesktopProductSettings(
         DesktopAutomationMode automationMode,
@@ -33,7 +39,8 @@ public sealed class DesktopProductSettings
         string? aiModel,
         string? aiSecretReference,
         Guid? activeLayoutTemplateId = null,
-        DesktopOverlayAppearanceSettings? overlayAppearance = null)
+        DesktopOverlayAppearanceSettings? overlayAppearance = null,
+        DesktopOverlayZoneColorPreferences? overlayZoneColors = null)
     {
         if (!Enum.IsDefined(automationMode))
             throw new ArgumentOutOfRangeException(nameof(automationMode));
@@ -78,6 +85,7 @@ public sealed class DesktopProductSettings
         AiSecretReference = normalizedSecretReference;
         ActiveLayoutTemplateId = activeLayoutTemplateId;
         OverlayAppearance = overlayAppearance ?? DesktopOverlayAppearanceSettings.Standard;
+        OverlayZoneColors = overlayZoneColors ?? DesktopOverlayZoneColorPreferences.Empty;
     }
 
     public DesktopProductSettings WithActiveLayoutTemplate(Guid? templateId)
@@ -89,7 +97,8 @@ public sealed class DesktopProductSettings
             AiModel,
             AiSecretReference,
             templateId,
-            OverlayAppearance);
+            OverlayAppearance,
+            OverlayZoneColors);
 
     public DesktopProductSettings WithOverlayAppearance(DesktopOverlayAppearanceSettings appearance)
     {
@@ -102,7 +111,23 @@ public sealed class DesktopProductSettings
             AiModel,
             AiSecretReference,
             ActiveLayoutTemplateId,
-            appearance);
+            appearance,
+            OverlayZoneColors);
+    }
+
+    public DesktopProductSettings WithOverlayZoneColors(DesktopOverlayZoneColorPreferences zoneColors)
+    {
+        ArgumentNullException.ThrowIfNull(zoneColors);
+        return new DesktopProductSettings(
+            AutomationMode,
+            FirstRunCompleted,
+            AiEnabled,
+            AiBaseUri,
+            AiModel,
+            AiSecretReference,
+            ActiveLayoutTemplateId,
+            OverlayAppearance,
+            zoneColors);
     }
 
     public static DesktopProductSettings CreateDefault()
@@ -114,5 +139,6 @@ public sealed class DesktopProductSettings
             aiModel: null,
             aiSecretReference: null,
             activeLayoutTemplateId: null,
-            overlayAppearance: DesktopOverlayAppearanceSettings.Standard);
+            overlayAppearance: DesktopOverlayAppearanceSettings.Standard,
+            overlayZoneColors: DesktopOverlayZoneColorPreferences.Empty);
 }
