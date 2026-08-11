@@ -42,17 +42,16 @@ public partial class App
         _diagnosticsWorkbenchIdentityApplied = true;
         ApplyDiagnosticsWorkbenchIdentity(mainWindow);
 
-        // M5-06: Diagnostics 的普通启动是前台工程工具，不再建立第二套产品常驻 tray。
-        // 旧 M3 tray 只为显式 Debug unattended acceptance 保留，因为该验收需要从 tray
-        // 切换 RequestedMode=Automatic。正常诊断关闭主窗口后直接结束进程。
-        if (!IsResidentAcceptanceArmed())
+        var runtimeProfile = DiagnosticsWorkbenchRuntimeProfile.For(IsResidentAcceptanceArmed());
+        if (!runtimeProfile.KeepResidentTray)
         {
             var tray = _host.Services.GetRequiredService<M3TrayController>();
             if (tray.IsStarted)
                 tray.Dispose();
-
-            mainWindow.Closed += (_, _) => Shutdown();
         }
+
+        if (runtimeProfile.ShutdownOnMainWindowClose)
+            mainWindow.Closed += (_, _) => Shutdown();
     }
 
     private static bool IsResidentAcceptanceArmed()
