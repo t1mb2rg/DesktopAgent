@@ -18,6 +18,7 @@ public sealed class DesktopProductSettingsTests
         Assert.Null(settings.AiModel);
         Assert.Null(settings.AiSecretReference);
         Assert.Equal(DesktopOverlayAppearancePreset.Standard, settings.OverlayAppearance.Preset);
+        Assert.Empty(settings.OverlayZoneColors.Overrides);
     }
 
     [Fact]
@@ -52,25 +53,42 @@ public sealed class DesktopProductSettingsTests
     }
 
     [Fact]
-    public void CrossPageUpdates_PreserveOverlayAndActiveLayout()
+    public void CrossPageUpdates_PreserveOverlayActiveLayoutAndZoneColors()
     {
         var layoutId = Guid.NewGuid();
+        var zoneId = Guid.NewGuid();
         var appearance = new DesktopOverlayAppearanceSettings(
             DesktopOverlayAppearancePreset.Custom,
             4.5d,
             0.66d,
             0.11d,
             20d);
-        var original = DesktopProductSettings.CreateDefault()
-            .WithActiveLayoutTemplate(layoutId)
-            .WithOverlayAppearance(appearance);
+        var zoneColors = DesktopOverlayZoneColorPreferences.Empty
+            .WithOverride(zoneId, 0xFF8A3Du);
+        var original = new DesktopProductSettings(
+            DesktopAutomationMode.Assisted,
+            firstRunCompleted: true,
+            aiEnabled: false,
+            aiBaseUri: null,
+            aiModel: null,
+            aiSecretReference: null,
+            activeLayoutTemplateId: layoutId,
+            overlayAppearance: appearance,
+            overlayZoneColors: zoneColors);
 
         var switchedLayout = original.WithActiveLayoutTemplate(Guid.NewGuid());
         var changedAppearance = switchedLayout.WithOverlayAppearance(
             DesktopOverlayAppearanceSettings.FromPreset(DesktopOverlayAppearancePreset.Light));
+        var changedZoneColors = changedAppearance.WithOverlayZoneColors(
+            zoneColors.WithOverride(zoneId, 0x4C8DFFu));
 
         Assert.Same(appearance, switchedLayout.OverlayAppearance);
+        Assert.Same(zoneColors, switchedLayout.OverlayZoneColors);
         Assert.NotNull(changedAppearance.ActiveLayoutTemplateId);
         Assert.Equal(DesktopOverlayAppearancePreset.Light, changedAppearance.OverlayAppearance.Preset);
+        Assert.True(changedAppearance.OverlayZoneColors.TryGetOverride(zoneId, out var preservedColor));
+        Assert.Equal(0xFF8A3Du, preservedColor);
+        Assert.True(changedZoneColors.OverlayZoneColors.TryGetOverride(zoneId, out var changedColor));
+        Assert.Equal(0x4C8DFFu, changedColor);
     }
 }
