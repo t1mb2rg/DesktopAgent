@@ -9,6 +9,8 @@ namespace DesktopAgent.WinUI;
 /// </summary>
 public sealed partial class LayoutManagementView
 {
+    private bool _zoneColorAffordanceAdded;
+
     protected override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
@@ -34,5 +36,26 @@ public sealed partial class LayoutManagementView
         // 左侧列表必须消费剩余高度并在自身内部滚动，不能用固定最小高度
         // 把底部“编辑 / 使用”操作区推出当前视口。
         LayoutTemplateList.MinHeight = 0;
+
+        AddZoneColorAffordance();
+    }
+
+    private void AddZoneColorAffordance()
+    {
+        if (_zoneColorAffordanceAdded || LayoutZoneList.Parent is not StackPanel parent)
+            return;
+
+        var index = parent.Children.IndexOf(LayoutZoneList);
+        if (index < 0)
+            return;
+
+        parent.Children.Insert(index, new TextBlock
+        {
+            Text = "🎨 点击分区可设置独立颜色",
+            FontSize = 10,
+            Opacity = 0.52,
+            Margin = new Thickness(0, -2, 0, -2),
+        });
+        _zoneColorAffordanceAdded = true;
     }
 }
