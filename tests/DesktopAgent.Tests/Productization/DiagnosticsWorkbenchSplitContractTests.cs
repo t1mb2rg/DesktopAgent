@@ -24,6 +24,31 @@ public sealed class DiagnosticsWorkbenchSplitContractTests
     }
 
     [Fact]
+    public void DiagnosticsWindow_AppliesWorkbenchIdentityFromItsOwnFirstRenderedFrame()
+    {
+        var root = FindRepositoryRoot();
+        var identityPath = Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Poc",
+            "MainWindow.DiagnosticsWorkbenchIdentity.cs");
+        var source = File.ReadAllText(identityPath);
+
+        Assert.Contains("override void OnContentRendered", source, StringComparison.Ordinal);
+        Assert.Contains("DesktopAgent Diagnostics Workbench", source, StringComparison.Ordinal);
+        Assert.Contains("工程诊断工作台", source, StringComparison.Ordinal);
+        Assert.Contains("ScheduleDiagnosticsWorkbenchLifecycle", source, StringComparison.Ordinal);
+
+        var appSplit = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Poc",
+            "App.DiagnosticsWorkbenchSplit.cs"));
+        Assert.DoesNotContain("OnActivated", appSplit, StringComparison.Ordinal);
+        Assert.Contains("DispatcherPriority.ApplicationIdle", appSplit, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WindowsInterop_PreservesInternalExecutionGateForDiagnosticsOnlyByFriendAssembly()
     {
         var root = FindRepositoryRoot();
