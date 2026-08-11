@@ -104,6 +104,39 @@
                                 Maximum="32"
                                 StepFrequency="1"
                                 ValueChanged="AppearanceSlider_ValueChanged" />
+
+                        <Grid ColumnSpacing="8" Margin="0,2,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="分区颜色"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="OverlayColorHexText"
+                                       Grid.Column="1"
+                                       VerticalAlignment="Center"
+                                       Opacity="0.58" />
+                        </Grid>
+
+                        <Button HorizontalAlignment="Left">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border x:Name="OverlayColorSwatch"
+                                        Width="18"
+                                        Height="18"
+                                        CornerRadius="9"
+                                        BorderBrush="#40FFFFFF"
+                                        BorderThickness="1" />
+                                <TextBlock Text="选择颜色"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="OverlayColorPicker"
+                                                 IsAlphaEnabled="False"
+                                                 ColorChanged="OverlayColorPicker_ColorChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
                     </StackPanel>
                 </Expander>
 
@@ -158,7 +191,8 @@
                                                 Padding="9,5"
                                                 CornerRadius="10"
                                                 Background="#AA202020">
-                                            <TextBlock Text="工作区"
+                                            <TextBlock x:Name="PreviewLeftLabelText"
+                                                       Text="工作区"
                                                        Foreground="White"
                                                        FontSize="12" />
                                         </Border>
@@ -179,7 +213,8 @@
                                                 Padding="9,5"
                                                 CornerRadius="10"
                                                 Background="#AA202020">
-                                            <TextBlock Text="临时区"
+                                            <TextBlock x:Name="PreviewRightLabelText"
+                                                       Text="临时区"
                                                        Foreground="White"
                                                        FontSize="12" />
                                         </Border>
