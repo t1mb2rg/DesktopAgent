@@ -92,15 +92,32 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         ScheduleDesktopPreviewRefresh();
     }
 
-    private void AppearanceSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    private void AppearanceSlider_ValueChanged(
+        object sender,
+        Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (!_initialized || _suppressUiEvents)
             return;
 
-        _workingPreset = DesktopOverlayAppearancePreset.Custom;
-        SetPresetSelection(DesktopOverlayAppearancePreset.Custom);
+        MarkWorkingAppearanceCustom();
         UpdateValueLabelsAndPreview();
         ScheduleDesktopPreviewRefresh();
+    }
+
+    private void OverlayColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
+    {
+        if (!_initialized || _suppressUiEvents)
+            return;
+
+        MarkWorkingAppearanceCustom();
+        UpdateValueLabelsAndPreview();
+        ScheduleDesktopPreviewRefresh();
+    }
+
+    private void MarkWorkingAppearanceCustom()
+    {
+        _workingPreset = DesktopOverlayAppearancePreset.Custom;
+        SetPresetSelection(DesktopOverlayAppearancePreset.Custom);
     }
 
     private void ScheduleDesktopPreviewRefresh()
@@ -129,6 +146,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             BorderOpacitySlider.Value = appearance.BorderOpacity * 100d;
             FillOpacitySlider.Value = appearance.FillOpacity * 100d;
             CornerRadiusSlider.Value = appearance.CornerRadiusDip;
+            OverlayColorPicker.Color = ToColor(appearance.ZoneColorRgb);
             SetPresetSelection(appearance.Preset);
         }
         finally
@@ -161,7 +179,8 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             BorderThicknessSlider.Value,
             BorderOpacitySlider.Value / 100d,
             FillOpacitySlider.Value / 100d,
-            CornerRadiusSlider.Value);
+            CornerRadiusSlider.Value,
+            ToRgb(OverlayColorPicker.Color));
 
     private void UpdateValueLabelsAndPreview()
     {
@@ -178,21 +197,41 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         };
 
         var appearance = ReadWorkingAppearance();
+        var rgb = appearance.ZoneColorRgb;
+        var red = (byte)((rgb >> 16) & 0xFF);
+        var green = (byte)((rgb >> 8) & 0xFF);
+        var blue = (byte)(rgb & 0xFF);
+        var solidColor = Color.FromArgb(0xFF, red, green, blue);
+
+        OverlayColorHexText.Text = $"#{rgb:X6}";
+        OverlayColorSwatch.Background = new SolidColorBrush(solidColor);
+
         var borderBrush = new SolidColorBrush(Color.FromArgb(
             ToAlpha(appearance.BorderOpacity),
-            0x00,
-            0x78,
-            0xD4));
+            red,
+            green,
+            blue));
         var fillBrush = new SolidColorBrush(Color.FromArgb(
             ToAlpha(appearance.FillOpacity),
-            0x00,
-            0x78,
-            0xD4));
+            red,
+            green,
+            blue));
+        var labelBrush = new SolidColorBrush(Color.FromArgb(
+            ToAlpha(appearance.BorderOpacity),
+            red,
+            green,
+            blue));
+        var labelTextBrush = new SolidColorBrush(
+            IsLightColor(rgb) ? Colors.Black : Colors.White);
         var thickness = new Thickness(appearance.BorderThicknessDip);
         var radius = new CornerRadius(appearance.CornerRadiusDip);
 
         ApplyPreviewZoneStyle(PreviewLeftZone, borderBrush, fillBrush, thickness, radius);
         ApplyPreviewZoneStyle(PreviewRightZone, borderBrush, fillBrush, thickness, radius);
+        PreviewLeftLabel.Background = labelBrush;
+        PreviewRightLabel.Background = labelBrush;
+        PreviewLeftLabelText.Foreground = labelTextBrush;
+        PreviewRightLabelText.Foreground = labelTextBrush;
     }
 
     private static void ApplyPreviewZoneStyle(
@@ -283,6 +322,24 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         AppearanceStatusBar.Message = message;
         AppearanceStatusBar.Severity = severity;
         AppearanceStatusBar.IsOpen = true;
+    }
+
+    private static Color ToColor(uint rgb)
+        => Color.FromArgb(
+            0xFF,
+            (byte)((rgb >> 16) & 0xFF),
+            (byte)((rgb >> 8) & 0xFF),
+            (byte)(rgb & 0xFF));
+
+    private static uint ToRgb(Color color)
+        => ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
+
+    private static bool IsLightColor(uint rgb)
+    {
+        var red = (int)((rgb >> 16) & 0xFF);
+        var green = (int)((rgb >> 8) & 0xFF);
+        var blue = (int)(rgb & 0xFF);
+        return red * 299 + green * 587 + blue * 114 >= 160_000;
     }
 
     private static byte ToAlpha(double opacity)
