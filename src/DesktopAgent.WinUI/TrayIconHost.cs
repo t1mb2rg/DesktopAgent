@@ -20,6 +20,7 @@ public interface ITrayCommandTarget
 /// <summary>
 /// WinUI 产品壳的 Windows 通知区域宿主。
 /// 左键恢复主窗口；右键提供少量高频产品入口，不承载 Writer 或自动化执行能力。
+/// Explorer / 任务栏重启后会通过 TaskbarCreated 广播重新注册托盘图标。
 /// </summary>
 internal sealed class TrayIconHost : IDisposable
 {
@@ -52,6 +53,7 @@ internal sealed class TrayIconHost : IDisposable
     private readonly IntPtr _hwnd;
     private readonly Action<TrayIconCommand> _commandAction;
     private readonly WindowProcDelegate _windowProc;
+    private readonly uint _taskbarCreatedMessage;
     private IntPtr _previousWindowProc;
     private bool _iconAdded;
     private bool _disposed;
@@ -69,6 +71,9 @@ internal sealed class TrayIconHost : IDisposable
         _hwnd = hwnd;
         _commandAction = commandAction ?? throw new ArgumentNullException(nameof(commandAction));
         _windowProc = WindowProc;
+        _taskbarCreatedMessage = RegisterWindowMessageW("TaskbarCreated");
+        if (_taskbarCreatedMessage == 0)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法注册 TaskbarCreated 消息。");
 
         var callbackPointer = Marshal.GetFunctionPointerForDelegate(_windowProc);
         _previousWindowProc = SetWindowLongPtrW(_hwnd, GwlpWndProc, callbackPointer);
@@ -119,6 +124,21 @@ internal sealed class TrayIconHost : IDisposable
 
     private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (message == _taskbarCreatedMessage && !_disposed)
+        {
+            try
+            {
+                // Explorer 重启会清空旧通知区域注册。应用进程仍然存活，因此收到
+                // TaskbarCreated 后只需要重新向新 Shell 注册同一个 hWnd/uID 图标。
+                _iconAdded = false;
+                AddIcon();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Tray re-registration after TaskbarCreated failed: {ex}");
+            }
+        }
+
         if (message == TrayCallbackMessage)
         {
             var mouseMessage = unchecked((uint)lParam.ToInt64());
@@ -308,6 +328,9 @@ internal sealed class TrayIconHost : IDisposable
         uint message,
         IntPtr wParam,
         IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint RegisterWindowMessageW(string message);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr CreatePopupMenu();
