@@ -10,20 +10,16 @@ namespace DesktopAgent.WindowsInterop.DesktopOverlays;
 /// <summary>
 /// 只读 Desktop Zone 线框叠层。
 ///
-/// 该类型只创建鼠标穿透、不可激活的顶层辅助窗口，用于在真实桌面上显示 Zone 边界与名称；
-/// 不读取或写入图标位置，也不暴露任何 Writer 能力。
+/// Overlay 由 Windows Shell desktop window 拥有，保持在普通应用窗口之后；
+/// 同时使用 layered + transparent + no-activate，确保它只承担桌面空间提示职责，
+/// 不抢焦点、不拦截鼠标，也不读取或写入任何桌面图标位置。
 /// </summary>
 public sealed class DesktopZoneOverlayHost : IDisposable
 {
-    private const int BorderBaseThickness = 2;
-    private const int LabelBaseHeight = 28;
-    private const int LabelBaseWidth = 128;
-    private const int LabelInset = 8;
-
-    private readonly List<nint> _windows = [];
+    private nint _window;
     private bool _disposed;
 
-    public bool IsVisible => _windows.Count > 0;
+    public bool IsVisible => _window != nint.Zero && NativeOverlayWindow.IsAlive(_window);
 
     public void Show(DisplayDescriptor display, IReadOnlyList<DesktopLayoutZone> zones)
     {
@@ -34,57 +30,16 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         if (zones.Count == 0)
             throw new ArgumentException("至少需要一个 Zone 才能显示桌面线框。", nameof(zones));
 
-        NativeOverlayWindow.EnsureRegistered();
         Hide();
-
-        try
-        {
-            var scale = Math.Max(1d, display.ScaleX);
-            var thickness = Math.Max(1, (int)Math.Round(BorderBaseThickness * scale));
-
-            foreach (var zone in zones.OrderBy(zone => zone.SortOrder))
-            {
-                var rect = MapZoneToPixelRect(display, zone);
-                if (rect.Width <= 0 || rect.Height <= 0)
-                    continue;
-
-                AddBorder(rect.Left, rect.Top, rect.Width, thickness);
-                AddBorder(rect.Left, rect.Bottom - thickness, rect.Width, thickness);
-                AddBorder(rect.Left, rect.Top, thickness, rect.Height);
-                AddBorder(rect.Right - thickness, rect.Top, thickness, rect.Height);
-
-                var availableWidth = Math.Max(0, rect.Width - LabelInset * 2);
-                if (availableWidth < 48)
-                    continue;
-
-                var labelWidth = Math.Min(
-                    Math.Max(72, (int)Math.Round(LabelBaseWidth * scale)),
-                    availableWidth);
-                var labelHeight = Math.Min(
-                    Math.Max(22, (int)Math.Round(LabelBaseHeight * scale)),
-                    Math.Max(22, rect.Height - LabelInset * 2));
-
-                AddLabel(
-                    zone.Name,
-                    rect.Left + LabelInset,
-                    rect.Top + LabelInset,
-                    labelWidth,
-                    labelHeight);
-            }
-        }
-        catch
-        {
-            Hide();
-            throw;
-        }
+        _window = NativeOverlayWindow.Create(display, zones);
     }
 
     public void Hide()
     {
-        foreach (var hwnd in _windows)
+        var hwnd = _window;
+        _window = nint.Zero;
+        if (hwnd != nint.Zero)
             NativeOverlayWindow.Destroy(hwnd);
-
-        _windows.Clear();
     }
 
     public void Dispose()
@@ -119,48 +74,40 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             Scale(work.Top, work.Height, bounds.Bottom));
     }
 
-    private void AddBorder(int x, int y, int width, int height)
-    {
-        if (width <= 0 || height <= 0)
-            return;
-
-        _windows.Add(NativeOverlayWindow.CreateBorder(x, y, width, height));
-    }
-
-    private void AddLabel(string text, int x, int y, int width, int height)
-    {
-        if (width <= 0 || height <= 0)
-            return;
-
-        _windows.Add(NativeOverlayWindow.CreateLabel(text, x, y, width, height));
-    }
-
     private static class NativeOverlayWindow
     {
-        private const string BorderClassName = "DesktopAgent.ZoneOverlay.Border";
-        private const string LabelClassName = "DesktopAgent.ZoneOverlay.Label";
+        private const string WindowClassName = "DesktopAgent.ZoneOverlay.Canvas";
 
         private const uint WsPopup = 0x80000000;
-        private const uint WsExTopmost = 0x00000008;
         private const uint WsExTransparent = 0x00000020;
         private const uint WsExToolWindow = 0x00000080;
         private const uint WsExLayered = 0x00080000;
         private const uint WsExNoActivate = 0x08000000;
         private const uint OverlayExStyle =
-            WsExTopmost | WsExTransparent | WsExToolWindow | WsExLayered | WsExNoActivate;
+            WsExTransparent | WsExToolWindow | WsExLayered | WsExNoActivate;
 
         private const int SwShowNoActivate = 4;
         private const uint SwpNoActivate = 0x0010;
         private const uint SwpShowWindow = 0x0040;
-        private static readonly nint HwndTopMost = new(-1);
+        private const uint SwpNoOwnerZOrder = 0x0200;
+        private static readonly nint HwndBottom = new(1);
 
+        private const uint LwaColorKey = 0x00000001;
         private const uint LwaAlpha = 0x00000002;
+        private const byte OverlayAlpha = 180;
+
+        private const uint WmEraseBackground = 0x0014;
         private const uint WmPaint = 0x000F;
         private const uint WmNcDestroy = 0x0082;
         private const uint WmNcHitTest = 0x0084;
         private const uint WmMouseActivate = 0x0021;
         private const int HtTransparent = -1;
         private const int MaNoActivate = 3;
+
+        private const int BorderBaseThickness = 1;
+        private const int LabelBaseHeight = 26;
+        private const int LabelBaseWidth = 128;
+        private const int LabelInset = 8;
 
         private const int TransparentBackgroundMode = 1;
         private const uint DtLeft = 0x00000000;
@@ -175,10 +122,12 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         private const uint DefaultPitch = 0;
 
         private static readonly object RegistrationLock = new();
-        private static readonly ConcurrentDictionary<nint, string> LabelTexts = new();
-        private static readonly WindowProcedure BorderProcedure = BorderWindowProcedure;
-        private static readonly WindowProcedure LabelProcedure = LabelWindowProcedure;
+        private static readonly ConcurrentDictionary<nint, OverlayState> States = new();
+        private static readonly WindowProcedure Procedure = OverlayWindowProcedure;
 
+        // 使用一个不太可能与 UI 颜色重合的 key；该颜色像素由 layered window 完全透明化。
+        private static readonly uint TransparentColor = Rgb(0x01, 0x02, 0x03);
+        private static readonly nint TransparentBrush = CreateSolidBrush(TransparentColor);
         private static readonly nint AccentBrush = CreateSolidBrush(Rgb(0x00, 0x78, 0xD4));
         private static readonly nint LabelBrush = CreateSolidBrush(Rgb(0x20, 0x20, 0x20));
         private static readonly nint LabelFont = CreateFontW(
@@ -199,7 +148,102 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
         private static bool _registered;
 
-        public static void EnsureRegistered()
+        public static bool IsAlive(nint hwnd)
+            => hwnd != nint.Zero && IsWindow(hwnd);
+
+        public static nint Create(
+            DisplayDescriptor display,
+            IReadOnlyList<DesktopLayoutZone> zones)
+        {
+            EnsureRegistered();
+
+            var shellWindow = GetShellWindow();
+            if (shellWindow == nint.Zero)
+            {
+                throw new InvalidOperationException(
+                    "Windows Shell desktop window 当前不可用，拒绝创建全局顶层线框作为回退。 ");
+            }
+
+            var work = display.WorkArea;
+            if (work.Width <= 0 || work.Height <= 0)
+                throw new InvalidOperationException("目标显示器 WorkArea 无效。 ");
+
+            var hwnd = CreateWindowExW(
+                OverlayExStyle,
+                WindowClassName,
+                string.Empty,
+                WsPopup,
+                work.Left,
+                work.Top,
+                work.Width,
+                work.Height,
+                shellWindow,
+                nint.Zero,
+                GetModuleHandleW(null),
+                nint.Zero);
+
+            if (hwnd == nint.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建 Desktop Zone overlay window。 ");
+
+            States[hwnd] = new OverlayState(
+                work.Width,
+                work.Height,
+                Math.Max(1d, display.ScaleX),
+                zones.OrderBy(zone => zone.SortOrder).ToArray());
+
+            try
+            {
+                if (!SetLayeredWindowAttributes(
+                        hwnd,
+                        TransparentColor,
+                        OverlayAlpha,
+                        LwaColorKey | LwaAlpha))
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "无法设置 Desktop Zone overlay 透明度。 ");
+                }
+
+                // 关键边界：绝不使用 WS_EX_TOPMOST / HWND_TOPMOST。
+                // Overlay 由 Shell desktop window 拥有，并请求 normal Z-order 底部，
+                // 让普通应用窗口自然覆盖它，而不是让桌面辅助线压在应用之上。
+                if (!SetWindowPos(
+                        hwnd,
+                        HwndBottom,
+                        work.Left,
+                        work.Top,
+                        work.Width,
+                        work.Height,
+                        SwpNoActivate | SwpShowWindow | SwpNoOwnerZOrder))
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "无法定位 Desktop Zone overlay。 ");
+                }
+
+                _ = ShowWindow(hwnd, SwShowNoActivate);
+                _ = InvalidateRect(hwnd, nint.Zero, erase: false);
+                return hwnd;
+            }
+            catch
+            {
+                States.TryRemove(hwnd, out _);
+                _ = DestroyWindow(hwnd);
+                throw;
+            }
+        }
+
+        public static void Destroy(nint hwnd)
+        {
+            if (hwnd == nint.Zero)
+                return;
+
+            States.TryRemove(hwnd, out _);
+            if (IsWindow(hwnd))
+                _ = DestroyWindow(hwnd);
+        }
+
+        private static void EnsureRegistered()
         {
             if (_registered)
                 return;
@@ -209,175 +253,177 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 if (_registered)
                     return;
 
-                Register(BorderClassName, BorderProcedure);
-                Register(LabelClassName, LabelProcedure);
+                var instance = GetModuleHandleW(null);
+                var windowClass = new WindowClassEx
+                {
+                    Size = (uint)Marshal.SizeOf<WindowClassEx>(),
+                    Instance = instance,
+                    WindowProcedure = Marshal.GetFunctionPointerForDelegate(Procedure),
+                    ClassName = WindowClassName,
+                };
+
+                if (RegisterClassExW(ref windowClass) == 0)
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        $"无法注册 overlay window class: {WindowClassName}");
+                }
+
                 _registered = true;
             }
         }
 
-        public static nint CreateBorder(int x, int y, int width, int height)
-            => Create(BorderClassName, string.Empty, x, y, width, height, alpha: 120);
-
-        public static nint CreateLabel(string text, int x, int y, int width, int height)
+        private static nint OverlayWindowProcedure(nint hwnd, uint message, nint wParam, nint lParam)
         {
-            var hwnd = Create(LabelClassName, text, x, y, width, height, alpha: 205);
-            LabelTexts[hwnd] = text;
-            InvalidateRect(hwnd, nint.Zero, erase: true);
-            return hwnd;
+            // 任何 managed 绘制异常都不得穿过 native WndProc 边界导致整个产品进程退出。
+            try
+            {
+                if (message == WmNcHitTest)
+                    return new nint(HtTransparent);
+                if (message == WmMouseActivate)
+                    return new nint(MaNoActivate);
+                if (message == WmEraseBackground)
+                    return new nint(1);
+                if (message == WmNcDestroy)
+                    States.TryRemove(hwnd, out _);
+                if (message == WmPaint)
+                {
+                    PaintOverlay(hwnd);
+                    return nint.Zero;
+                }
+            }
+            catch
+            {
+                // Fail visually rather than terminate the WinUI process.
+            }
+
+            return DefWindowProcW(hwnd, message, wParam, lParam);
         }
 
-        public static void Destroy(nint hwnd)
+        private static void PaintOverlay(nint hwnd)
         {
-            if (hwnd == nint.Zero)
+            var hdc = BeginPaint(hwnd, out var paint);
+            try
+            {
+                if (!GetClientRect(hwnd, out var clientRect))
+                    return;
+
+                _ = FillRect(hdc, ref clientRect, TransparentBrush);
+
+                if (!States.TryGetValue(hwnd, out var state))
+                    return;
+
+                var thickness = Math.Max(1, (int)Math.Round(BorderBaseThickness * state.Scale));
+                foreach (var zone in state.Zones)
+                {
+                    var rect = MapZoneToClientRect(state, zone);
+                    if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
+                        continue;
+
+                    FillStrip(hdc, rect.Left, rect.Top, rect.Right - rect.Left, thickness, AccentBrush);
+                    FillStrip(hdc, rect.Left, rect.Bottom - thickness, rect.Right - rect.Left, thickness, AccentBrush);
+                    FillStrip(hdc, rect.Left, rect.Top, thickness, rect.Bottom - rect.Top, AccentBrush);
+                    FillStrip(hdc, rect.Right - thickness, rect.Top, thickness, rect.Bottom - rect.Top, AccentBrush);
+
+                    DrawLabel(hdc, state, zone.Name, rect);
+                }
+            }
+            finally
+            {
+                _ = EndPaint(hwnd, ref paint);
+            }
+        }
+
+        private static NativeRect MapZoneToClientRect(OverlayState state, DesktopLayoutZone zone)
+        {
+            var bounds = zone.Bounds;
+            static int Scale(int length, int normalized)
+                => (int)Math.Round(
+                    length * (normalized / (double)NormalizedRect.Scale),
+                    MidpointRounding.AwayFromZero);
+
+            return new NativeRect
+            {
+                Left = Scale(state.Width, bounds.Left),
+                Top = Scale(state.Height, bounds.Top),
+                Right = Scale(state.Width, bounds.Right),
+                Bottom = Scale(state.Height, bounds.Bottom),
+            };
+        }
+
+        private static void FillStrip(nint hdc, int x, int y, int width, int height, nint brush)
+        {
+            if (width <= 0 || height <= 0)
                 return;
 
-            LabelTexts.TryRemove(hwnd, out _);
-            _ = DestroyWindow(hwnd);
+            var rect = new NativeRect
+            {
+                Left = x,
+                Top = y,
+                Right = x + width,
+                Bottom = y + height,
+            };
+            _ = FillRect(hdc, ref rect, brush);
         }
 
-        private static nint Create(
-            string className,
-            string title,
-            int x,
-            int y,
-            int width,
-            int height,
-            byte alpha)
+        private static void DrawLabel(
+            nint hdc,
+            OverlayState state,
+            string text,
+            NativeRect zoneRect)
         {
-            var hwnd = CreateWindowExW(
-                OverlayExStyle,
-                className,
-                title,
-                WsPopup,
-                x,
-                y,
-                width,
-                height,
-                nint.Zero,
-                nint.Zero,
-                GetModuleHandleW(null),
-                nint.Zero);
+            var zoneWidth = zoneRect.Right - zoneRect.Left;
+            var zoneHeight = zoneRect.Bottom - zoneRect.Top;
+            var availableWidth = Math.Max(0, zoneWidth - LabelInset * 2);
+            if (availableWidth < 48 || zoneHeight < 30)
+                return;
 
-            if (hwnd == nint.Zero)
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "无法创建 Desktop Zone overlay window。");
+            var width = Math.Min(
+                Math.Max(72, (int)Math.Round(LabelBaseWidth * state.Scale)),
+                availableWidth);
+            var height = Math.Min(
+                Math.Max(22, (int)Math.Round(LabelBaseHeight * state.Scale)),
+                Math.Max(22, zoneHeight - LabelInset * 2));
 
-            if (!SetLayeredWindowAttributes(hwnd, 0, alpha, LwaAlpha))
+            var labelRect = new NativeRect
             {
-                var error = Marshal.GetLastWin32Error();
-                _ = DestroyWindow(hwnd);
-                throw new Win32Exception(error, "无法设置 Desktop Zone overlay 透明度。");
-            }
-
-            _ = SetWindowPos(
-                hwnd,
-                HwndTopMost,
-                x,
-                y,
-                width,
-                height,
-                SwpNoActivate | SwpShowWindow);
-            _ = ShowWindow(hwnd, SwShowNoActivate);
-            _ = UpdateWindow(hwnd);
-            return hwnd;
-        }
-
-        private static void Register(string className, WindowProcedure procedure)
-        {
-            var instance = GetModuleHandleW(null);
-            var windowClass = new WindowClassEx
-            {
-                Size = (uint)Marshal.SizeOf<WindowClassEx>(),
-                Instance = instance,
-                WindowProcedure = Marshal.GetFunctionPointerForDelegate(procedure),
-                ClassName = className,
+                Left = zoneRect.Left + LabelInset,
+                Top = zoneRect.Top + LabelInset,
+                Right = zoneRect.Left + LabelInset + width,
+                Bottom = zoneRect.Top + LabelInset + height,
             };
 
-            if (RegisterClassExW(ref windowClass) == 0)
-                throw new Win32Exception(Marshal.GetLastWin32Error(), $"无法注册 overlay window class: {className}");
-        }
+            _ = FillRect(hdc, ref labelRect, LabelBrush);
+            _ = SetBkMode(hdc, TransparentBackgroundMode);
+            _ = SetTextColor(hdc, Rgb(0xFF, 0xFF, 0xFF));
 
-        private static nint BorderWindowProcedure(nint hwnd, uint message, nint wParam, nint lParam)
-        {
-            if (message == WmNcHitTest)
-                return new nint(HtTransparent);
-            if (message == WmMouseActivate)
-                return new nint(MaNoActivate);
-            if (message == WmPaint)
-            {
-                PaintSolid(hwnd, AccentBrush);
-                return nint.Zero;
-            }
-
-            return DefWindowProcW(hwnd, message, wParam, lParam);
-        }
-
-        private static nint LabelWindowProcedure(nint hwnd, uint message, nint wParam, nint lParam)
-        {
-            if (message == WmNcHitTest)
-                return new nint(HtTransparent);
-            if (message == WmMouseActivate)
-                return new nint(MaNoActivate);
-            if (message == WmNcDestroy)
-                LabelTexts.TryRemove(hwnd, out _);
-            if (message == WmPaint)
-            {
-                PaintLabel(hwnd);
-                return nint.Zero;
-            }
-
-            return DefWindowProcW(hwnd, message, wParam, lParam);
-        }
-
-        private static void PaintSolid(nint hwnd, nint brush)
-        {
-            var hdc = BeginPaint(hwnd, out var paint);
+            var previousFont = LabelFont == nint.Zero ? nint.Zero : SelectObject(hdc, LabelFont);
             try
             {
-                _ = FillRect(hdc, ref paint.PaintRect, brush);
+                labelRect.Left += 9;
+                labelRect.Right -= 7;
+                _ = DrawTextW(
+                    hdc,
+                    text,
+                    text.Length,
+                    ref labelRect,
+                    DtLeft | DtVCenter | DtSingleLine | DtEndEllipsis);
             }
             finally
             {
-                _ = EndPaint(hwnd, ref paint);
-            }
-        }
-
-        private static void PaintLabel(nint hwnd)
-        {
-            var hdc = BeginPaint(hwnd, out var paint);
-            try
-            {
-                _ = GetClientRect(hwnd, out var rect);
-                _ = FillRect(hdc, ref rect, LabelBrush);
-                _ = SetBkMode(hdc, TransparentBackgroundMode);
-                _ = SetTextColor(hdc, Rgb(0xFF, 0xFF, 0xFF));
-
-                var previousFont = LabelFont == nint.Zero ? nint.Zero : SelectObject(hdc, LabelFont);
-                try
-                {
-                    rect.Left += 9;
-                    rect.Right -= 7;
-                    var text = LabelTexts.GetValueOrDefault(hwnd, string.Empty);
-                    _ = DrawTextW(
-                        hdc,
-                        text,
-                        text.Length,
-                        ref rect,
-                        DtLeft | DtVCenter | DtSingleLine | DtEndEllipsis);
-                }
-                finally
-                {
-                    if (previousFont != nint.Zero)
-                        _ = SelectObject(hdc, previousFont);
-                }
-            }
-            finally
-            {
-                _ = EndPaint(hwnd, ref paint);
+                if (previousFont != nint.Zero)
+                    _ = SelectObject(hdc, previousFont);
             }
         }
 
         private static uint Rgb(byte red, byte green, byte blue)
             => (uint)(red | (green << 8) | (blue << 16));
+
+        private sealed record OverlayState(
+            int Width,
+            int Height,
+            double Scale,
+            DesktopLayoutZone[] Zones);
 
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         private delegate nint WindowProcedure(nint hwnd, uint message, nint wParam, nint lParam);
@@ -408,19 +454,30 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             public int Bottom;
         }
 
+        // PAINTSTRUCT 使用纯 blittable 字段，避免 fixed array / bool marshalling 进入 WndProc 热路径。
         [StructLayout(LayoutKind.Sequential)]
         private struct PaintStruct
         {
             public nint DeviceContext;
-            [MarshalAs(UnmanagedType.Bool)] public bool Erase;
+            public int Erase;
             public NativeRect PaintRect;
-            [MarshalAs(UnmanagedType.Bool)] public bool Restore;
-            [MarshalAs(UnmanagedType.Bool)] public bool Update;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)] public byte[] Reserved;
+            public int Restore;
+            public int Update;
+            private long Reserved0;
+            private long Reserved1;
+            private long Reserved2;
+            private long Reserved3;
         }
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern nint GetModuleHandleW(string? moduleName);
+
+        [DllImport("user32.dll")]
+        private static extern nint GetShellWindow();
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool IsWindow(nint hwnd);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern ushort RegisterClassExW(ref WindowClassEx windowClass);
@@ -462,10 +519,6 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool ShowWindow(nint hwnd, int commandShow);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool UpdateWindow(nint hwnd);
 
         [DllImport("user32.dll")]
         private static extern nint DefWindowProcW(nint hwnd, uint message, nint wParam, nint lParam);
