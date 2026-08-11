@@ -17,16 +17,33 @@ namespace DesktopAgent.WindowsInterop.DesktopOverlays;
 /// </summary>
 public sealed class DesktopZoneOverlayHost : IDisposable
 {
+    private static DesktopOverlayAppearanceSettings _defaultAppearance =
+        DesktopOverlayAppearanceSettings.Standard;
+
     private nint _fillWindow;
     private nint _chromeWindow;
     private bool _disposed;
+
+    /// <summary>
+    /// 当前进程中新建 Overlay 使用的产品外观快照。设置页只在读取/应用已持久化偏好后更新它。
+    /// 显式传入 appearance 的桌面临时预览不受此值限制。
+    /// </summary>
+    public static DesktopOverlayAppearanceSettings DefaultAppearance
+    {
+        get => _defaultAppearance;
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            _defaultAppearance = value;
+        }
+    }
 
     public bool IsVisible =>
         (_chromeWindow != nint.Zero && NativeOverlayWindow.IsAlive(_chromeWindow)) ||
         (_fillWindow != nint.Zero && NativeOverlayWindow.IsAlive(_fillWindow));
 
     public void Show(DisplayDescriptor display, IReadOnlyList<DesktopLayoutZone> zones)
-        => Show(display, zones, DesktopOverlayAppearanceSettings.Standard);
+        => Show(display, zones, DefaultAppearance);
 
     public void Show(
         DisplayDescriptor display,
