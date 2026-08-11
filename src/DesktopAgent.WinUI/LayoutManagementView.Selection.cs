@@ -9,9 +9,7 @@ public sealed partial class LayoutManagementView
     private bool _suppressTemplateSelectionChanged;
     private bool _isLayoutEditing;
 
-    private async void LayoutTemplateList_SelectionChanged(
-        object sender,
-        SelectionChangedEventArgs e)
+    private async void LayoutTemplateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressTemplateSelectionChanged)
             return;
@@ -25,10 +23,7 @@ public sealed partial class LayoutManagementView
                 return;
 
             RestoreSelectionToCurrentDraft();
-            ShowInfo(
-                "正在编辑布局",
-                "先保存或取消当前编辑，再切换到其他布局。",
-                InfoBarSeverity.Informational);
+            ShowInfo("正在编辑布局", "先保存或取消当前编辑，再切换到其他布局。", InfoBarSeverity.Informational);
             return;
         }
 
@@ -57,10 +52,7 @@ public sealed partial class LayoutManagementView
                 await LoadSelectedLayoutForPassiveViewAsync(selected);
 
             SetLayoutInteractionMode(isEditing: true);
-            ShowInfo(
-                "可以编辑了",
-                "修改完成后保存即可；编辑期间自动化保持暂停。",
-                InfoBarSeverity.Informational);
+            ShowInfo("可以编辑了", "修改完成后保存即可；编辑期间自动化保持暂停。", InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
@@ -93,11 +85,8 @@ public sealed partial class LayoutManagementView
         var rules = await _ruleStore.GetAsync(selected.TemplateId)
             ?? throw new InvalidDataException("布局存在，但 RuleSet 缺失。拒绝进入半状态展示。");
 
-        if (LayoutTemplateList.SelectedItem is LayoutTemplateListItem current &&
-            current.TemplateId != selected.TemplateId)
-        {
+        if (LayoutTemplateList.SelectedItem is LayoutTemplateListItem current && current.TemplateId != selected.TemplateId)
             return;
-        }
 
         _draft = DesktopLayoutEditDraft.FromPersisted(template, rules);
         LoadDraftIntoEditor(_draft);
@@ -107,7 +96,6 @@ public sealed partial class LayoutManagementView
     private void SetLayoutInteractionMode(bool isEditing)
     {
         _isLayoutEditing = isEditing;
-
         EditingBadge.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
         LayoutNameTextBox.IsReadOnly = !isEditing;
         LayoutTargetBindingCombo.IsEnabled = isEditing;
@@ -116,18 +104,14 @@ public sealed partial class LayoutManagementView
         ApplyPresetButton.IsEnabled = isEditing;
         SaveLayoutButton.IsEnabled = isEditing;
         CancelLayoutEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
-        EditLayoutButton.IsEnabled = !isEditing &&
-                                     LayoutTemplateList.SelectedItem is LayoutTemplateListItem;
+        EditLayoutButton.IsEnabled = !isEditing && LayoutTemplateList.SelectedItem is LayoutTemplateListItem;
     }
 
     private void RestoreSelectionToCurrentDraft()
     {
         LayoutTemplateListItem? item = null;
         if (_draft is { IsNew: false })
-        {
-            item = _templateItems.FirstOrDefault(
-                candidate => candidate.TemplateId == _draft.TemplateId);
-        }
+            item = _templateItems.FirstOrDefault(candidate => candidate.TemplateId == _draft.TemplateId);
 
         SetSelectedTemplateWithoutNotification(item);
     }
