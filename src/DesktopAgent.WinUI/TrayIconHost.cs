@@ -12,6 +12,11 @@ internal enum TrayIconCommand
     Exit = 4,
 }
 
+internal interface ITrayCommandTarget
+{
+    void HandleTrayCommand(TrayIconCommand command);
+}
+
 /// <summary>
 /// WinUI 产品壳的 Windows 通知区域宿主。
 /// 左键恢复主窗口；右键提供少量高频产品入口，不承载 Writer 或自动化执行能力。
@@ -51,6 +56,14 @@ internal sealed class TrayIconHost : IDisposable
     private bool _iconAdded;
     private bool _disposed;
 
+    public TrayIconHost(IntPtr hwnd, Action restoreAction)
+        : this(
+            hwnd,
+            command => DispatchLegacyRestoreTarget(restoreAction, command))
+    {
+        ArgumentNullException.ThrowIfNull(restoreAction);
+    }
+
     public TrayIconHost(IntPtr hwnd, Action<TrayIconCommand> commandAction)
     {
         if (hwnd == IntPtr.Zero)
@@ -74,6 +87,20 @@ internal sealed class TrayIconHost : IDisposable
             RestoreWindowProcedure();
             throw;
         }
+    }
+
+    private static void DispatchLegacyRestoreTarget(Action restoreAction, TrayIconCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(restoreAction);
+
+        if (restoreAction.Target is ITrayCommandTarget commandTarget)
+        {
+            commandTarget.HandleTrayCommand(command);
+            return;
+        }
+
+        if (command is not TrayIconCommand.Exit)
+            restoreAction();
     }
 
     private void AddIcon()
@@ -130,8 +157,6 @@ internal sealed class TrayIconHost : IDisposable
             if (!GetCursorPos(out var cursor))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "无法读取 tray 菜单位置。");
 
-            // Windows notification-area context menus need the owner foregrounded so that
-            // clicking elsewhere dismisses the menu reliably.
             _ = SetForegroundWindow(_hwnd);
             var commandId = TrackPopupMenuEx(
                 menu,
