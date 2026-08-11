@@ -36,7 +36,6 @@
                  IsOpen="False"
                  IsClosable="True" />
 
-        <!-- Hard viewport contract: no outer vertical ScrollViewer. -->
         <Grid Grid.Row="2"
               MinWidth="980"
               MinHeight="0"
@@ -48,7 +47,6 @@
                 <ColumnDefinition Width="300" />
             </Grid.ColumnDefinitions>
 
-            <!-- Left rail: header + scrollable list + fixed footer. -->
             <Border Grid.Column="0"
                     MinHeight="0"
                     VerticalAlignment="Stretch"
@@ -115,7 +113,6 @@
                 </Grid>
             </Border>
 
-            <!-- Center canvas: flexible visual area with fixed command footer. -->
             <Border Grid.Column="1"
                     MinHeight="0"
                     VerticalAlignment="Stretch"
@@ -165,18 +162,9 @@
                                         HorizontalAlignment="Center"
                                         VerticalAlignment="Center"
                                         Spacing="7">
-                                <TextBlock Text="▦"
-                                           FontSize="42"
-                                           HorizontalAlignment="Center"
-                                           Opacity="0.35" />
-                                <TextBlock Text="选择一个布局看看"
-                                           FontSize="17"
-                                           FontWeight="SemiBold"
-                                           HorizontalAlignment="Center" />
-                                <TextBlock Text="分区和预览位置会直接画在这里"
-                                           FontSize="12"
-                                           Opacity="0.52"
-                                           HorizontalAlignment="Center" />
+                                <TextBlock Text="▦" FontSize="42" HorizontalAlignment="Center" Opacity="0.35" />
+                                <TextBlock Text="选择一个布局看看" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                <TextBlock Text="分区和预览位置会直接画在这里" FontSize="12" Opacity="0.52" HorizontalAlignment="Center" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -186,35 +174,14 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Border Padding="10,8"
-                                CornerRadius="8"
-                                Background="{ThemeResource LayerFillColorDefaultBrush}">
-                            <StackPanel Spacing="1">
-                                <TextBlock Text="移动" FontSize="11" Opacity="0.52" />
-                                <TextBlock x:Name="MoveCountText" Text="—" FontSize="18" FontWeight="SemiBold" />
-                            </StackPanel>
+                        <Border Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                            <StackPanel Spacing="1"><TextBlock Text="移动" FontSize="11" Opacity="0.52" /><TextBlock x:Name="MoveCountText" Text="—" FontSize="18" FontWeight="SemiBold" /></StackPanel>
                         </Border>
-                        <Border Grid.Column="1"
-                                Padding="10,8"
-                                CornerRadius="8"
-                                Background="{ThemeResource LayerFillColorDefaultBrush}">
-                            <StackPanel Spacing="1">
-                                <TextBlock Text="保持" FontSize="11" Opacity="0.52" />
-                                <TextBlock x:Name="StayCountText" Text="—" FontSize="18" FontWeight="SemiBold" />
-                            </StackPanel>
+                        <Border Grid.Column="1" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                            <StackPanel Spacing="1"><TextBlock Text="保持" FontSize="11" Opacity="0.52" /><TextBlock x:Name="StayCountText" Text="—" FontSize="18" FontWeight="SemiBold" /></StackPanel>
                         </Border>
-                        <Border Grid.Column="2"
-                                Padding="10,8"
-                                CornerRadius="8"
-                                Background="{ThemeResource LayerFillColorDefaultBrush}">
-                            <StackPanel Spacing="1">
-                                <TextBlock Text="目标屏" FontSize="11" Opacity="0.52" />
-                                <TextBlock x:Name="TargetDisplayText"
-                                           Text="—"
-                                           FontSize="13"
-                                           FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
+                        <Border Grid.Column="2" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                            <StackPanel Spacing="1"><TextBlock Text="目标屏" FontSize="11" Opacity="0.52" /><TextBlock x:Name="TargetDisplayText" Text="—" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /></StackPanel>
                         </Border>
                     </Grid>
                     <Grid Grid.Row="3" ColumnSpacing="8">
@@ -225,25 +192,13 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <Button Content="↻ 预览" Click="PreviewLayout_Click" />
-                        <Button Grid.Column="1"
-                                x:Name="OverlayToggleButton"
-                                Content="▣ 桌面线框"
-                                Click="ToggleOverlay_Click" />
-                        <TextBlock Grid.Column="2"
-                                   x:Name="OverlayStateText"
-                                   Text="线框关闭"
-                                   FontSize="12"
-                                   Opacity="0.55"
-                                   VerticalAlignment="Center" />
-                        <Button Grid.Column="3"
-                                x:Name="SaveLayoutButton"
-                                Content="保存"
-                                Click="SaveLayout_Click" />
+                        <Button Grid.Column="1" x:Name="OverlayToggleButton" Content="▣ 桌面线框" Click="ToggleOverlay_Click" />
+                        <TextBlock Grid.Column="2" x:Name="OverlayStateText" Text="线框关闭" FontSize="12" Opacity="0.55" VerticalAlignment="Center" />
+                        <Button Grid.Column="3" x:Name="SaveLayoutButton" Content="保存" Click="SaveLayout_Click" />
                     </Grid>
                 </Grid>
             </Border>
 
-            <!-- Right rail: the only vertically scrolling region. -->
             <Border Grid.Column="2"
                     MinHeight="0"
                     VerticalAlignment="Stretch"
@@ -261,58 +216,35 @@
                                     Spacing="8"
                                     Margin="0,120,0,0">
                             <TextBlock Text="布局属性" FontSize="17" FontWeight="SemiBold" />
-                            <TextBlock Text="选择布局后，这里会显示它的主要属性。"
-                                       TextWrapping="Wrap"
-                                       FontSize="12"
-                                       Opacity="0.58" />
+                            <TextBlock Text="选择布局后，这里会显示它的主要属性。" TextWrapping="Wrap" FontSize="12" Opacity="0.58" />
                         </StackPanel>
                         <StackPanel x:Name="LayoutEditorPanel"
                                     Visibility="Collapsed"
                                     Spacing="10">
                             <TextBlock Text="布局属性" FontSize="17" FontWeight="SemiBold" />
-                            <TextBox x:Name="LayoutNameTextBox"
-                                     Header="名称"
-                                     PlaceholderText="工作 / 游戏 / 课程" />
-                            <ComboBox x:Name="LayoutTargetBindingCombo"
-                                      Header="目标显示器"
-                                      SelectedIndex="0">
+                            <TextBox x:Name="LayoutNameTextBox" Header="名称" PlaceholderText="工作 / 游戏 / 课程" />
+                            <ComboBox x:Name="LayoutTargetBindingCombo" Header="目标显示器" SelectedIndex="0">
                                 <ComboBoxItem Content="主显示器" />
                                 <ComboBoxItem Content="当前选择" />
                                 <ComboBoxItem Content="固定设备" />
                             </ComboBox>
-                            <TextBox x:Name="LayoutDeviceNameTextBox"
-                                     Header="设备名"
-                                     PlaceholderText="\\.\DISPLAY1" />
+                            <TextBox x:Name="LayoutDeviceNameTextBox" Header="设备名" PlaceholderText="\\.\DISPLAY1" />
                             <Grid ColumnSpacing="6">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <ComboBox x:Name="LayoutPresetCombo"
-                                          Header="分区"
-                                          SelectedIndex="1">
+                                <ComboBox x:Name="LayoutPresetCombo" Header="分区" SelectedIndex="1">
                                     <ComboBoxItem Content="单区" />
                                     <ComboBoxItem Content="左右两栏" />
                                     <ComboBoxItem Content="三栏" />
                                     <ComboBoxItem Content="2 × 2" />
                                 </ComboBox>
-                                <Button Grid.Column="1"
-                                        x:Name="ApplyPresetButton"
-                                        Content="应用"
-                                        VerticalAlignment="Bottom"
-                                        Click="ApplyPreset_Click" />
+                                <Button Grid.Column="1" x:Name="ApplyPresetButton" Content="应用" VerticalAlignment="Bottom" Click="ApplyPreset_Click" />
                             </Grid>
-                            <TextBlock x:Name="LayoutRuleSummaryText"
-                                       Text="0 条规则"
-                                       FontSize="12"
-                                       Opacity="0.58" />
-                            <TextBlock Text="🎨 点击分区可设置独立颜色"
-                                       FontSize="10"
-                                       Opacity="0.52" />
-                            <ListView x:Name="LayoutZoneList"
-                                      Height="145"
-                                      SelectionMode="Single"
-                                      SelectionChanged="LayoutZoneList_SelectionChanged">
+                            <TextBlock x:Name="LayoutRuleSummaryText" Text="0 条规则" FontSize="12" Opacity="0.58" />
+                            <TextBlock Text="🎨 点击分区可设置独立颜色" FontSize="10" Opacity="0.52" />
+                            <ListView x:Name="LayoutZoneList" Height="145" SelectionMode="Single" SelectionChanged="LayoutZoneList_SelectionChanged">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
                                         <Grid Padding="4,5" ColumnSpacing="6">
@@ -324,20 +256,12 @@
                                                 <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
                                                 <TextBlock Text="{Binding BoundsText}" FontSize="10" Opacity="0.45" />
                                             </StackPanel>
-                                            <TextBlock Grid.Column="1"
-                                                       Text="{Binding FlowText}"
-                                                       FontSize="11"
-                                                       Opacity="0.55"
-                                                       VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Text="{Binding FlowText}" FontSize="11" Opacity="0.55" VerticalAlignment="Center" />
                                         </Grid>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
                             </ListView>
-                            <Border x:Name="ZoneColorEditorPanel"
-                                    Visibility="Collapsed"
-                                    Padding="10"
-                                    CornerRadius="9"
-                                    Background="{ThemeResource LayerFillColorDefaultBrush}">
+                            <Border x:Name="ZoneColorEditorPanel" Visibility="Collapsed" Padding="10" CornerRadius="9" Background="{ThemeResource LayerFillColorDefaultBrush}">
                                 <StackPanel Spacing="8">
                                     <Grid ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
@@ -345,96 +269,51 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Spacing="1">
-                                            <TextBlock x:Name="SelectedZoneColorNameText"
-                                                       FontWeight="SemiBold"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock x:Name="ZoneColorInheritanceText"
-                                                       FontSize="10"
-                                                       Opacity="0.52" />
+                                            <TextBlock x:Name="SelectedZoneColorNameText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock x:Name="ZoneColorInheritanceText" FontSize="10" Opacity="0.52" />
                                         </StackPanel>
-                                        <Border x:Name="SelectedZoneColorSwatch"
-                                                Grid.Column="1"
-                                                Width="22"
-                                                Height="22"
-                                                CornerRadius="11"
-                                                BorderBrush="#40FFFFFF"
-                                                BorderThickness="1"
-                                                VerticalAlignment="Center" />
+                                        <Border x:Name="SelectedZoneColorSwatch" Grid.Column="1" Width="22" Height="22" CornerRadius="11" BorderBrush="#40FFFFFF" BorderThickness="1" VerticalAlignment="Center" />
                                     </Grid>
-                                    <ToggleSwitch x:Name="ZoneColorOverrideToggle"
-                                                  Header="单独颜色"
-                                                  Toggled="ZoneColorOverrideToggle_Toggled" />
-                                    <Button x:Name="ZoneColorPickerButton"
-                                            HorizontalAlignment="Stretch">
+                                    <ToggleSwitch x:Name="ZoneColorOverrideToggle" Header="单独颜色" Toggled="ZoneColorOverrideToggle_Toggled" />
+                                    <Button x:Name="ZoneColorPickerButton" HorizontalAlignment="Stretch">
                                         <Grid ColumnSpacing="8">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <TextBlock Text="选择颜色" />
-                                            <TextBlock x:Name="SelectedZoneColorHexText"
-                                                       Grid.Column="1"
-                                                       Opacity="0.58" />
+                                            <TextBlock x:Name="SelectedZoneColorHexText" Grid.Column="1" Opacity="0.58" />
                                         </Grid>
                                         <Button.Flyout>
                                             <Flyout>
-                                                <ColorPicker x:Name="ZoneColorPicker"
-                                                             ColorSpectrumShape="Ring"
-                                                             IsAlphaEnabled="False"
-                                                             ColorChanged="ZoneColorPicker_ColorChanged" />
+                                                <ColorPicker x:Name="ZoneColorPicker" ColorSpectrumShape="Ring" IsAlphaEnabled="False" ColorChanged="ZoneColorPicker_ColorChanged" />
                                             </Flyout>
                                         </Button.Flyout>
                                     </Button>
-                                    <TextBlock x:Name="ZoneColorHintText"
-                                               FontSize="10"
-                                               TextWrapping="Wrap"
-                                               Opacity="0.52" />
+                                    <TextBlock x:Name="ZoneColorHintText" FontSize="10" TextWrapping="Wrap" Opacity="0.52" />
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button x:Name="ApplyZoneColorsButton"
-                                                Content="应用颜色"
-                                                IsEnabled="False"
-                                                Click="ApplyZoneColorsButton_Click" />
-                                        <Button x:Name="RevertZoneColorsButton"
-                                                Content="还原"
-                                                IsEnabled="False"
-                                                Click="RevertZoneColorsButton_Click" />
+                                        <Button x:Name="ApplyZoneColorsButton" Content="应用颜色" IsEnabled="False" Click="ApplyZoneColorsButton_Click" />
+                                        <Button x:Name="RevertZoneColorsButton" Content="还原" IsEnabled="False" Click="RevertZoneColorsButton_Click" />
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
-                            <Expander x:Name="LayoutPreviewDetails"
-                                      Header="详细影响"
-                                      Visibility="Collapsed">
+                            <Expander x:Name="LayoutPreviewDetails" Header="详细影响" Visibility="Collapsed">
                                 <StackPanel Spacing="7" Padding="0,8,0,0">
-                                    <TextBlock x:Name="LayoutPreviewSummaryText"
-                                               TextWrapping="Wrap"
-                                               FontSize="12" />
-                                    <TextBlock x:Name="LayoutPreviewObservationText"
-                                               TextWrapping="Wrap"
-                                               FontSize="10"
-                                               Opacity="0.48" />
-                                    <ListView x:Name="LayoutPreviewList"
-                                              Height="210"
-                                              SelectionMode="None">
+                                    <TextBlock x:Name="LayoutPreviewSummaryText" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock x:Name="LayoutPreviewObservationText" TextWrapping="Wrap" FontSize="10" Opacity="0.48" />
+                                    <ListView x:Name="LayoutPreviewList" Height="210" SelectionMode="None">
                                         <ListView.ItemTemplate>
                                             <DataTemplate>
                                                 <StackPanel Padding="3,4" Spacing="1">
-                                                    <TextBlock Text="{Binding DisplayName}"
-                                                               FontSize="12"
-                                                               TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding CompactText}"
-                                                               FontSize="10"
-                                                               Opacity="0.48"
-                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding DisplayName}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding CompactText}" FontSize="10" Opacity="0.48" TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
                                             </DataTemplate>
                                         </ListView.ItemTemplate>
                                     </ListView>
                                 </StackPanel>
                             </Expander>
-                            <Button x:Name="CancelLayoutEditButton"
-                                    Content="取消编辑"
-                                    HorizontalAlignment="Left"
-                                    Click="CancelLayoutEditWithMode_Click" />
+                            <Button x:Name="CancelLayoutEditButton" Content="取消编辑" HorizontalAlignment="Left" Click="CancelLayoutEditWithMode_Click" />
                         </StackPanel>
                     </Grid>
                 </ScrollViewer>
