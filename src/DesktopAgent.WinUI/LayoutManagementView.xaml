@@ -3,192 +3,377 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Spacing="12" MaxWidth="980" HorizontalAlignment="Left">
-            <TextBlock Text="布局" FontSize="30" FontWeight="SemiBold" />
-            <TextBlock Text="创建、预览并保存桌面布局。预览只读取当前桌面事实，保存只修改布局元数据。"
-                       TextWrapping="Wrap"
-                       Opacity="0.72" />
+                  HorizontalScrollBarVisibility="Auto">
+        <Grid MinWidth="980"
+              RowSpacing="14">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-            <InfoBar IsOpen="True"
-                     IsClosable="False"
-                     Severity="Informational"
-                     Title="M5-05 安全边界"
-                     Message="这里没有“应用到桌面”按钮。任何未来真实执行都必须重新观察并 Fresh Replan，当前产品壳不持有 Writer。" />
-
-            <Border Padding="16"
-                    CornerRadius="10"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                <StackPanel Spacing="10">
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="我的布局" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock x:Name="LayoutSummaryText"
-                                       Text="正在读取布局…"
-                                       Opacity="0.68" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    Spacing="8"
-                                    VerticalAlignment="Center">
-                            <Button Content="刷新" Click="RefreshLayouts_Click" />
-                            <Button Content="新建布局" Click="NewLayout_Click" />
-                            <Button Content="加载编辑" Click="LoadLayout_Click" />
-                            <Button Content="设为当前" Click="SetActiveLayout_Click" />
-                        </StackPanel>
-                    </Grid>
-
-                    <ListView x:Name="LayoutTemplateList"
-                              Height="190"
-                              SelectionMode="Single">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Padding="8,4" ColumnSpacing="14">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding Name}"
-                                               FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Text="{Binding VersionText}" Opacity="0.66" />
-                                    <TextBlock Grid.Column="2" Text="{Binding ZoneText}" Opacity="0.66" />
-                                    <TextBlock Grid.Column="3" Text="{Binding ActiveText}" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="4">
+                    <TextBlock Text="布局" FontSize="30" FontWeight="SemiBold" />
+                    <TextBlock Text="看见空间，再决定怎么摆。"
+                               Opacity="0.62" />
                 </StackPanel>
-            </Border>
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center">
+                    <Button Content="↻"
+                            Width="40"
+                            ToolTipService.ToolTip="刷新布局列表"
+                            Click="RefreshLayouts_Click" />
+                    <Button Content="＋ 新建"
+                            Click="NewLayout_Click" />
+                </StackPanel>
+            </Grid>
 
             <InfoBar x:Name="LayoutStatusBar"
+                     Grid.Row="1"
                      IsOpen="False"
                      IsClosable="True" />
 
-            <Border x:Name="LayoutEditorCard"
-                    Visibility="Collapsed"
-                    Padding="16"
-                    CornerRadius="10"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                <StackPanel Spacing="10">
-                    <TextBlock Text="布局草稿" FontSize="18" FontWeight="SemiBold" />
-                    <InfoBar x:Name="LayoutEditingBlockInfoBar"
-                             IsOpen="True"
-                             IsClosable="False"
-                             Severity="Warning"
-                             Title="Automation Policy：BLOCK"
-                             Message="正在编辑布局。草稿、预览和保存都不会触发自动桌面移动。" />
+            <Grid Grid.Row="2" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220" />
+                    <ColumnDefinition Width="*" MinWidth="420" />
+                    <ColumnDefinition Width="290" />
+                </Grid.ColumnDefinitions>
 
-                    <TextBox x:Name="LayoutNameTextBox"
-                             Header="布局名称"
-                             PlaceholderText="例如：工作 / 游戏 / 课程" />
+                <!-- Layout list -->
+                <Border Padding="12"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Grid RowSpacing="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="我的布局" FontSize="17" FontWeight="SemiBold" />
+                            <TextBlock x:Name="LayoutSummaryText"
+                                       Text="正在读取…"
+                                       FontSize="12"
+                                       Opacity="0.58"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
 
-                    <ComboBox x:Name="LayoutTargetBindingCombo"
-                              Header="目标显示器绑定"
-                              SelectedIndex="0">
-                        <ComboBoxItem Content="主显示器" />
-                        <ComboBoxItem Content="当前选择的显示器" />
-                        <ComboBoxItem Content="固定设备名" />
-                    </ComboBox>
-
-                    <TextBox x:Name="LayoutDeviceNameTextBox"
-                             Header="设备名（当前选择 / 固定设备名时使用）"
-                             PlaceholderText="例如 \\.\DISPLAY1；主显示器模式可留空" />
-
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <ComboBox x:Name="LayoutPresetCombo"
-                                  Header="常用分区预设"
-                                  SelectedIndex="1">
-                            <ComboBoxItem Content="单区全屏" />
-                            <ComboBoxItem Content="左右两栏" />
-                            <ComboBoxItem Content="三栏" />
-                            <ComboBoxItem Content="2 × 2 四宫格" />
-                        </ComboBox>
-                        <Button Grid.Column="1"
-                                Content="套用到草稿"
-                                VerticalAlignment="Bottom"
-                                Click="ApplyPreset_Click" />
-                    </Grid>
-
-                    <StackPanel Spacing="4">
-                        <TextBlock x:Name="LayoutRuleSummaryText"
-                                   Text="规则：0"
-                                   Opacity="0.68" />
-                        <ListView x:Name="LayoutZoneList"
-                                  Height="150"
-                                  SelectionMode="None">
+                        <ListView x:Name="LayoutTemplateList"
+                                  Grid.Row="1"
+                                  MinHeight="420"
+                                  SelectionMode="Single">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Padding="6,3" ColumnSpacing="12">
+                                    <Grid Padding="6,7" ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="2*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                        <TextBlock Grid.Column="1" Text="{Binding BoundsText}" Opacity="0.68" />
-                                        <TextBlock Grid.Column="2" Text="{Binding FlowText}" Opacity="0.68" />
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="{Binding Name}"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding SecondaryText}"
+                                                       FontSize="11"
+                                                       Opacity="0.56" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding ActiveText}"
+                                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                   VerticalAlignment="Center" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                    </StackPanel>
 
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="重新观察并预览影响" Click="PreviewLayout_Click" />
-                        <Button Content="原子保存草稿" Click="SaveLayout_Click" />
-                        <Button Content="取消编辑" Click="CancelLayoutEdit_Click" />
-                    </StackPanel>
-                </StackPanel>
-            </Border>
+                        <Grid Grid.Row="2" ColumnSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Content="编辑"
+                                    HorizontalAlignment="Stretch"
+                                    Click="LoadLayout_Click" />
+                            <Button Grid.Column="1"
+                                    Content="使用"
+                                    HorizontalAlignment="Stretch"
+                                    Click="SetActiveLayout_Click" />
+                        </Grid>
+                    </Grid>
+                </Border>
 
-            <Border x:Name="LayoutPreviewCard"
-                    Visibility="Collapsed"
-                    Padding="16"
-                    CornerRadius="10"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="影响预览" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock x:Name="LayoutPreviewSummaryText"
-                               TextWrapping="Wrap" />
-                    <TextBlock x:Name="LayoutPreviewObservationText"
-                               TextWrapping="Wrap"
-                               Opacity="0.62" />
-                    <InfoBar IsOpen="True"
-                             IsClosable="False"
-                             Severity="Informational"
-                             Title="Preview ≠ Execute"
-                             Message="此预览只说明“按刚刚观察到的桌面会发生什么”。它不会被保存成待重放命令。" />
-                    <ListView x:Name="LayoutPreviewList"
-                              Height="230"
-                              SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Padding="6,3" ColumnSpacing="12">
+                <!-- Visual canvas -->
+                <Border Grid.Column="1"
+                        Padding="14"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Grid RowSpacing="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock x:Name="LayoutCanvasDraftNameText"
+                                           Text="桌面画布"
+                                           FontSize="17"
+                                           FontWeight="SemiBold" />
+                                <TextBlock x:Name="LayoutCanvasStatusText"
+                                           Text="新建或加载一个布局开始编辑"
+                                           FontSize="12"
+                                           Opacity="0.58" />
+                            </StackPanel>
+                            <Border Grid.Column="1"
+                                    x:Name="EditingBadge"
+                                    Visibility="Collapsed"
+                                    Padding="9,4"
+                                    CornerRadius="10"
+                                    Background="{ThemeResource AccentFillColorSecondaryBrush}"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="编辑中 · 自动化暂停"
+                                           FontSize="11" />
+                            </Border>
+                        </Grid>
+
+                        <Border Grid.Row="1"
+                                Height="390"
+                                CornerRadius="10"
+                                Background="{ThemeResource LayerFillColorDefaultBrush}">
+                            <Grid>
+                                <Canvas x:Name="LayoutCanvas"
+                                        SizeChanged="LayoutCanvas_SizeChanged" />
+                                <StackPanel x:Name="LayoutCanvasEmptyState"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Spacing="7">
+                                    <TextBlock Text="▦"
+                                               FontSize="42"
+                                               HorizontalAlignment="Center"
+                                               Opacity="0.35" />
+                                    <TextBlock Text="选择一个布局看看"
+                                               FontSize="17"
+                                               FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="分区和预览位置会直接画在这里"
+                                               FontSize="12"
+                                               Opacity="0.52"
+                                               HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <Grid Grid.Row="2" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Padding="10,8"
+                                    CornerRadius="8"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="移动" FontSize="11" Opacity="0.52" />
+                                    <TextBlock x:Name="MoveCountText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="1"
+                                    Padding="10,8"
+                                    CornerRadius="8"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="保持" FontSize="11" Opacity="0.52" />
+                                    <TextBlock x:Name="StayCountText" Text="—" FontSize="18" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="2"
+                                    Padding="10,8"
+                                    CornerRadius="8"
+                                    Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                <StackPanel Spacing="1">
+                                    <TextBlock Text="目标屏" FontSize="11" Opacity="0.52" />
+                                    <TextBlock x:Name="TargetDisplayText"
+                                               Text="—"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Grid Grid.Row="3" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Button Content="↻ 预览"
+                                    Click="PreviewLayout_Click" />
+                            <Button Grid.Column="1"
+                                    x:Name="OverlayToggleButton"
+                                    Content="▣ 桌面线框"
+                                    Click="ToggleOverlay_Click" />
+                            <TextBlock Grid.Column="2"
+                                       x:Name="OverlayStateText"
+                                       Text="线框关闭"
+                                       FontSize="12"
+                                       Opacity="0.55"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="3"
+                                    Content="保存"
+                                    Click="SaveLayout_Click" />
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- Lightweight properties -->
+                <Border Grid.Column="2"
+                        Padding="14"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <Grid>
+                            <StackPanel x:Name="LayoutEmptyEditorState"
+                                        VerticalAlignment="Center"
+                                        Spacing="8"
+                                        Margin="0,120,0,0">
+                                <TextBlock Text="布局属性"
+                                           FontSize="17"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="新建或编辑布局后，这里只保留真正需要调整的东西。"
+                                           TextWrapping="Wrap"
+                                           FontSize="12"
+                                           Opacity="0.58" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="LayoutEditorPanel"
+                                        Visibility="Collapsed"
+                                        Spacing="10">
+                                <TextBlock Text="布局属性"
+                                           FontSize="17"
+                                           FontWeight="SemiBold" />
+
+                                <TextBox x:Name="LayoutNameTextBox"
+                                         Header="名称"
+                                         PlaceholderText="工作 / 游戏 / 课程" />
+
+                                <ComboBox x:Name="LayoutTargetBindingCombo"
+                                          Header="目标显示器"
+                                          SelectedIndex="0">
+                                    <ComboBoxItem Content="主显示器" />
+                                    <ComboBoxItem Content="当前选择" />
+                                    <ComboBoxItem Content="固定设备" />
+                                </ComboBox>
+
+                                <TextBox x:Name="LayoutDeviceNameTextBox"
+                                         Header="设备名"
+                                         PlaceholderText="\\.\DISPLAY1" />
+
+                                <Grid ColumnSpacing="6">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="2*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Grid.Column="1" Text="{Binding StateText}" Opacity="0.7" />
-                                    <TextBlock Grid.Column="2" Text="{Binding PositionText}" Opacity="0.7" />
+                                    <ComboBox x:Name="LayoutPresetCombo"
+                                              Header="分区"
+                                              SelectedIndex="1">
+                                        <ComboBoxItem Content="单区" />
+                                        <ComboBoxItem Content="左右两栏" />
+                                        <ComboBoxItem Content="三栏" />
+                                        <ComboBoxItem Content="2 × 2" />
+                                    </ComboBox>
+                                    <Button Grid.Column="1"
+                                            Content="应用"
+                                            VerticalAlignment="Bottom"
+                                            Click="ApplyPreset_Click" />
                                 </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </StackPanel>
-            </Border>
-        </StackPanel>
+
+                                <TextBlock x:Name="LayoutRuleSummaryText"
+                                           Text="0 条规则"
+                                           FontSize="12"
+                                           Opacity="0.58" />
+
+                                <ListView x:Name="LayoutZoneList"
+                                          Height="170"
+                                          SelectionMode="None">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="4,5" ColumnSpacing="6">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="1">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding BoundsText}"
+                                                               FontSize="10"
+                                                               Opacity="0.45" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding FlowText}"
+                                                           FontSize="11"
+                                                           Opacity="0.55"
+                                                           VerticalAlignment="Center" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <Expander x:Name="LayoutPreviewDetails"
+                                          Header="详细影响"
+                                          Visibility="Collapsed">
+                                    <StackPanel Spacing="7" Padding="0,8,0,0">
+                                        <TextBlock x:Name="LayoutPreviewSummaryText"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="12" />
+                                        <TextBlock x:Name="LayoutPreviewObservationText"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="10"
+                                                   Opacity="0.48" />
+                                        <ListView x:Name="LayoutPreviewList"
+                                                  Height="210"
+                                                  SelectionMode="None">
+                                            <ListView.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Padding="3,4" Spacing="1">
+                                                        <TextBlock Text="{Binding DisplayName}"
+                                                                   FontSize="12"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding CompactText}"
+                                                                   FontSize="10"
+                                                                   Opacity="0.48"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListView.ItemTemplate>
+                                        </ListView>
+                                    </StackPanel>
+                                </Expander>
+
+                                <Button Content="取消编辑"
+                                        HorizontalAlignment="Left"
+                                        Click="CancelLayoutEdit_Click" />
+                            </StackPanel>
+                        </Grid>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </Grid>
     </ScrollViewer>
 </UserControl>
