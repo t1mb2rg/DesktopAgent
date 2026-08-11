@@ -11,10 +11,36 @@ namespace DesktopAgent.WinUI;
 public sealed partial class LayoutManagementView
 {
     private readonly Dictionary<Guid, uint> _workingZoneColorOverrides = new();
+    private readonly DispatcherTimer _zoneColorOverlayRefreshTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(120),
+    };
+
     private Guid? _selectedZoneColorZoneId;
     private uint _selectedZoneWorkingColorRgb;
     private bool _suppressZoneColorUiEvents;
     private bool _zoneColorPreferencesDirty;
+
+    private void InitializeZoneColorUi()
+        => _zoneColorOverlayRefreshTimer.Tick += ZoneColorOverlayRefreshTimer_Tick;
+
+    private void StopZoneColorUi()
+        => _zoneColorOverlayRefreshTimer.Stop();
+
+    private void ZoneColorOverlayRefreshTimer_Tick(object? sender, object e)
+    {
+        _zoneColorOverlayRefreshTimer.Stop();
+        RefreshVisibleOverlayColors();
+    }
+
+    private void ScheduleVisibleOverlayColorRefresh()
+    {
+        if (!_overlayHost.IsVisible)
+            return;
+
+        _zoneColorOverlayRefreshTimer.Stop();
+        _zoneColorOverlayRefreshTimer.Start();
+    }
 
     private void InitializeZoneColorPreferencesForDraft(DesktopLayoutEditDraft draft)
     {
@@ -28,6 +54,7 @@ public sealed partial class LayoutManagementView
         _selectedZoneColorZoneId = null;
         _selectedZoneWorkingColorRgb = _settings.OverlayAppearance.ZoneColorRgb;
         _zoneColorPreferencesDirty = false;
+        _zoneColorOverlayRefreshTimer.Stop();
 
         _suppressZoneColorUiEvents = true;
         try
@@ -43,6 +70,7 @@ public sealed partial class LayoutManagementView
 
     private void ClearZoneColorPreferencesForView()
     {
+        _zoneColorOverlayRefreshTimer.Stop();
         _workingZoneColorOverrides.Clear();
         _selectedZoneColorZoneId = null;
         _zoneColorPreferencesDirty = false;
@@ -141,7 +169,7 @@ public sealed partial class LayoutManagementView
             ResolveZoneColorRgb(zoneId),
             ZoneColorOverrideToggle.IsOn);
         RenderLayoutCanvas();
-        RefreshVisibleOverlayColors();
+        ScheduleVisibleOverlayColorRefresh();
     }
 
     private void ZoneColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
@@ -169,7 +197,7 @@ public sealed partial class LayoutManagementView
         MarkZoneColorPreferencesDirty();
         UpdateSelectedZoneColorVisual(colorRgb, hasOverride: true);
         RenderLayoutCanvas();
-        RefreshVisibleOverlayColors();
+        ScheduleVisibleOverlayColorRefresh();
     }
 
     private async void ApplyZoneColorsButton_Click(object sender, RoutedEventArgs e)
