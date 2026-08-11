@@ -454,7 +454,8 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             public int Bottom;
         }
 
-        // PAINTSTRUCT 使用纯 blittable 字段，避免 fixed array / bool marshalling 进入 WndProc 热路径。
+        // PAINTSTRUCT 的 rgbReserved[32] 从 offset 36 开始；8 个 Int32 保持 4-byte alignment，
+        // 避免 x64 下使用 Int64 时引入额外 padding 并破坏 native 布局。
         [StructLayout(LayoutKind.Sequential)]
         private struct PaintStruct
         {
@@ -463,10 +464,14 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             public NativeRect PaintRect;
             public int Restore;
             public int Update;
-            private long Reserved0;
-            private long Reserved1;
-            private long Reserved2;
-            private long Reserved3;
+            private int Reserved0;
+            private int Reserved1;
+            private int Reserved2;
+            private int Reserved3;
+            private int Reserved4;
+            private int Reserved5;
+            private int Reserved6;
+            private int Reserved7;
         }
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
