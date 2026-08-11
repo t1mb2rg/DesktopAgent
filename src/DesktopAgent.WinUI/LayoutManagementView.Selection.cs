@@ -27,6 +27,14 @@ public sealed partial class LayoutManagementView
             return;
         }
 
+        if (_zoneColorPreferencesDirty && _draft is not null &&
+            _draft.TemplateId != selected.TemplateId)
+        {
+            RestoreSelectionToCurrentDraft();
+            ShowInfo("分区颜色尚未应用", "先应用或还原当前颜色修改，再切换到其他布局。", InfoBarSeverity.Informational);
+            return;
+        }
+
         try
         {
             if (await LoadSelectedLayoutForPassiveViewAsync(selected))
@@ -65,6 +73,12 @@ public sealed partial class LayoutManagementView
 
     private void NewLayoutWithMode_Click(object sender, RoutedEventArgs e)
     {
+        if (_zoneColorPreferencesDirty)
+        {
+            ShowInfo("分区颜色尚未应用", "先应用或还原当前颜色修改，再新建布局。", InfoBarSeverity.Informational);
+            return;
+        }
+
         SetSelectedTemplateWithoutNotification(null);
         NewLayout_Click(sender, e);
         if (_draft is not null)
@@ -82,6 +96,7 @@ public sealed partial class LayoutManagementView
     private async Task<bool> LoadSelectedLayoutForPassiveViewAsync(LayoutTemplateListItem selected)
     {
         await EnsureStoresAsync();
+        _settings = await _settingsStore.GetAsync();
 
         var template = await _templateStore.GetAsync(selected.TemplateId)
             ?? throw new InvalidOperationException("所选布局已不存在，请刷新列表。");
