@@ -29,8 +29,8 @@ public sealed partial class LayoutManagementView
 
         try
         {
-            await LoadSelectedLayoutForPassiveViewAsync(selected);
-            SetLayoutInteractionMode(isEditing: false);
+            if (await LoadSelectedLayoutForPassiveViewAsync(selected))
+                SetLayoutInteractionMode(isEditing: false);
         }
         catch (Exception ex)
         {
@@ -49,7 +49,10 @@ public sealed partial class LayoutManagementView
         try
         {
             if (_draft is null || _draft.TemplateId != selected.TemplateId)
-                await LoadSelectedLayoutForPassiveViewAsync(selected);
+            {
+                if (!await LoadSelectedLayoutForPassiveViewAsync(selected))
+                    return;
+            }
 
             SetLayoutInteractionMode(isEditing: true);
             ShowInfo("可以编辑了", "修改完成后保存即可；编辑期间自动化保持暂停。", InfoBarSeverity.Informational);
@@ -76,7 +79,7 @@ public sealed partial class LayoutManagementView
         EditLayoutButton.IsEnabled = false;
     }
 
-    private async Task LoadSelectedLayoutForPassiveViewAsync(LayoutTemplateListItem selected)
+    private async Task<bool> LoadSelectedLayoutForPassiveViewAsync(LayoutTemplateListItem selected)
     {
         await EnsureStoresAsync();
 
@@ -85,12 +88,16 @@ public sealed partial class LayoutManagementView
         var rules = await _ruleStore.GetAsync(selected.TemplateId)
             ?? throw new InvalidDataException("布局存在，但 RuleSet 缺失。拒绝进入半状态展示。");
 
-        if (LayoutTemplateList.SelectedItem is LayoutTemplateListItem current && current.TemplateId != selected.TemplateId)
-            return;
+        if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem current ||
+            current.TemplateId != selected.TemplateId)
+        {
+            return false;
+        }
 
         _draft = DesktopLayoutEditDraft.FromPersisted(template, rules);
         LoadDraftIntoEditor(_draft);
         LayoutCanvasStatusText.Text = $"{_draft.Zones.Count} 个分区 · 点击预览读取当前桌面";
+        return true;
     }
 
     private void SetLayoutInteractionMode(bool isEditing)
