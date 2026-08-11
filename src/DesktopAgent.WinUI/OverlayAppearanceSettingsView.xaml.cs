@@ -53,13 +53,25 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         => HideDesktopPreview();
 
     private void LightPresetButton_Checked(object sender, RoutedEventArgs e)
-        => ApplyPreset(DesktopOverlayAppearancePreset.Light);
+    {
+        if (!_initialized)
+            return;
+        ApplyPreset(DesktopOverlayAppearancePreset.Light);
+    }
 
     private void StandardPresetButton_Checked(object sender, RoutedEventArgs e)
-        => ApplyPreset(DesktopOverlayAppearancePreset.Standard);
+    {
+        if (!_initialized)
+            return;
+        ApplyPreset(DesktopOverlayAppearancePreset.Standard);
+    }
 
     private void StrongPresetButton_Checked(object sender, RoutedEventArgs e)
-        => ApplyPreset(DesktopOverlayAppearancePreset.Strong);
+    {
+        if (!_initialized)
+            return;
+        ApplyPreset(DesktopOverlayAppearancePreset.Strong);
+    }
 
     private void ApplyPreset(DesktopOverlayAppearancePreset preset)
     {
@@ -72,7 +84,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
 
     private void AppearanceSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
-        if (_suppressUiEvents)
+        if (!_initialized || _suppressUiEvents)
             return;
 
         _workingPreset = DesktopOverlayAppearancePreset.Custom;
