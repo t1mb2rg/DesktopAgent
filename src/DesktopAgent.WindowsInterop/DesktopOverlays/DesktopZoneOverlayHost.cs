@@ -429,22 +429,29 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
                 foreach (var zone in state.Zones)
                 {
-                    var rect = MapZoneToClientRect(state, zone);
-                    if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
-                        continue;
-
-                    InsetZoneRect(ref rect, state.Scale);
-                    if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
-                        continue;
-
-                    if (state.LayerKind == OverlayLayerKind.Fill)
+                    try
                     {
-                        DrawZoneFill(hdc, state, zone, rect);
+                        var rect = MapZoneToClientRect(state, zone);
+                        if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
+                            continue;
+
+                        InsetZoneRect(ref rect, state.Scale);
+                        if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
+                            continue;
+
+                        if (state.LayerKind == OverlayLayerKind.Fill)
+                        {
+                            DrawZoneFill(hdc, state, zone, rect);
+                        }
+                        else
+                        {
+                            DrawZoneChrome(hdc, state, zone, rect);
+                            DrawLabel(hdc, state, zone, rect);
+                        }
                     }
-                    else
+                    catch
                     {
-                        DrawZoneChrome(hdc, state, zone, rect);
-                        DrawLabel(hdc, state, zone, rect);
+                        // 单个 Zone 的视觉绘制失败不能截断同一层剩余 Zone。
                     }
                 }
             }
@@ -808,7 +815,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         [DllImport("user32.dll")]
         private static extern int FillRect(nint hdc, ref NativeRect rect, nint brush);
 
-        [DllImport("user32.dll")]
+        [DllImport("gdi32.dll")]
         private static extern int SetBkMode(nint hdc, int mode);
 
         [DllImport("gdi32.dll")]
