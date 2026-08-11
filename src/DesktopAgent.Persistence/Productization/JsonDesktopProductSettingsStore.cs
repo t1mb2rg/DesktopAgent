@@ -77,7 +77,9 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                         persisted.OverlayAppearance.BorderThicknessDip,
                         persisted.OverlayAppearance.BorderOpacity,
                         persisted.OverlayAppearance.FillOpacity,
-                        persisted.OverlayAppearance.CornerRadiusDip);
+                        persisted.OverlayAppearance.CornerRadiusDip,
+                        persisted.OverlayAppearance.ZoneColorRgb
+                            ?? DesktopOverlayAppearanceSettings.DefaultZoneColorRgb);
 
                 return new DesktopProductSettings(
                     (DesktopAutomationMode)persisted.AutomationMode,
@@ -128,6 +130,7 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                     BorderOpacity = settings.OverlayAppearance.BorderOpacity,
                     FillOpacity = settings.OverlayAppearance.FillOpacity,
                     CornerRadiusDip = settings.OverlayAppearance.CornerRadiusDip,
+                    ZoneColorRgb = settings.OverlayAppearance.ZoneColorRgb,
                 },
             };
 
@@ -163,5 +166,6 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
         public double BorderOpacity { get; set; }
         public double FillOpacity { get; set; }
         public double CornerRadiusDip { get; set; }
+        public uint? ZoneColorRgb { get; set; }
     }
 }
