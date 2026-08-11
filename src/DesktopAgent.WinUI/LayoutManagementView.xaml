@@ -388,6 +388,7 @@
                                             <Button.Flyout>
                                                 <Flyout>
                                                     <ColorPicker x:Name="ZoneColorPicker"
+                                                                 ColorSpectrumShape="Ring"
                                                                  IsAlphaEnabled="False"
                                                                  ColorChanged="ZoneColorPicker_ColorChanged" />
                                                 </Flyout>
