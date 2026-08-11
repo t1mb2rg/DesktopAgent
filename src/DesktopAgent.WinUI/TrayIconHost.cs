@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace DesktopAgent.WinUI;
 
-internal enum TrayIconCommand
+public enum TrayIconCommand
 {
     Open = 0,
     Layouts = 1,
@@ -12,7 +12,7 @@ internal enum TrayIconCommand
     Exit = 4,
 }
 
-internal interface ITrayCommandTarget
+public interface ITrayCommandTarget
 {
     void HandleTrayCommand(TrayIconCommand command);
 }
@@ -57,11 +57,8 @@ internal sealed class TrayIconHost : IDisposable
     private bool _disposed;
 
     public TrayIconHost(IntPtr hwnd, Action restoreAction)
-        : this(
-            hwnd,
-            command => DispatchLegacyRestoreTarget(restoreAction, command))
+        : this(hwnd, CreateCommandAction(restoreAction))
     {
-        ArgumentNullException.ThrowIfNull(restoreAction);
     }
 
     public TrayIconHost(IntPtr hwnd, Action<TrayIconCommand> commandAction)
@@ -89,10 +86,14 @@ internal sealed class TrayIconHost : IDisposable
         }
     }
 
-    private static void DispatchLegacyRestoreTarget(Action restoreAction, TrayIconCommand command)
+    private static Action<TrayIconCommand> CreateCommandAction(Action restoreAction)
     {
         ArgumentNullException.ThrowIfNull(restoreAction);
+        return command => DispatchLegacyRestoreTarget(restoreAction, command);
+    }
 
+    private static void DispatchLegacyRestoreTarget(Action restoreAction, TrayIconCommand command)
+    {
         if (restoreAction.Target is ITrayCommandTarget commandTarget)
         {
             commandTarget.HandleTrayCommand(command);
@@ -129,7 +130,14 @@ internal sealed class TrayIconHost : IDisposable
                     return IntPtr.Zero;
 
                 case WmRButtonUp:
-                    ShowContextMenu();
+                    try
+                    {
+                        ShowContextMenu();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Tray context menu failed: {ex}");
+                    }
                     return IntPtr.Zero;
             }
         }
