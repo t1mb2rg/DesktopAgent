@@ -8,6 +8,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+
         <Grid ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
@@ -22,13 +23,16 @@
                 <Button Content="＋ 新建" Click="NewLayoutWithMode_Click" />
             </StackPanel>
         </Grid>
+
         <InfoBar x:Name="LayoutStatusBar" Grid.Row="1" IsOpen="False" IsClosable="True" />
+
         <Grid Grid.Row="2" MinWidth="980" MinHeight="0" VerticalAlignment="Stretch" ColumnSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="220" />
                 <ColumnDefinition Width="*" MinWidth="420" />
                 <ColumnDefinition Width="300" />
             </Grid.ColumnDefinitions>
+
             <Border Grid.Column="0" MinHeight="0" VerticalAlignment="Stretch" Padding="12" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <Grid MinHeight="0" RowSpacing="10">
                     <Grid.RowDefinitions>
@@ -58,6 +62,7 @@
                     </Grid>
                 </Grid>
             </Border>
+
             <Border Grid.Column="1" MinHeight="0" VerticalAlignment="Stretch" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <Grid MinHeight="0" RowSpacing="12">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -84,6 +89,7 @@
                     </Grid>
                 </Grid>
             </Border>
+
             <Border Grid.Column="2" MinHeight="0" VerticalAlignment="Stretch" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <ScrollViewer VerticalAlignment="Stretch" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
                     <Grid>
