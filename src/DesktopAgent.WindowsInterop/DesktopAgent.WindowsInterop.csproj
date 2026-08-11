@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="DesktopAgent.Poc" />
+    <InternalsVisibleTo Include="DesktopAgent.Diagnostics" />
     <InternalsVisibleTo Include="DesktopAgent.Tests" />
   </ItemGroup>
 
