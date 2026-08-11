@@ -132,6 +132,7 @@
                             <Button.Flyout>
                                 <Flyout>
                                     <ColorPicker x:Name="OverlayColorPicker"
+                                                 ColorSpectrumShape="Ring"
                                                  IsAlphaEnabled="False"
                                                  ColorChanged="OverlayColorPicker_ColorChanged" />
                                 </Flyout>
