@@ -31,7 +31,7 @@
                             ToolTipService.ToolTip="刷新布局列表"
                             Click="RefreshLayouts_Click" />
                     <Button Content="＋ 新建"
-                            Click="NewLayout_Click" />
+                            Click="NewLayoutWithMode_Click" />
                 </StackPanel>
             </Grid>
 
@@ -69,7 +69,8 @@
                         <ListView x:Name="LayoutTemplateList"
                                   Grid.Row="1"
                                   MinHeight="420"
-                                  SelectionMode="Single">
+                                  SelectionMode="Single"
+                                  SelectionChanged="LayoutTemplateList_SelectionChanged">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Padding="6,7" ColumnSpacing="8">
@@ -99,9 +100,10 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Button Content="编辑"
+                            <Button x:Name="EditLayoutButton"
+                                    Content="编辑"
                                     HorizontalAlignment="Stretch"
-                                    Click="LoadLayout_Click" />
+                                    Click="BeginEditSelectedLayout_Click" />
                             <Button Grid.Column="1"
                                     Content="使用"
                                     HorizontalAlignment="Stretch"
@@ -134,7 +136,7 @@
                                            FontSize="17"
                                            FontWeight="SemiBold" />
                                 <TextBlock x:Name="LayoutCanvasStatusText"
-                                           Text="新建或加载一个布局开始编辑"
+                                           Text="选择一个布局查看分区"
                                            FontSize="12"
                                            Opacity="0.58" />
                             </StackPanel>
@@ -235,6 +237,7 @@
                                        Opacity="0.55"
                                        VerticalAlignment="Center" />
                             <Button Grid.Column="3"
+                                    x:Name="SaveLayoutButton"
                                     Content="保存"
                                     Click="SaveLayout_Click" />
                         </Grid>
@@ -256,7 +259,7 @@
                                 <TextBlock Text="布局属性"
                                            FontSize="17"
                                            FontWeight="SemiBold" />
-                                <TextBlock Text="新建或编辑布局后，这里只保留真正需要调整的东西。"
+                                <TextBlock Text="选择布局后，这里会显示它的主要属性。"
                                            TextWrapping="Wrap"
                                            FontSize="12"
                                            Opacity="0.58" />
@@ -299,6 +302,7 @@
                                         <ComboBoxItem Content="2 × 2" />
                                     </ComboBox>
                                     <Button Grid.Column="1"
+                                            x:Name="ApplyPresetButton"
                                             Content="应用"
                                             VerticalAlignment="Bottom"
                                             Click="ApplyPreset_Click" />
@@ -366,9 +370,10 @@
                                     </StackPanel>
                                 </Expander>
 
-                                <Button Content="取消编辑"
+                                <Button x:Name="CancelLayoutEditButton"
+                                        Content="取消编辑"
                                         HorizontalAlignment="Left"
-                                        Click="CancelLayoutEdit_Click" />
+                                        Click="CancelLayoutEditWithMode_Click" />
                             </StackPanel>
                         </Grid>
                     </ScrollViewer>
