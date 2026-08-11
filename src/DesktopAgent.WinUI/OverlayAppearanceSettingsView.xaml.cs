@@ -26,6 +26,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         DesktopOverlayAppearanceSettings.Standard;
     private DesktopOverlayAppearancePreset _workingPreset =
         DesktopOverlayAppearancePreset.Standard;
+    private uint _workingZoneColorRgb = DesktopOverlayAppearanceSettings.DefaultZoneColorRgb;
     private bool _initialized;
     private bool _suppressUiEvents;
 
@@ -92,14 +93,13 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         ScheduleDesktopPreviewRefresh();
     }
 
-    private void AppearanceSlider_ValueChanged(
-        object sender,
-        Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    private void AppearanceSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (!_initialized || _suppressUiEvents)
             return;
 
-        MarkWorkingAppearanceCustom();
+        _workingPreset = DesktopOverlayAppearancePreset.Custom;
+        SetPresetSelection(DesktopOverlayAppearancePreset.Custom);
         UpdateValueLabelsAndPreview();
         ScheduleDesktopPreviewRefresh();
     }
@@ -109,15 +109,11 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         if (!_initialized || _suppressUiEvents)
             return;
 
-        MarkWorkingAppearanceCustom();
-        UpdateValueLabelsAndPreview();
-        ScheduleDesktopPreviewRefresh();
-    }
-
-    private void MarkWorkingAppearanceCustom()
-    {
+        _workingZoneColorRgb = ToRgb(args.NewColor);
         _workingPreset = DesktopOverlayAppearancePreset.Custom;
         SetPresetSelection(DesktopOverlayAppearancePreset.Custom);
+        UpdateValueLabelsAndPreview();
+        ScheduleDesktopPreviewRefresh();
     }
 
     private void ScheduleDesktopPreviewRefresh()
@@ -142,11 +138,12 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         try
         {
             _workingPreset = appearance.Preset;
+            _workingZoneColorRgb = appearance.ZoneColorRgb;
             BorderThicknessSlider.Value = appearance.BorderThicknessDip;
             BorderOpacitySlider.Value = appearance.BorderOpacity * 100d;
             FillOpacitySlider.Value = appearance.FillOpacity * 100d;
             CornerRadiusSlider.Value = appearance.CornerRadiusDip;
-            OverlayColorPicker.Color = ToColor(appearance.ZoneColorRgb);
+            OverlayColorPicker.Color = FromRgb(appearance.ZoneColorRgb);
             SetPresetSelection(appearance.Preset);
         }
         finally
@@ -180,7 +177,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             BorderOpacitySlider.Value / 100d,
             FillOpacitySlider.Value / 100d,
             CornerRadiusSlider.Value,
-            ToRgb(OverlayColorPicker.Color));
+            _workingZoneColorRgb);
 
     private void UpdateValueLabelsAndPreview()
     {
@@ -222,7 +219,9 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             green,
             blue));
         var labelTextBrush = new SolidColorBrush(
-            IsLightColor(rgb) ? Colors.Black : Colors.White);
+            IsLightColor(rgb)
+                ? Color.FromArgb(0xFF, 0x00, 0x00, 0x00)
+                : Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF));
         var thickness = new Thickness(appearance.BorderThicknessDip);
         var radius = new CornerRadius(appearance.CornerRadiusDip);
 
@@ -324,7 +323,16 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         AppearanceStatusBar.IsOpen = true;
     }
 
-    private static Color ToColor(uint rgb)
+    private static bool IsLightColor(uint rgb)
+    {
+        var red = (byte)((rgb >> 16) & 0xFF);
+        var green = (byte)((rgb >> 8) & 0xFF);
+        var blue = (byte)(rgb & 0xFF);
+        var luminance = (0.299d * red) + (0.587d * green) + (0.114d * blue);
+        return luminance >= 160d;
+    }
+
+    private static Color FromRgb(uint rgb)
         => Color.FromArgb(
             0xFF,
             (byte)((rgb >> 16) & 0xFF),
@@ -332,15 +340,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             (byte)(rgb & 0xFF));
 
     private static uint ToRgb(Color color)
-        => ((uint)color.R << 16) | ((uint)color.G << 8) | color.B;
-
-    private static bool IsLightColor(uint rgb)
-    {
-        var red = (int)((rgb >> 16) & 0xFF);
-        var green = (int)((rgb >> 8) & 0xFF);
-        var blue = (int)(rgb & 0xFF);
-        return red * 299 + green * 587 + blue * 114 >= 160_000;
-    }
+        => (uint)((color.R << 16) | (color.G << 8) | color.B);
 
     private static byte ToAlpha(double opacity)
         => (byte)Math.Clamp(
