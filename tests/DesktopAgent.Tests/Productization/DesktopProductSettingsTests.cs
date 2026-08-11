@@ -6,7 +6,7 @@ namespace DesktopAgent.Tests.Productization;
 public sealed class DesktopProductSettingsTests
 {
     [Fact]
-    public void Default_IsAssisted_FirstRunIncomplete_AndAiDisabled()
+    public void Default_IsAssisted_FirstRunIncomplete_AiDisabled_AndStandardOverlay()
     {
         var settings = DesktopProductSettings.CreateDefault();
 
@@ -17,6 +17,7 @@ public sealed class DesktopProductSettingsTests
         Assert.Null(settings.AiBaseUri);
         Assert.Null(settings.AiModel);
         Assert.Null(settings.AiSecretReference);
+        Assert.Equal(DesktopOverlayAppearancePreset.Standard, settings.OverlayAppearance.Preset);
     }
 
     [Fact]
@@ -48,5 +49,28 @@ public sealed class DesktopProductSettingsTests
             new Uri("https://user:password@example.com/v1"),
             "model",
             null));
+    }
+
+    [Fact]
+    public void CrossPageUpdates_PreserveOverlayAndActiveLayout()
+    {
+        var layoutId = Guid.NewGuid();
+        var appearance = new DesktopOverlayAppearanceSettings(
+            DesktopOverlayAppearancePreset.Custom,
+            4.5d,
+            0.66d,
+            0.11d,
+            20d);
+        var original = DesktopProductSettings.CreateDefault()
+            .WithActiveLayoutTemplate(layoutId)
+            .WithOverlayAppearance(appearance);
+
+        var switchedLayout = original.WithActiveLayoutTemplate(Guid.NewGuid());
+        var changedAppearance = switchedLayout.WithOverlayAppearance(
+            DesktopOverlayAppearanceSettings.FromPreset(DesktopOverlayAppearancePreset.Light));
+
+        Assert.Same(appearance, switchedLayout.OverlayAppearance);
+        Assert.NotNull(changedAppearance.ActiveLayoutTemplateId);
+        Assert.Equal(DesktopOverlayAppearancePreset.Light, changedAppearance.OverlayAppearance.Preset);
     }
 }
