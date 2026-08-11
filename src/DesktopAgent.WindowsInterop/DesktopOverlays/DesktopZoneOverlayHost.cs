@@ -43,12 +43,19 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         (_fillWindow != nint.Zero && NativeOverlayWindow.IsAlive(_fillWindow));
 
     public void Show(DisplayDescriptor display, IReadOnlyList<DesktopLayoutZone> zones)
-        => Show(display, zones, DefaultAppearance);
+        => Show(display, zones, DefaultAppearance, zoneColorOverrides: null);
 
     public void Show(
         DisplayDescriptor display,
         IReadOnlyList<DesktopLayoutZone> zones,
         DesktopOverlayAppearanceSettings appearance)
+        => Show(display, zones, appearance, zoneColorOverrides: null);
+
+    public void Show(
+        DisplayDescriptor display,
+        IReadOnlyList<DesktopLayoutZone> zones,
+        DesktopOverlayAppearanceSettings appearance,
+        IReadOnlyDictionary<Guid, uint>? zoneColorOverrides)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(display);
@@ -58,8 +65,10 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         if (zones.Count == 0)
             throw new ArgumentException("至少需要一个 Zone 才能显示桌面分区框。", nameof(zones));
 
+        var colorSnapshot = SnapshotZoneColorOverrides(zoneColorOverrides);
+
         Hide();
-        var windows = NativeOverlayWindow.Create(display, zones, appearance);
+        var windows = NativeOverlayWindow.Create(display, zones, appearance, colorSnapshot);
         _fillWindow = windows.FillWindow;
         _chromeWindow = windows.ChromeWindow;
     }
@@ -107,6 +116,26 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             Scale(work.Top, work.Height, bounds.Top),
             Scale(work.Left, work.Width, bounds.Right),
             Scale(work.Top, work.Height, bounds.Bottom));
+    }
+
+    private static IReadOnlyDictionary<Guid, uint> SnapshotZoneColorOverrides(
+        IReadOnlyDictionary<Guid, uint>? zoneColorOverrides)
+    {
+        if (zoneColorOverrides is null || zoneColorOverrides.Count == 0)
+            return new Dictionary<Guid, uint>();
+
+        var snapshot = new Dictionary<Guid, uint>(zoneColorOverrides.Count);
+        foreach (var pair in zoneColorOverrides)
+        {
+            if (pair.Key == Guid.Empty)
+                throw new ArgumentException("Zone 颜色覆盖不能使用 Guid.Empty。", nameof(zoneColorOverrides));
+            if (pair.Value > DesktopOverlayAppearanceSettings.MaxColorRgb)
+                throw new ArgumentOutOfRangeException(nameof(zoneColorOverrides), "Zone 颜色必须是 24-bit RGB。 ");
+            if (!snapshot.TryAdd(pair.Key, pair.Value))
+                throw new ArgumentException($"ZoneId {pair.Key:D} 存在重复颜色覆盖。", nameof(zoneColorOverrides));
+        }
+
+        return snapshot;
     }
 
     private static class NativeOverlayWindow
@@ -192,18 +221,31 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         public static OverlayWindows Create(
             DisplayDescriptor display,
             IReadOnlyList<DesktopLayoutZone> zones,
-            DesktopOverlayAppearanceSettings appearance)
+            DesktopOverlayAppearanceSettings appearance,
+            IReadOnlyDictionary<Guid, uint> zoneColorOverrides)
         {
             EnsureRegistered();
 
             // 先创建 chrome，再创建 fill 并将 fill 放到底部。
             // 这样 fill 位于 chrome 后面，同时两者都仍在普通应用窗口之后。
-            var chrome = CreateLayer(display, zones, appearance, OverlayLayerKind.Chrome);
+            var chrome = CreateLayer(
+                display,
+                zones,
+                appearance,
+                zoneColorOverrides,
+                OverlayLayerKind.Chrome);
             nint fill = nint.Zero;
             try
             {
                 if (appearance.FillOpacity > 0d)
-                    fill = CreateLayer(display, zones, appearance, OverlayLayerKind.Fill);
+                {
+                    fill = CreateLayer(
+                        display,
+                        zones,
+                        appearance,
+                        zoneColorOverrides,
+                        OverlayLayerKind.Fill);
+                }
 
                 return new OverlayWindows(fill, chrome);
             }
@@ -219,6 +261,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             DisplayDescriptor display,
             IReadOnlyList<DesktopLayoutZone> zones,
             DesktopOverlayAppearanceSettings appearance,
+            IReadOnlyDictionary<Guid, uint> zoneColorOverrides,
             OverlayLayerKind layerKind)
         {
             var shellWindow = GetShellWindow();
@@ -255,6 +298,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 Math.Max(1d, display.ScaleX),
                 zones.OrderBy(zone => zone.SortOrder).ToArray(),
                 appearance,
+                zoneColorOverrides,
                 layerKind);
 
             try
@@ -395,12 +439,12 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
                     if (state.LayerKind == OverlayLayerKind.Fill)
                     {
-                        DrawZoneFill(hdc, state, rect);
+                        DrawZoneFill(hdc, state, zone, rect);
                     }
                     else
                     {
-                        DrawZoneChrome(hdc, state, rect);
-                        DrawLabel(hdc, state, zone.Name, rect);
+                        DrawZoneChrome(hdc, state, zone, rect);
+                        DrawLabel(hdc, state, zone, rect);
                     }
                 }
             }
@@ -436,10 +480,14 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             rect.Bottom -= inset;
         }
 
-        private static void DrawZoneFill(nint hdc, OverlayState state, NativeRect rect)
+        private static void DrawZoneFill(
+            nint hdc,
+            OverlayState state,
+            DesktopLayoutZone zone,
+            NativeRect rect)
         {
             var radius = ResolveCornerRadius(state, rect);
-            var accentBrush = CreateSolidBrush(ToGdiColor(state.Appearance.ZoneColorRgb));
+            var accentBrush = CreateSolidBrush(ToGdiColor(ResolveZoneColor(state, zone.ZoneId)));
             if (accentBrush == nint.Zero)
                 return;
 
@@ -466,13 +514,17 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             }
         }
 
-        private static void DrawZoneChrome(nint hdc, OverlayState state, NativeRect rect)
+        private static void DrawZoneChrome(
+            nint hdc,
+            OverlayState state,
+            DesktopLayoutZone zone,
+            NativeRect rect)
         {
             var thickness = Math.Max(
                 1,
                 (int)Math.Round(state.Appearance.BorderThicknessDip * state.Scale));
             var radius = ResolveCornerRadius(state, rect);
-            var pen = CreatePen(PsSolid, thickness, ToGdiColor(state.Appearance.ZoneColorRgb));
+            var pen = CreatePen(PsSolid, thickness, ToGdiColor(ResolveZoneColor(state, zone.ZoneId)));
             if (pen == nint.Zero)
                 return;
 
@@ -515,7 +567,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         private static void DrawLabel(
             nint hdc,
             OverlayState state,
-            string text,
+            DesktopLayoutZone zone,
             NativeRect zoneRect)
         {
             var inset = Math.Max(8, (int)Math.Round(LabelInsetDip * state.Scale));
@@ -540,7 +592,8 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 Bottom = zoneRect.Top + inset + height,
             };
 
-            var labelBrush = CreateSolidBrush(ToGdiColor(state.Appearance.ZoneColorRgb));
+            var colorRgb = ResolveZoneColor(state, zone.ZoneId);
+            var labelBrush = CreateSolidBrush(ToGdiColor(colorRgb));
             if (labelBrush == nint.Zero)
                 return;
 
@@ -570,7 +623,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             _ = SetBkMode(hdc, TransparentBackgroundMode);
             _ = SetTextColor(
                 hdc,
-                IsLightColor(state.Appearance.ZoneColorRgb)
+                IsLightColor(colorRgb)
                     ? Rgb(0x10, 0x10, 0x10)
                     : Rgb(0xFF, 0xFF, 0xFF));
 
@@ -581,8 +634,8 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 labelRect.Right -= 7;
                 _ = DrawTextW(
                     hdc,
-                    text,
-                    text.Length,
+                    zone.Name,
+                    zone.Name.Length,
                     ref labelRect,
                     DtLeft | DtVCenter | DtSingleLine | DtEndEllipsis);
             }
@@ -592,6 +645,11 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                     _ = SelectObject(hdc, previousFont);
             }
         }
+
+        private static uint ResolveZoneColor(OverlayState state, Guid zoneId)
+            => state.ZoneColorOverrides.TryGetValue(zoneId, out var colorRgb)
+                ? colorRgb
+                : state.Appearance.ZoneColorRgb;
 
         private static byte ToAlpha(double opacity)
             => (byte)Math.Clamp(
@@ -630,6 +688,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             double Scale,
             DesktopLayoutZone[] Zones,
             DesktopOverlayAppearanceSettings Appearance,
+            IReadOnlyDictionary<Guid, uint> ZoneColorOverrides,
             OverlayLayerKind LayerKind);
 
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
