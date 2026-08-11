@@ -20,6 +20,11 @@ public sealed class DesktopProductSettings
     /// </summary>
     public Guid? ActiveLayoutTemplateId { get; }
 
+    /// <summary>
+    /// Desktop Zone Overlay 的纯视觉偏好。它不包含执行权限或图标位置。
+    /// </summary>
+    public DesktopOverlayAppearanceSettings OverlayAppearance { get; }
+
     public DesktopProductSettings(
         DesktopAutomationMode automationMode,
         bool firstRunCompleted,
@@ -27,7 +32,8 @@ public sealed class DesktopProductSettings
         Uri? aiBaseUri,
         string? aiModel,
         string? aiSecretReference,
-        Guid? activeLayoutTemplateId = null)
+        Guid? activeLayoutTemplateId = null,
+        DesktopOverlayAppearanceSettings? overlayAppearance = null)
     {
         if (!Enum.IsDefined(automationMode))
             throw new ArgumentOutOfRangeException(nameof(automationMode));
@@ -71,6 +77,7 @@ public sealed class DesktopProductSettings
         AiModel = normalizedModel;
         AiSecretReference = normalizedSecretReference;
         ActiveLayoutTemplateId = activeLayoutTemplateId;
+        OverlayAppearance = overlayAppearance ?? DesktopOverlayAppearanceSettings.Standard;
     }
 
     public DesktopProductSettings WithActiveLayoutTemplate(Guid? templateId)
@@ -81,7 +88,22 @@ public sealed class DesktopProductSettings
             AiBaseUri,
             AiModel,
             AiSecretReference,
-            templateId);
+            templateId,
+            OverlayAppearance);
+
+    public DesktopProductSettings WithOverlayAppearance(DesktopOverlayAppearanceSettings appearance)
+    {
+        ArgumentNullException.ThrowIfNull(appearance);
+        return new DesktopProductSettings(
+            AutomationMode,
+            FirstRunCompleted,
+            AiEnabled,
+            AiBaseUri,
+            AiModel,
+            AiSecretReference,
+            ActiveLayoutTemplateId,
+            appearance);
+    }
 
     public static DesktopProductSettings CreateDefault()
         => new(
@@ -91,5 +113,6 @@ public sealed class DesktopProductSettings
             aiBaseUri: null,
             aiModel: null,
             aiSecretReference: null,
-            activeLayoutTemplateId: null);
+            activeLayoutTemplateId: null,
+            overlayAppearance: DesktopOverlayAppearanceSettings.Standard);
 }
