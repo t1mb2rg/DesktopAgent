@@ -41,6 +41,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             await _settingsStore.InitializeAsync();
             var settings = await _settingsStore.GetAsync();
             _persistedAppearance = settings.OverlayAppearance;
+            DesktopZoneOverlayHost.DefaultAppearance = _persistedAppearance;
             ApplyAppearanceToControls(_persistedAppearance);
         }
         catch (Exception ex)
@@ -195,6 +196,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
             await _settingsStore.SaveAsync(updated);
 
             _persistedAppearance = appearance;
+            DesktopZoneOverlayHost.DefaultAppearance = appearance;
             ShowStatus(
                 "分区框外观已应用",
                 "只更新显示偏好，不会移动图标或改变自动化权限。",
