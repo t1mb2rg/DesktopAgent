@@ -75,7 +75,7 @@ public sealed class DesktopOverlayZoneColorPreferences
 
     private static void ValidateColor(uint colorRgb)
     {
-        if (colorRgb > DesktopOverlayAppearanceSettings.MaxColorRgb)
+        if (colorRgb > DesktopOverlayAppearanceSettings.MaxZoneColorRgb)
             throw new ArgumentOutOfRangeException(nameof(colorRgb), "颜色必须是 24-bit RGB。 ");
     }
 
