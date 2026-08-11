@@ -81,6 +81,12 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                         persisted.OverlayAppearance.ZoneColorRgb
                             ?? DesktopOverlayAppearanceSettings.DefaultZoneColorRgb);
 
+                var overlayZoneColors = persisted.OverlayZoneColors is null
+                    ? DesktopOverlayZoneColorPreferences.Empty
+                    : new DesktopOverlayZoneColorPreferences(
+                        persisted.OverlayZoneColors.Select(item =>
+                            new KeyValuePair<Guid, uint>(item.ZoneId, item.ColorRgb)));
+
                 return new DesktopProductSettings(
                     (DesktopAutomationMode)persisted.AutomationMode,
                     persisted.FirstRunCompleted,
@@ -89,7 +95,8 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                     persisted.AiModel,
                     persisted.AiSecretReference,
                     persisted.ActiveLayoutTemplateId,
-                    overlayAppearance);
+                    overlayAppearance,
+                    overlayZoneColors);
             }
             catch (Exception ex) when (ex is ArgumentException or FormatException)
             {
@@ -132,6 +139,14 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                     CornerRadiusDip = settings.OverlayAppearance.CornerRadiusDip,
                     ZoneColorRgb = settings.OverlayAppearance.ZoneColorRgb,
                 },
+                OverlayZoneColors = settings.OverlayZoneColors.Overrides
+                    .OrderBy(pair => pair.Key)
+                    .Select(pair => new PersistedOverlayZoneColor
+                    {
+                        ZoneId = pair.Key,
+                        ColorRgb = pair.Value,
+                    })
+                    .ToList(),
             };
 
             var json = JsonSerializer.Serialize(persisted, SerializerOptions);
@@ -157,6 +172,7 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
         public string? AiSecretReference { get; set; }
         public Guid? ActiveLayoutTemplateId { get; set; }
         public PersistedOverlayAppearance? OverlayAppearance { get; set; }
+        public List<PersistedOverlayZoneColor>? OverlayZoneColors { get; set; }
     }
 
     private sealed class PersistedOverlayAppearance
@@ -167,5 +183,11 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
         public double FillOpacity { get; set; }
         public double CornerRadiusDip { get; set; }
         public uint? ZoneColorRgb { get; set; }
+    }
+
+    private sealed class PersistedOverlayZoneColor
+    {
+        public Guid ZoneId { get; set; }
+        public uint ColorRgb { get; set; }
     }
 }
