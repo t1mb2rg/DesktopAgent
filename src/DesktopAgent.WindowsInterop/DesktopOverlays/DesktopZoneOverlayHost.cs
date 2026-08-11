@@ -165,10 +165,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
         // 使用一个不太可能与 UI 颜色重合的 key；该颜色像素由 layered window 完全透明化。
         private static readonly uint TransparentColor = Rgb(0x01, 0x02, 0x03);
-        private static readonly uint AccentColor = Rgb(0x00, 0x78, 0xD4);
         private static readonly nint TransparentBrush = CreateSolidBrush(TransparentColor);
-        private static readonly nint AccentBrush = CreateSolidBrush(AccentColor);
-        private static readonly nint LabelBrush = CreateSolidBrush(Rgb(0x20, 0x20, 0x20));
         private static readonly nint NullBrush = GetStockObject(NullBrushStockObject);
         private static readonly nint NullPen = GetStockObject(NullPenStockObject);
         private static readonly nint LabelFont = CreateFontW(
@@ -442,8 +439,12 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         private static void DrawZoneFill(nint hdc, OverlayState state, NativeRect rect)
         {
             var radius = ResolveCornerRadius(state, rect);
+            var accentBrush = CreateSolidBrush(ToGdiColor(state.Appearance.ZoneColorRgb));
+            if (accentBrush == nint.Zero)
+                return;
+
             var previousPen = SelectObject(hdc, NullPen);
-            var previousBrush = SelectObject(hdc, AccentBrush);
+            var previousBrush = SelectObject(hdc, accentBrush);
             try
             {
                 _ = RoundRect(
@@ -461,6 +462,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                     _ = SelectObject(hdc, previousBrush);
                 if (previousPen != nint.Zero)
                     _ = SelectObject(hdc, previousPen);
+                _ = DeleteObject(accentBrush);
             }
         }
 
@@ -470,7 +472,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 1,
                 (int)Math.Round(state.Appearance.BorderThicknessDip * state.Scale));
             var radius = ResolveCornerRadius(state, rect);
-            var pen = CreatePen(PsSolid, thickness, AccentColor);
+            var pen = CreatePen(PsSolid, thickness, ToGdiColor(state.Appearance.ZoneColorRgb));
             if (pen == nint.Zero)
                 return;
 
@@ -538,8 +540,12 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 Bottom = zoneRect.Top + inset + height,
             };
 
+            var labelBrush = CreateSolidBrush(ToGdiColor(state.Appearance.ZoneColorRgb));
+            if (labelBrush == nint.Zero)
+                return;
+
             var previousPen = SelectObject(hdc, NullPen);
-            var previousBrush = SelectObject(hdc, LabelBrush);
+            var previousBrush = SelectObject(hdc, labelBrush);
             try
             {
                 var labelRadius = Math.Max(8, height / 2);
@@ -558,10 +564,15 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                     _ = SelectObject(hdc, previousBrush);
                 if (previousPen != nint.Zero)
                     _ = SelectObject(hdc, previousPen);
+                _ = DeleteObject(labelBrush);
             }
 
             _ = SetBkMode(hdc, TransparentBackgroundMode);
-            _ = SetTextColor(hdc, Rgb(0xFF, 0xFF, 0xFF));
+            _ = SetTextColor(
+                hdc,
+                IsLightColor(state.Appearance.ZoneColorRgb)
+                    ? Rgb(0x10, 0x10, 0x10)
+                    : Rgb(0xFF, 0xFF, 0xFF));
 
             var previousFont = LabelFont == nint.Zero ? nint.Zero : SelectObject(hdc, LabelFont);
             try
@@ -587,6 +598,20 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 (int)Math.Round(opacity * byte.MaxValue, MidpointRounding.AwayFromZero),
                 byte.MinValue,
                 byte.MaxValue);
+
+        private static uint ToGdiColor(uint rgb)
+            => Rgb(
+                (byte)((rgb >> 16) & 0xFF),
+                (byte)((rgb >> 8) & 0xFF),
+                (byte)(rgb & 0xFF));
+
+        private static bool IsLightColor(uint rgb)
+        {
+            var red = (int)((rgb >> 16) & 0xFF);
+            var green = (int)((rgb >> 8) & 0xFF);
+            var blue = (int)(rgb & 0xFF);
+            return red * 299 + green * 587 + blue * 114 >= 160_000;
+        }
 
         private static uint Rgb(byte red, byte green, byte blue)
             => (uint)(red | (green << 8) | (blue << 16));
