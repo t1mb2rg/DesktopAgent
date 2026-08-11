@@ -17,6 +17,10 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         new(DesktopAgentDataPaths.DefaultSettingsPath);
     private readonly NativeDisplayTopologyReader _displayTopologyReader = new();
     private readonly DesktopZoneOverlayHost _desktopPreviewHost = new();
+    private readonly DispatcherTimer _desktopPreviewRefreshTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(120),
+    };
 
     private DesktopOverlayAppearanceSettings _persistedAppearance =
         DesktopOverlayAppearanceSettings.Standard;
@@ -28,6 +32,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
     public OverlayAppearanceSettingsView()
     {
         InitializeComponent();
+        _desktopPreviewRefreshTimer.Tick += DesktopPreviewRefreshTimer_Tick;
     }
 
     private async void OverlayAppearanceSettingsView_Loaded(object sender, RoutedEventArgs e)
@@ -51,7 +56,10 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
     }
 
     private void OverlayAppearanceSettingsView_Unloaded(object sender, RoutedEventArgs e)
-        => HideDesktopPreview();
+    {
+        _desktopPreviewRefreshTimer.Stop();
+        HideDesktopPreview();
+    }
 
     private void LightPresetButton_Checked(object sender, RoutedEventArgs e)
     {
@@ -81,6 +89,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
 
         var appearance = DesktopOverlayAppearanceSettings.FromPreset(preset);
         ApplyAppearanceToControls(appearance);
+        ScheduleDesktopPreviewRefresh();
     }
 
     private void AppearanceSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -91,8 +100,21 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
         _workingPreset = DesktopOverlayAppearancePreset.Custom;
         SetPresetSelection(DesktopOverlayAppearancePreset.Custom);
         UpdateValueLabelsAndPreview();
+        ScheduleDesktopPreviewRefresh();
+    }
 
-        // 真实桌面预览也跟随当前参数，但只在用户已经主动打开它时刷新。
+    private void ScheduleDesktopPreviewRefresh()
+    {
+        if (!_desktopPreviewHost.IsVisible)
+            return;
+
+        _desktopPreviewRefreshTimer.Stop();
+        _desktopPreviewRefreshTimer.Start();
+    }
+
+    private void DesktopPreviewRefreshTimer_Tick(object? sender, object e)
+    {
+        _desktopPreviewRefreshTimer.Stop();
         if (_desktopPreviewHost.IsVisible)
             RefreshDesktopPreview();
     }
@@ -211,6 +233,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
     private void CancelAppearanceButton_Click(object sender, RoutedEventArgs e)
     {
         ApplyAppearanceToControls(_persistedAppearance);
+        _desktopPreviewRefreshTimer.Stop();
         HideDesktopPreview();
         ShowStatus("已恢复", "未应用的外观修改已撤销。", InfoBarSeverity.Informational);
     }
@@ -219,6 +242,7 @@ public sealed partial class OverlayAppearanceSettingsView : UserControl
     {
         if (_desktopPreviewHost.IsVisible)
         {
+            _desktopPreviewRefreshTimer.Stop();
             HideDesktopPreview();
             return;
         }
