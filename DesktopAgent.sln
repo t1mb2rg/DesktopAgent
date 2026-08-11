@@ -81,4 +81,10 @@ Global
 		{BBA614BA-D020-4373-BE52-90185B334BFB}.Release|x64.ActiveCfg = Release|Any CPU
 		{BBA614BA-D020-4373-BE52-90185B334BFB}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6695A50E-EFA6-4812-BA96-6AA1B1CCE3EB}
+	EndGlobalSection
 EndGlobal
