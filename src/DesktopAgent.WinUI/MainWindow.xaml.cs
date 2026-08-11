@@ -132,6 +132,9 @@ public sealed partial class MainWindow : Window
         HomeView.Visibility = string.Equals(tag, "home", StringComparison.Ordinal)
             ? Visibility.Visible
             : Visibility.Collapsed;
+        AiView.Visibility = string.Equals(tag, "ai", StringComparison.Ordinal)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         PendingView.Visibility = string.Equals(tag, "pending", StringComparison.Ordinal)
             ? Visibility.Visible
             : Visibility.Collapsed;
