@@ -57,6 +57,8 @@ public sealed class WinUiProductShellFeasibilityContractTests
         var tray = File.ReadAllText(Path.Combine(productRoot, "TrayIconHost.cs"));
         Assert.Contains("Shell_NotifyIconW", tray, StringComparison.Ordinal);
         Assert.Contains("NimDelete", tray, StringComparison.Ordinal);
+        Assert.Contains("TaskbarCreated", tray, StringComparison.Ordinal);
+        Assert.Contains("RegisterWindowMessageW", tray, StringComparison.Ordinal);
     }
 
     [Fact]
