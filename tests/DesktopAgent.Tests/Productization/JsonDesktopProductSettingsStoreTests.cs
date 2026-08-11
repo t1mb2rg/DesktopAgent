@@ -36,6 +36,7 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.Equal(DesktopOverlayAppearancePreset.Standard, settings.OverlayAppearance.Preset);
         Assert.Equal(3d, settings.OverlayAppearance.BorderThicknessDip);
         Assert.Equal(DesktopOverlayAppearanceSettings.DefaultZoneColorRgb, settings.OverlayAppearance.ZoneColorRgb);
+        Assert.Empty(settings.OverlayZoneColors.Overrides);
     }
 
     [Fact]
@@ -44,6 +45,8 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         var path = Path.Combine(_tempDir, "settings.json");
         var store = new JsonDesktopProductSettingsStore(path);
         var activeLayoutTemplateId = Guid.NewGuid();
+        var leftZoneId = Guid.NewGuid();
+        var rightZoneId = Guid.NewGuid();
         var expectedAppearance = new DesktopOverlayAppearanceSettings(
             DesktopOverlayAppearancePreset.Custom,
             borderThicknessDip: 3.5d,
@@ -51,6 +54,11 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
             fillOpacity: 0.12d,
             cornerRadiusDip: 21d,
             zoneColorRgb: 0x8A4FFFu);
+        var expectedZoneColors = new DesktopOverlayZoneColorPreferences(
+        [
+            new KeyValuePair<Guid, uint>(leftZoneId, 0x4C8DFFu),
+            new KeyValuePair<Guid, uint>(rightZoneId, 0xFF8A3Du),
+        ]);
         var expected = new DesktopProductSettings(
             DesktopAutomationMode.Automatic,
             firstRunCompleted: true,
@@ -59,7 +67,8 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
             "example-model",
             "openai-compatible-api-key",
             activeLayoutTemplateId,
-            expectedAppearance);
+            expectedAppearance,
+            expectedZoneColors);
 
         await store.SaveAsync(expected);
         var actual = await new JsonDesktopProductSettingsStore(path).GetAsync();
@@ -77,12 +86,19 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.Equal(expectedAppearance.FillOpacity, actual.OverlayAppearance.FillOpacity);
         Assert.Equal(expectedAppearance.CornerRadiusDip, actual.OverlayAppearance.CornerRadiusDip);
         Assert.Equal(expectedAppearance.ZoneColorRgb, actual.OverlayAppearance.ZoneColorRgb);
+        Assert.Equal(2, actual.OverlayZoneColors.Overrides.Count);
+        Assert.True(actual.OverlayZoneColors.TryGetOverride(leftZoneId, out var leftColor));
+        Assert.Equal(0x4C8DFFu, leftColor);
+        Assert.True(actual.OverlayZoneColors.TryGetOverride(rightZoneId, out var rightColor));
+        Assert.Equal(0xFF8A3Du, rightColor);
 
         var raw = await File.ReadAllTextAsync(path);
         Assert.Contains("openai-compatible-api-key", raw, StringComparison.Ordinal);
         Assert.Contains(activeLayoutTemplateId.ToString(), raw, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("overlayAppearance", raw, StringComparison.Ordinal);
         Assert.Contains("zoneColorRgb", raw, StringComparison.Ordinal);
+        Assert.Contains("overlayZoneColors", raw, StringComparison.Ordinal);
+        Assert.Contains(leftZoneId.ToString(), raw, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sk-test-secret", raw, StringComparison.Ordinal);
     }
 
@@ -111,6 +127,7 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.Equal(DesktopOverlayAppearancePreset.Standard, actual.OverlayAppearance.Preset);
         Assert.Equal(0.075d, actual.OverlayAppearance.FillOpacity);
         Assert.Equal(DesktopOverlayAppearanceSettings.DefaultZoneColorRgb, actual.OverlayAppearance.ZoneColorRgb);
+        Assert.Empty(actual.OverlayZoneColors.Overrides);
     }
 
     [Fact]
@@ -142,6 +159,7 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.Equal(DesktopOverlayAppearancePreset.Custom, actual.OverlayAppearance.Preset);
         Assert.Equal(4.5d, actual.OverlayAppearance.BorderThicknessDip);
         Assert.Equal(DesktopOverlayAppearanceSettings.DefaultZoneColorRgb, actual.OverlayAppearance.ZoneColorRgb);
+        Assert.Empty(actual.OverlayZoneColors.Overrides);
     }
 
     [Fact]
@@ -196,6 +214,34 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
                 "cornerRadiusDip": 16,
                 "zoneColorRgb": 16777216
               }
+            }
+            """);
+
+        var store = new JsonDesktopProductSettingsStore(path);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.GetAsync());
+    }
+
+    [Fact]
+    public async Task InvalidPerZoneColor_FailsClosed()
+    {
+        Directory.CreateDirectory(_tempDir);
+        var path = Path.Combine(_tempDir, "settings.json");
+        await File.WriteAllTextAsync(path, $$"""
+            {
+              "formatVersion": 1,
+              "automationMode": 1,
+              "firstRunCompleted": true,
+              "aiEnabled": false,
+              "aiBaseUri": null,
+              "aiModel": null,
+              "aiSecretReference": null,
+              "overlayZoneColors": [
+                {
+                  "zoneId": "{{Guid.NewGuid():D}}",
+                  "colorRgb": 16777216
+                }
+              ]
             }
             """);
 
