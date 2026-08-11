@@ -4,11 +4,12 @@ using System.Runtime.InteropServices;
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
+using DesktopAgent.Core.Productization;
 
 namespace DesktopAgent.WindowsInterop.DesktopOverlays;
 
 /// <summary>
-/// 只读 Desktop Zone 线框叠层。
+/// 只读 Desktop Zone 分区框叠层。
 ///
 /// Overlay 由 Windows Shell desktop window 拥有，保持在普通应用窗口之后；
 /// 同时使用 layered + transparent + no-activate，确保它只承担桌面空间提示职责，
@@ -16,30 +17,47 @@ namespace DesktopAgent.WindowsInterop.DesktopOverlays;
 /// </summary>
 public sealed class DesktopZoneOverlayHost : IDisposable
 {
-    private nint _window;
+    private nint _fillWindow;
+    private nint _chromeWindow;
     private bool _disposed;
 
-    public bool IsVisible => _window != nint.Zero && NativeOverlayWindow.IsAlive(_window);
+    public bool IsVisible =>
+        (_chromeWindow != nint.Zero && NativeOverlayWindow.IsAlive(_chromeWindow)) ||
+        (_fillWindow != nint.Zero && NativeOverlayWindow.IsAlive(_fillWindow));
 
     public void Show(DisplayDescriptor display, IReadOnlyList<DesktopLayoutZone> zones)
+        => Show(display, zones, DesktopOverlayAppearanceSettings.Standard);
+
+    public void Show(
+        DisplayDescriptor display,
+        IReadOnlyList<DesktopLayoutZone> zones,
+        DesktopOverlayAppearanceSettings appearance)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(display);
         ArgumentNullException.ThrowIfNull(zones);
+        ArgumentNullException.ThrowIfNull(appearance);
 
         if (zones.Count == 0)
-            throw new ArgumentException("至少需要一个 Zone 才能显示桌面线框。", nameof(zones));
+            throw new ArgumentException("至少需要一个 Zone 才能显示桌面分区框。", nameof(zones));
 
         Hide();
-        _window = NativeOverlayWindow.Create(display, zones);
+        var windows = NativeOverlayWindow.Create(display, zones, appearance);
+        _fillWindow = windows.FillWindow;
+        _chromeWindow = windows.ChromeWindow;
     }
 
     public void Hide()
     {
-        var hwnd = _window;
-        _window = nint.Zero;
-        if (hwnd != nint.Zero)
-            NativeOverlayWindow.Destroy(hwnd);
+        var fill = _fillWindow;
+        var chrome = _chromeWindow;
+        _fillWindow = nint.Zero;
+        _chromeWindow = nint.Zero;
+
+        if (fill != nint.Zero)
+            NativeOverlayWindow.Destroy(fill);
+        if (chrome != nint.Zero)
+            NativeOverlayWindow.Destroy(chrome);
     }
 
     public void Dispose()
@@ -94,7 +112,6 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
         private const uint LwaColorKey = 0x00000001;
         private const uint LwaAlpha = 0x00000002;
-        private const byte OverlayAlpha = 180;
 
         private const uint WmEraseBackground = 0x0014;
         private const uint WmPaint = 0x000F;
@@ -104,10 +121,10 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         private const int HtTransparent = -1;
         private const int MaNoActivate = 3;
 
-        private const int BorderBaseThickness = 1;
-        private const int LabelBaseHeight = 26;
-        private const int LabelBaseWidth = 128;
-        private const int LabelInset = 8;
+        private const int LabelBaseHeight = 28;
+        private const int LabelBaseWidth = 132;
+        private const int LabelInsetDip = 10;
+        private const int ZoneInsetDip = 4;
 
         private const int TransparentBackgroundMode = 1;
         private const uint DtLeft = 0x00000000;
@@ -121,15 +138,22 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         private const uint CleartypeQuality = 5;
         private const uint DefaultPitch = 0;
 
+        private const int PsSolid = 0;
+        private const int NullBrushStockObject = 5;
+        private const int NullPenStockObject = 8;
+
         private static readonly object RegistrationLock = new();
         private static readonly ConcurrentDictionary<nint, OverlayState> States = new();
         private static readonly WindowProcedure Procedure = OverlayWindowProcedure;
 
         // 使用一个不太可能与 UI 颜色重合的 key；该颜色像素由 layered window 完全透明化。
         private static readonly uint TransparentColor = Rgb(0x01, 0x02, 0x03);
+        private static readonly uint AccentColor = Rgb(0x00, 0x78, 0xD4);
         private static readonly nint TransparentBrush = CreateSolidBrush(TransparentColor);
-        private static readonly nint AccentBrush = CreateSolidBrush(Rgb(0x00, 0x78, 0xD4));
+        private static readonly nint AccentBrush = CreateSolidBrush(AccentColor);
         private static readonly nint LabelBrush = CreateSolidBrush(Rgb(0x20, 0x20, 0x20));
+        private static readonly nint NullBrush = GetStockObject(NullBrushStockObject);
+        private static readonly nint NullPen = GetStockObject(NullPenStockObject);
         private static readonly nint LabelFont = CreateFontW(
             -14,
             0,
@@ -151,17 +175,43 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         public static bool IsAlive(nint hwnd)
             => hwnd != nint.Zero && IsWindow(hwnd);
 
-        public static nint Create(
+        public static OverlayWindows Create(
             DisplayDescriptor display,
-            IReadOnlyList<DesktopLayoutZone> zones)
+            IReadOnlyList<DesktopLayoutZone> zones,
+            DesktopOverlayAppearanceSettings appearance)
         {
             EnsureRegistered();
 
+            // 先创建 chrome，再创建 fill 并将 fill 放到底部。
+            // 这样 fill 位于 chrome 后面，同时两者都仍在普通应用窗口之后。
+            var chrome = CreateLayer(display, zones, appearance, OverlayLayerKind.Chrome);
+            nint fill = nint.Zero;
+            try
+            {
+                if (appearance.FillOpacity > 0d)
+                    fill = CreateLayer(display, zones, appearance, OverlayLayerKind.Fill);
+
+                return new OverlayWindows(fill, chrome);
+            }
+            catch
+            {
+                Destroy(fill);
+                Destroy(chrome);
+                throw;
+            }
+        }
+
+        private static nint CreateLayer(
+            DisplayDescriptor display,
+            IReadOnlyList<DesktopLayoutZone> zones,
+            DesktopOverlayAppearanceSettings appearance,
+            OverlayLayerKind layerKind)
+        {
             var shellWindow = GetShellWindow();
             if (shellWindow == nint.Zero)
             {
                 throw new InvalidOperationException(
-                    "Windows Shell desktop window 当前不可用，拒绝创建全局顶层线框作为回退。 ");
+                    "Windows Shell desktop window 当前不可用，拒绝创建全局顶层分区框作为回退。 ");
             }
 
             var work = display.WorkArea;
@@ -189,14 +239,20 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 work.Width,
                 work.Height,
                 Math.Max(1d, display.ScaleX),
-                zones.OrderBy(zone => zone.SortOrder).ToArray());
+                zones.OrderBy(zone => zone.SortOrder).ToArray(),
+                appearance,
+                layerKind);
 
             try
             {
+                var alpha = ToAlpha(layerKind == OverlayLayerKind.Fill
+                    ? appearance.FillOpacity
+                    : appearance.BorderOpacity);
+
                 if (!SetLayeredWindowAttributes(
                         hwnd,
                         TransparentColor,
-                        OverlayAlpha,
+                        alpha,
                         LwaColorKey | LwaAlpha))
                 {
                     throw new Win32Exception(
@@ -206,7 +262,7 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
                 // 关键边界：绝不使用 WS_EX_TOPMOST / HWND_TOPMOST。
                 // Overlay 由 Shell desktop window 拥有，并请求 normal Z-order 底部，
-                // 让普通应用窗口自然覆盖它，而不是让桌面辅助线压在应用之上。
+                // 让普通应用窗口自然覆盖它，而不是让桌面辅助框压在应用之上。
                 if (!SetWindowPos(
                         hwnd,
                         HwndBottom,
@@ -313,19 +369,25 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 if (!States.TryGetValue(hwnd, out var state))
                     return;
 
-                var thickness = Math.Max(1, (int)Math.Round(BorderBaseThickness * state.Scale));
                 foreach (var zone in state.Zones)
                 {
                     var rect = MapZoneToClientRect(state, zone);
                     if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
                         continue;
 
-                    FillStrip(hdc, rect.Left, rect.Top, rect.Right - rect.Left, thickness, AccentBrush);
-                    FillStrip(hdc, rect.Left, rect.Bottom - thickness, rect.Right - rect.Left, thickness, AccentBrush);
-                    FillStrip(hdc, rect.Left, rect.Top, thickness, rect.Bottom - rect.Top, AccentBrush);
-                    FillStrip(hdc, rect.Right - thickness, rect.Top, thickness, rect.Bottom - rect.Top, AccentBrush);
+                    InsetZoneRect(ref rect, state.Scale);
+                    if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
+                        continue;
 
-                    DrawLabel(hdc, state, zone.Name, rect);
+                    if (state.LayerKind == OverlayLayerKind.Fill)
+                    {
+                        DrawZoneFill(hdc, state, rect);
+                    }
+                    else
+                    {
+                        DrawZoneChrome(hdc, state, rect);
+                        DrawLabel(hdc, state, zone.Name, rect);
+                    }
                 }
             }
             finally
@@ -351,19 +413,84 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             };
         }
 
-        private static void FillStrip(nint hdc, int x, int y, int width, int height, nint brush)
+        private static void InsetZoneRect(ref NativeRect rect, double scale)
         {
-            if (width <= 0 || height <= 0)
+            var inset = Math.Max(2, (int)Math.Round(ZoneInsetDip * scale));
+            rect.Left += inset;
+            rect.Top += inset;
+            rect.Right -= inset;
+            rect.Bottom -= inset;
+        }
+
+        private static void DrawZoneFill(nint hdc, OverlayState state, NativeRect rect)
+        {
+            var radius = ResolveCornerRadius(state, rect);
+            var previousPen = SelectObject(hdc, NullPen);
+            var previousBrush = SelectObject(hdc, AccentBrush);
+            try
+            {
+                _ = RoundRect(
+                    hdc,
+                    rect.Left,
+                    rect.Top,
+                    rect.Right,
+                    rect.Bottom,
+                    radius * 2,
+                    radius * 2);
+            }
+            finally
+            {
+                if (previousBrush != nint.Zero)
+                    _ = SelectObject(hdc, previousBrush);
+                if (previousPen != nint.Zero)
+                    _ = SelectObject(hdc, previousPen);
+            }
+        }
+
+        private static void DrawZoneChrome(nint hdc, OverlayState state, NativeRect rect)
+        {
+            var thickness = Math.Max(
+                1,
+                (int)Math.Round(state.Appearance.BorderThicknessDip * state.Scale));
+            var radius = ResolveCornerRadius(state, rect);
+            var pen = CreatePen(PsSolid, thickness, AccentColor);
+            if (pen == nint.Zero)
                 return;
 
-            var rect = new NativeRect
+            var previousPen = SelectObject(hdc, pen);
+            var previousBrush = SelectObject(hdc, NullBrush);
+            try
             {
-                Left = x,
-                Top = y,
-                Right = x + width,
-                Bottom = y + height,
-            };
-            _ = FillRect(hdc, ref rect, brush);
+                // GDI pen 会以边界为中心绘制，因此向内缩半个笔宽，避免粗框被裁掉。
+                var half = Math.Max(1, thickness / 2);
+                _ = RoundRect(
+                    hdc,
+                    rect.Left + half,
+                    rect.Top + half,
+                    rect.Right - half,
+                    rect.Bottom - half,
+                    radius * 2,
+                    radius * 2);
+            }
+            finally
+            {
+                if (previousBrush != nint.Zero)
+                    _ = SelectObject(hdc, previousBrush);
+                if (previousPen != nint.Zero)
+                    _ = SelectObject(hdc, previousPen);
+                _ = DeleteObject(pen);
+            }
+        }
+
+        private static int ResolveCornerRadius(OverlayState state, NativeRect rect)
+        {
+            var requested = Math.Max(
+                0,
+                (int)Math.Round(state.Appearance.CornerRadiusDip * state.Scale));
+            var maxRadius = Math.Max(
+                0,
+                Math.Min(rect.Right - rect.Left, rect.Bottom - rect.Top) / 2);
+            return Math.Min(requested, maxRadius);
         }
 
         private static void DrawLabel(
@@ -372,9 +499,10 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             string text,
             NativeRect zoneRect)
         {
+            var inset = Math.Max(8, (int)Math.Round(LabelInsetDip * state.Scale));
             var zoneWidth = zoneRect.Right - zoneRect.Left;
             var zoneHeight = zoneRect.Bottom - zoneRect.Top;
-            var availableWidth = Math.Max(0, zoneWidth - LabelInset * 2);
+            var availableWidth = Math.Max(0, zoneWidth - inset * 2);
             if (availableWidth < 48 || zoneHeight < 30)
                 return;
 
@@ -383,17 +511,38 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 availableWidth);
             var height = Math.Min(
                 Math.Max(22, (int)Math.Round(LabelBaseHeight * state.Scale)),
-                Math.Max(22, zoneHeight - LabelInset * 2));
+                Math.Max(22, zoneHeight - inset * 2));
 
             var labelRect = new NativeRect
             {
-                Left = zoneRect.Left + LabelInset,
-                Top = zoneRect.Top + LabelInset,
-                Right = zoneRect.Left + LabelInset + width,
-                Bottom = zoneRect.Top + LabelInset + height,
+                Left = zoneRect.Left + inset,
+                Top = zoneRect.Top + inset,
+                Right = zoneRect.Left + inset + width,
+                Bottom = zoneRect.Top + inset + height,
             };
 
-            _ = FillRect(hdc, ref labelRect, LabelBrush);
+            var previousPen = SelectObject(hdc, NullPen);
+            var previousBrush = SelectObject(hdc, LabelBrush);
+            try
+            {
+                var labelRadius = Math.Max(8, height / 2);
+                _ = RoundRect(
+                    hdc,
+                    labelRect.Left,
+                    labelRect.Top,
+                    labelRect.Right,
+                    labelRect.Bottom,
+                    labelRadius,
+                    labelRadius);
+            }
+            finally
+            {
+                if (previousBrush != nint.Zero)
+                    _ = SelectObject(hdc, previousBrush);
+                if (previousPen != nint.Zero)
+                    _ = SelectObject(hdc, previousPen);
+            }
+
             _ = SetBkMode(hdc, TransparentBackgroundMode);
             _ = SetTextColor(hdc, Rgb(0xFF, 0xFF, 0xFF));
 
@@ -416,14 +565,30 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             }
         }
 
+        private static byte ToAlpha(double opacity)
+            => (byte)Math.Clamp(
+                (int)Math.Round(opacity * byte.MaxValue, MidpointRounding.AwayFromZero),
+                byte.MinValue,
+                byte.MaxValue);
+
         private static uint Rgb(byte red, byte green, byte blue)
             => (uint)(red | (green << 8) | (blue << 16));
+
+        public readonly record struct OverlayWindows(nint FillWindow, nint ChromeWindow);
+
+        private enum OverlayLayerKind
+        {
+            Fill = 0,
+            Chrome = 1,
+        }
 
         private sealed record OverlayState(
             int Width,
             int Height,
             double Scale,
-            DesktopLayoutZone[] Zones);
+            DesktopLayoutZone[] Zones,
+            DesktopOverlayAppearanceSettings Appearance,
+            OverlayLayerKind LayerKind);
 
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         private delegate nint WindowProcedure(nint hwnd, uint message, nint wParam, nint lParam);
@@ -557,6 +722,27 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
         [DllImport("gdi32.dll")]
         private static extern nint CreateSolidBrush(uint color);
+
+        [DllImport("gdi32.dll")]
+        private static extern nint CreatePen(int style, int width, uint color);
+
+        [DllImport("gdi32.dll")]
+        private static extern nint GetStockObject(int objectIndex);
+
+        [DllImport("gdi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool DeleteObject(nint objectHandle);
+
+        [DllImport("gdi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool RoundRect(
+            nint hdc,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            int width,
+            int height);
 
         [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
         private static extern nint CreateFontW(
