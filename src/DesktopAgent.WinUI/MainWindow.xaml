@@ -16,6 +16,11 @@
                         <SymbolIcon Symbol="Home" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="AI 助手" Tag="ai">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Message" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem Content="待确认" Tag="pending">
                     <NavigationViewItem.Icon>
                         <SymbolIcon Symbol="Clock" />
@@ -42,13 +47,12 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Spacing="6">
+                    <StackPanel Spacing="5">
                         <TextBlock Text="DesktopAgent" FontSize="30" FontWeight="SemiBold" />
-                        <TextBlock Text="让桌面保持有序，同时把最终决定留在你手里。"
-                                   Opacity="0.72" />
+                        <TextBlock Text="你的桌面，按你的习惯保持有序。"
+                                   Opacity="0.62" />
                     </StackPanel>
 
                     <Grid Grid.Row="1" Margin="0,24,0,0" ColumnSpacing="12">
@@ -60,12 +64,11 @@
                         <Border Padding="18"
                                 CornerRadius="10"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="7">
-                                <TextBlock Text="自动化策略" FontWeight="SemiBold" />
-                                <TextBlock x:Name="HomeAutomationModeText" Text="Assisted" FontSize="24" />
-                                <TextBlock Text="Mode 只决定允许的后台自动化上限；Automatic 也不会把 AI-only 判断升级成 Writer authority。"
-                                           TextWrapping="Wrap"
-                                           Opacity="0.72" />
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="自动化" FontWeight="SemiBold" Opacity="0.72" />
+                                <TextBlock x:Name="HomeAutomationModeText" Text="Assisted" FontSize="26" />
+                                <TextBlock Text="需要你的地方会留给你决定。"
+                                           Opacity="0.58" />
                             </StackPanel>
                         </Border>
 
@@ -73,12 +76,11 @@
                                 Padding="18"
                                 CornerRadius="10"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="7">
-                                <TextBlock Text="安全状态" FontWeight="SemiBold" />
-                                <TextBlock Text="Writer 未接入" FontSize="24" />
-                                <TextBlock Text="M5-04 只增加设置与 Secret Store，不会触发真实桌面移动。"
-                                           TextWrapping="Wrap"
-                                           Opacity="0.72" />
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="桌面执行" FontWeight="SemiBold" Opacity="0.72" />
+                                <TextBlock Text="安全预览" FontSize="26" />
+                                <TextBlock Text="当前版本只观察、预览和保存布局。"
+                                           Opacity="0.58" />
                             </StackPanel>
                         </Border>
                     </Grid>
@@ -93,26 +95,84 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="5">
-                                <TextBlock Text="产品壳生命周期" FontWeight="SemiBold" />
-                                <TextBlock Text="关闭窗口仍会隐藏到托盘；再次启动或点击托盘图标会恢复现有单实例窗口。"
-                                           TextWrapping="Wrap"
-                                           Opacity="0.72" />
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="常驻" FontWeight="SemiBold" />
+                                <TextBlock Text="关闭主窗口后仍留在托盘，需要时再叫它回来。"
+                                           Opacity="0.58" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                <Button Content="隐藏到托盘" Click="Hide_Click" />
-                                <Button Content="显式退出" Click="Exit_Click" />
+                                <Button Content="隐藏" Click="Hide_Click" />
+                                <Button Content="退出" Click="Exit_Click" />
                             </StackPanel>
                         </Grid>
                     </Border>
+                </Grid>
 
-                    <InfoBar Grid.Row="3"
-                             Margin="0,12,0,0"
-                             IsOpen="True"
-                             IsClosable="False"
-                             Severity="Informational"
-                             Title="M5-04 安全边界"
-                             Message="保存设置不会调用 AI，也不会打开 Writer；API Key 只进入 Windows DPAPI Secret Store。" />
+                <Grid x:Name="AiView" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Spacing="5">
+                        <TextBlock Text="AI 助手" FontSize="30" FontWeight="SemiBold" />
+                        <TextBlock Text="讨论布局、规则和整理习惯。"
+                                   Opacity="0.62" />
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            Margin="0,24,0,16"
+                            CornerRadius="12"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <StackPanel HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="12"
+                                    MaxWidth="520"
+                                    Padding="40">
+                            <TextBlock Text="✦"
+                                       FontSize="44"
+                                       HorizontalAlignment="Center"
+                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                            <TextBlock Text="从一句话开始"
+                                       FontSize="22"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center" />
+                            <TextBlock Text="以后你可以直接说“帮我做一个学习用布局”。AI 生成的方案会成为 LayoutDraft，继续在布局工作台里可视化调整。"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center"
+                                       Opacity="0.58" />
+                            <StackPanel Orientation="Horizontal"
+                                        HorizontalAlignment="Center"
+                                        Spacing="8">
+                                <Border Padding="10,6"
+                                        CornerRadius="10"
+                                        Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                    <TextBlock Text="学习布局" FontSize="12" />
+                                </Border>
+                                <Border Padding="10,6"
+                                        CornerRadius="10"
+                                        Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                    <TextBlock Text="调整分区" FontSize="12" />
+                                </Border>
+                                <Border Padding="10,6"
+                                        CornerRadius="10"
+                                        Background="{ThemeResource LayerFillColorDefaultBrush}">
+                                    <TextBlock Text="整理规则" FontSize="12" />
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Grid.Row="2" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox PlaceholderText="例如：帮我做一个学习用布局"
+                                 IsEnabled="False" />
+                        <Button Grid.Column="1" Content="发送" IsEnabled="False" />
+                    </Grid>
                 </Grid>
 
                 <Grid x:Name="PendingView" Visibility="Collapsed">
@@ -127,14 +187,16 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="6">
+                        <StackPanel Spacing="5">
                             <TextBlock Text="待确认" FontSize="30" FontWeight="SemiBold" />
                             <TextBlock x:Name="PendingSummaryText"
-                                       Text="正在读取 Pending Queue…"
-                                       Opacity="0.72" />
+                                       Text="正在读取…"
+                                       Opacity="0.62" />
                         </StackPanel>
                         <Button Grid.Column="1"
-                                Content="刷新"
+                                Content="↻"
+                                Width="40"
+                                ToolTipService.ToolTip="刷新待确认队列"
                                 VerticalAlignment="Center"
                                 Click="RefreshPending_Click" />
                     </Grid>
@@ -172,7 +234,7 @@
                                                        TextTrimming="CharacterEllipsis" />
                                             <TextBlock Grid.Column="1"
                                                        Text="{Binding CreatedAtText}"
-                                                       Opacity="0.62" />
+                                                       Opacity="0.52" />
 
                                             <TextBlock Grid.Row="1"
                                                        Text="{Binding DecisionText}"
@@ -180,13 +242,13 @@
                                             <TextBlock Grid.Row="1"
                                                        Grid.Column="1"
                                                        Text="{Binding QueueReasonText}"
-                                                       Opacity="0.72" />
+                                                       Opacity="0.62" />
 
                                             <TextBlock Grid.Row="2"
                                                        Grid.ColumnSpan="2"
                                                        Text="{Binding ExplanationText}"
                                                        TextWrapping="Wrap"
-                                                       Opacity="0.68" />
+                                                       Opacity="0.55" />
                                         </Grid>
                                     </Border>
                                 </DataTemplate>
@@ -199,35 +261,22 @@
                                     Spacing="8">
                             <SymbolIcon Symbol="Accept" />
                             <TextBlock Text="现在没有待确认项目" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
-                            <TextBlock Text="新的 AI-only 判断或可延期冲突会出现在这里。"
-                                       Opacity="0.68"
+                            <TextBlock Text="需要你决定的东西会留在这里。"
+                                       Opacity="0.55"
                                        HorizontalAlignment="Center" />
                         </StackPanel>
                     </Grid>
                 </Grid>
 
-                <Grid x:Name="LayoutsView" Visibility="Collapsed">
-                    <StackPanel Spacing="10" MaxWidth="760" HorizontalAlignment="Left">
-                        <TextBlock Text="布局" FontSize="30" FontWeight="SemiBold" />
-                        <TextBlock Text="布局管理入口已经占位。布局预览、编辑与 Atomic Commit 会在 M5-05 接入。"
-                                   TextWrapping="Wrap"
-                                   Opacity="0.72" />
-                        <InfoBar IsOpen="True"
-                                 IsClosable="False"
-                                 Severity="Informational"
-                                 Title="当前仍为安全占位"
-                                 Message="进入本页不会调用 Writer，也不会改变桌面位置。" />
-                    </StackPanel>
-                </Grid>
+                <Grid x:Name="LayoutsView" Visibility="Collapsed" />
 
                 <Grid x:Name="SettingsView" Visibility="Collapsed">
                     <ScrollViewer VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
                             <TextBlock Text="设置" FontSize="30" FontWeight="SemiBold" />
-                            <TextBlock Text="配置自动化上限与 OpenAI-compatible Provider。保存配置本身不会发起 AI 请求。"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.72" />
+                            <TextBlock Text="自动化、AI Provider 与产品行为。"
+                                       Opacity="0.62" />
 
                             <InfoBar x:Name="FirstRunInfoBar"
                                      IsOpen="False"
@@ -246,9 +295,9 @@
                                         <ComboBoxItem Content="Assisted · 已确认长期策略可自动通过（默认）" />
                                         <ComboBoxItem Content="Automatic · 本地确定性策略也可自动通过" />
                                     </ComboBox>
-                                    <TextBlock Text="Automatic 仍不会让 AI-only 判断直接 AUTO；AI-only 继续进入 Pending Queue。"
+                                    <TextBlock Text="Automatic 仍不会让 AI-only 判断直接执行。"
                                                TextWrapping="Wrap"
-                                               Opacity="0.68" />
+                                               Opacity="0.58" />
                                 </StackPanel>
                             </Border>
 
@@ -258,7 +307,7 @@
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="AI Provider" FontSize="18" FontWeight="SemiBold" />
                                     <ToggleSwitch x:Name="AiEnabledToggle"
-                                                  Header="启用 AI 辅助理解"
+                                                  Header="启用 AI"
                                                   OffContent="关闭"
                                                   OnContent="启用" />
                                     <TextBox x:Name="AiEndpointTextBox"
@@ -269,17 +318,16 @@
                                              PlaceholderText="例如 Qwen2.5-7B-Instruct" />
                                     <PasswordBox x:Name="AiApiKeyPasswordBox"
                                                  Header="API Key（可选）"
-                                                 PlaceholderText="留空表示保留现有 Key；本地无认证服务可一直留空" />
+                                                 PlaceholderText="留空保留现有 Key" />
                                     <TextBlock x:Name="AiSecretStatusText"
                                                Text="尚未读取 Secret 状态。"
                                                TextWrapping="Wrap"
-                                               Opacity="0.68" />
+                                               Opacity="0.58" />
                                     <Button Content="移除已保存 API Key"
                                             HorizontalAlignment="Left"
                                             Click="RemoveApiKey_Click" />
-                                    <TextBlock Text="真实 API Key 不写入 settings.json 或 SQLite；Windows 端只落 DPAPI 保护后的 blob。"
-                                               TextWrapping="Wrap"
-                                               Opacity="0.68" />
+                                    <TextBlock Text="API Key 只保存在 Windows DPAPI Secret Store。"
+                                               Opacity="0.58" />
                                 </StackPanel>
                             </Border>
 
@@ -288,7 +336,7 @@
                                      IsClosable="True" />
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button Content="保存设置" Click="SaveSettings_Click" />
+                                <Button Content="保存" Click="SaveSettings_Click" />
                                 <Button x:Name="CompleteFirstRunButton"
                                         Content="完成首次设置"
                                         Visibility="Collapsed"
