@@ -9,8 +9,15 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>DesktopAgent.Poc</RootNamespace>
-    <AssemblyName>DesktopAgent.Poc</AssemblyName>
+    <AssemblyName>DesktopAgent.Diagnostics</AssemblyName>
+    <Product>DesktopAgent Diagnostics Workbench</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!--
+      M5-06 keeps the historical project path / namespace for compatibility, while the produced
+      executable identity is DesktopAgent.Diagnostics. A full source-path rename would widen the
+      regression surface without improving the product/diagnostics runtime boundary.
+    -->
 
     <!--
       04C intentionally disables Windows App SDK module auto-initializers.
