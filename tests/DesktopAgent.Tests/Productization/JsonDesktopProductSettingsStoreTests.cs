@@ -33,6 +33,8 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.False(settings.FirstRunCompleted);
         Assert.False(settings.AiEnabled);
         Assert.Null(settings.ActiveLayoutTemplateId);
+        Assert.Equal(DesktopOverlayAppearancePreset.Standard, settings.OverlayAppearance.Preset);
+        Assert.Equal(3d, settings.OverlayAppearance.BorderThicknessDip);
     }
 
     [Fact]
@@ -41,6 +43,12 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         var path = Path.Combine(_tempDir, "settings.json");
         var store = new JsonDesktopProductSettingsStore(path);
         var activeLayoutTemplateId = Guid.NewGuid();
+        var expectedAppearance = new DesktopOverlayAppearanceSettings(
+            DesktopOverlayAppearancePreset.Custom,
+            borderThicknessDip: 3.5d,
+            borderOpacity: 0.61d,
+            fillOpacity: 0.12d,
+            cornerRadiusDip: 21d);
         var expected = new DesktopProductSettings(
             DesktopAutomationMode.Automatic,
             firstRunCompleted: true,
@@ -48,7 +56,8 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
             new Uri("https://api.example.com/v1"),
             "example-model",
             "openai-compatible-api-key",
-            activeLayoutTemplateId);
+            activeLayoutTemplateId,
+            expectedAppearance);
 
         await store.SaveAsync(expected);
         var actual = await new JsonDesktopProductSettingsStore(path).GetAsync();
@@ -60,15 +69,21 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.Equal(expected.AiModel, actual.AiModel);
         Assert.Equal(expected.AiSecretReference, actual.AiSecretReference);
         Assert.Equal(activeLayoutTemplateId, actual.ActiveLayoutTemplateId);
+        Assert.Equal(expectedAppearance.Preset, actual.OverlayAppearance.Preset);
+        Assert.Equal(expectedAppearance.BorderThicknessDip, actual.OverlayAppearance.BorderThicknessDip);
+        Assert.Equal(expectedAppearance.BorderOpacity, actual.OverlayAppearance.BorderOpacity);
+        Assert.Equal(expectedAppearance.FillOpacity, actual.OverlayAppearance.FillOpacity);
+        Assert.Equal(expectedAppearance.CornerRadiusDip, actual.OverlayAppearance.CornerRadiusDip);
 
         var raw = await File.ReadAllTextAsync(path);
         Assert.Contains("openai-compatible-api-key", raw, StringComparison.Ordinal);
         Assert.Contains(activeLayoutTemplateId.ToString(), raw, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("overlayAppearance", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("sk-test-secret", raw, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task LegacyFormatVersion1WithoutActiveLayout_RemainsReadable()
+    public async Task LegacyFormatVersion1WithoutActiveLayoutOrOverlayAppearance_RemainsReadable()
     {
         Directory.CreateDirectory(_tempDir);
         var path = Path.Combine(_tempDir, "settings.json");
@@ -89,6 +104,37 @@ public sealed class JsonDesktopProductSettingsStoreTests : IDisposable
         Assert.Equal(DesktopAutomationMode.Assisted, actual.AutomationMode);
         Assert.True(actual.FirstRunCompleted);
         Assert.Null(actual.ActiveLayoutTemplateId);
+        Assert.Equal(DesktopOverlayAppearancePreset.Standard, actual.OverlayAppearance.Preset);
+        Assert.Equal(0.075d, actual.OverlayAppearance.FillOpacity);
+    }
+
+    [Fact]
+    public async Task InvalidOverlayAppearance_FailsClosed()
+    {
+        Directory.CreateDirectory(_tempDir);
+        var path = Path.Combine(_tempDir, "settings.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "formatVersion": 1,
+              "automationMode": 1,
+              "firstRunCompleted": true,
+              "aiEnabled": false,
+              "aiBaseUri": null,
+              "aiModel": null,
+              "aiSecretReference": null,
+              "overlayAppearance": {
+                "preset": 3,
+                "borderThicknessDip": 99,
+                "borderOpacity": 0.5,
+                "fillOpacity": 0.1,
+                "cornerRadiusDip": 16
+              }
+            }
+            """);
+
+        var store = new JsonDesktopProductSettingsStore(path);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.GetAsync());
     }
 
     [Fact]
