@@ -145,9 +145,7 @@
                         </Border>
                     </Grid>
                     <Grid Grid.Row="3" ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <Button Content="↻ 预览" Click="PreviewLayout_Click" />
                         <Button Grid.Column="1" x:Name="OverlayToggleButton" Content="▣ 桌面线框" Click="ToggleOverlay_Click" />
                         <TextBlock Grid.Column="2" x:Name="OverlayStateText" Text="线框关闭" FontSize="12" Opacity="0.55" VerticalAlignment="Center" />
