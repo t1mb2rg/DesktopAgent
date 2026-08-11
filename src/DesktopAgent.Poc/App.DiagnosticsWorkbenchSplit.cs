@@ -3,6 +3,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using DesktopAgent.Poc.Acceptance;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -10,12 +11,27 @@ namespace DesktopAgent.Poc;
 
 public partial class App
 {
+    private bool _diagnosticsWorkbenchSplitScheduled;
     private bool _diagnosticsWorkbenchIdentityApplied;
 
     protected override void OnActivated(EventArgs e)
     {
         base.OnActivated(e);
 
+        if (_diagnosticsWorkbenchSplitScheduled)
+            return;
+
+        _diagnosticsWorkbenchSplitScheduled = true;
+
+        // mainWindow.Show() 可能在 App.OnStartup 尚未执行完时就触发 Activated。
+        // 排到 ApplicationIdle，确保旧 M3 composition 已完成，再决定是否拆除 resident tray。
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.ApplicationIdle,
+            new Action(ApplyDiagnosticsWorkbenchSplit));
+    }
+
+    private void ApplyDiagnosticsWorkbenchSplit()
+    {
         if (_diagnosticsWorkbenchIdentityApplied ||
             MainWindow is not DesktopAgent.Poc.MainWindow mainWindow ||
             _host is null)
