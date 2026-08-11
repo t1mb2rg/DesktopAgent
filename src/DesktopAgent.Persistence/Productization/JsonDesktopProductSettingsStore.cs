@@ -70,6 +70,15 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                     ? null
                     : new Uri(persisted.AiBaseUri, UriKind.Absolute);
 
+                var overlayAppearance = persisted.OverlayAppearance is null
+                    ? DesktopOverlayAppearanceSettings.Standard
+                    : new DesktopOverlayAppearanceSettings(
+                        (DesktopOverlayAppearancePreset)persisted.OverlayAppearance.Preset,
+                        persisted.OverlayAppearance.BorderThicknessDip,
+                        persisted.OverlayAppearance.BorderOpacity,
+                        persisted.OverlayAppearance.FillOpacity,
+                        persisted.OverlayAppearance.CornerRadiusDip);
+
                 return new DesktopProductSettings(
                     (DesktopAutomationMode)persisted.AutomationMode,
                     persisted.FirstRunCompleted,
@@ -77,7 +86,8 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                     baseUri,
                     persisted.AiModel,
                     persisted.AiSecretReference,
-                    persisted.ActiveLayoutTemplateId);
+                    persisted.ActiveLayoutTemplateId,
+                    overlayAppearance);
             }
             catch (Exception ex) when (ex is ArgumentException or FormatException)
             {
@@ -111,6 +121,14 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
                 AiModel = settings.AiModel,
                 AiSecretReference = settings.AiSecretReference,
                 ActiveLayoutTemplateId = settings.ActiveLayoutTemplateId,
+                OverlayAppearance = new PersistedOverlayAppearance
+                {
+                    Preset = (int)settings.OverlayAppearance.Preset,
+                    BorderThicknessDip = settings.OverlayAppearance.BorderThicknessDip,
+                    BorderOpacity = settings.OverlayAppearance.BorderOpacity,
+                    FillOpacity = settings.OverlayAppearance.FillOpacity,
+                    CornerRadiusDip = settings.OverlayAppearance.CornerRadiusDip,
+                },
             };
 
             var json = JsonSerializer.Serialize(persisted, SerializerOptions);
@@ -135,5 +153,15 @@ public sealed class JsonDesktopProductSettingsStore : IDesktopProductSettingsSto
         public string? AiModel { get; set; }
         public string? AiSecretReference { get; set; }
         public Guid? ActiveLayoutTemplateId { get; set; }
+        public PersistedOverlayAppearance? OverlayAppearance { get; set; }
+    }
+
+    private sealed class PersistedOverlayAppearance
+    {
+        public int Preset { get; set; }
+        public double BorderThicknessDip { get; set; }
+        public double BorderOpacity { get; set; }
+        public double FillOpacity { get; set; }
+        public double CornerRadiusDip { get; set; }
     }
 }
