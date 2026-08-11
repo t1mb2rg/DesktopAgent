@@ -21,12 +21,6 @@ public sealed partial class LayoutManagementView
     private bool _suppressZoneColorUiEvents;
     private bool _zoneColorPreferencesDirty;
 
-    private void InitializeZoneColorUi()
-        => _zoneColorOverlayRefreshTimer.Tick += ZoneColorOverlayRefreshTimer_Tick;
-
-    private void StopZoneColorUi()
-        => _zoneColorOverlayRefreshTimer.Stop();
-
     private void ZoneColorOverlayRefreshTimer_Tick(object? sender, object e)
     {
         _zoneColorOverlayRefreshTimer.Stop();
@@ -39,6 +33,8 @@ public sealed partial class LayoutManagementView
             return;
 
         _zoneColorOverlayRefreshTimer.Stop();
+        _zoneColorOverlayRefreshTimer.Tick -= ZoneColorOverlayRefreshTimer_Tick;
+        _zoneColorOverlayRefreshTimer.Tick += ZoneColorOverlayRefreshTimer_Tick;
         _zoneColorOverlayRefreshTimer.Start();
     }
 
