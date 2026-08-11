@@ -24,6 +24,27 @@ public sealed class DiagnosticsWorkbenchSplitContractTests
     }
 
     [Fact]
+    public void WindowsInterop_PreservesInternalExecutionGateForDiagnosticsOnlyByFriendAssembly()
+    {
+        var root = FindRepositoryRoot();
+        var projectPath = Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WindowsInterop",
+            "DesktopAgent.WindowsInterop.csproj");
+        var document = XDocument.Load(projectPath);
+
+        var friends = document
+            .Descendants("InternalsVisibleTo")
+            .Select(element => (string?)element.Attribute("Include"))
+            .Where(static value => value is not null)
+            .ToArray();
+
+        Assert.Contains("DesktopAgent.Diagnostics", friends);
+        Assert.Contains("DesktopAgent.Tests", friends);
+    }
+
+    [Fact]
     public void NormalDiagnostics_IsForegroundTool_NotSecondResidentProductTray()
     {
         var profile = DiagnosticsWorkbenchRuntimeProfile.For(automaticAcceptanceArmed: false);
