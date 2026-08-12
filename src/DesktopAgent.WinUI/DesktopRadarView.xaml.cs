@@ -127,10 +127,10 @@ public sealed partial class DesktopRadarView : UserControl
             };
             var opacity = cell.Density switch
             {
-                DesktopRadarDensityLevel.Low => 0.40d,
-                DesktopRadarDensityLevel.Medium => 0.68d,
-                DesktopRadarDensityLevel.High => 0.94d,
-                _ => 0.46d,
+                DesktopRadarDensityLevel.Low => 0.34d,
+                DesktopRadarDensityLevel.Medium => 0.60d,
+                DesktopRadarDensityLevel.High => 0.90d,
+                _ => 0.42d,
             };
 
             markSize = Math.Min(markSize, Math.Max(2d, Math.Min(cellWidth, cellHeight) * 0.45d));
@@ -235,30 +235,30 @@ public sealed partial class DesktopRadarView : UserControl
 
     private SolidColorBrush RadarSurfaceBrush()
         => ActualTheme == ElementTheme.Dark
-            ? RgbBrush(0x11182B, 220)
-            : RgbBrush(0xF4F6FF, 238);
+            ? RgbBrush(0x171A20, 238)
+            : RgbBrush(0xF3F4F7, 245);
 
     private SolidColorBrush RadarSurfaceBorderBrush()
         => ActualTheme == ElementTheme.Dark
-            ? RgbBrush(0x3655D4, 142)
-            : RgbBrush(0x4D64D7, 126);
+            ? RgbBrush(0x657080, 76)
+            : RgbBrush(0x7A8492, 72);
 
     private SolidColorBrush RadarPrimaryLabelBrush()
         => ActualTheme == ElementTheme.Dark
-            ? RgbBrush(0x7184FF, 255)
-            : RgbBrush(0x1737C6, 255);
+            ? RgbBrush(0x5870FF, 255)
+            : RgbBrush(0x2342C9, 255);
 
     private SolidColorBrush RadarDensityBrush(DesktopRadarDensityLevel density)
     {
         var rgb = (ActualTheme, density) switch
         {
-            (ElementTheme.Dark, DesktopRadarDensityLevel.Low) => 0x7680ADu,
-            (ElementTheme.Dark, DesktopRadarDensityLevel.Medium) => 0x5368DEu,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.Low) => 0x8C94A8u,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.Medium) => 0x6675C9u,
             (ElementTheme.Dark, DesktopRadarDensityLevel.High) => 0x3152FFu,
-            (ElementTheme.Light, DesktopRadarDensityLevel.Low) => 0x7B84B5u,
-            (ElementTheme.Light, DesktopRadarDensityLevel.Medium) => 0x4E60CFu,
+            (ElementTheme.Light, DesktopRadarDensityLevel.Low) => 0x737D92u,
+            (ElementTheme.Light, DesktopRadarDensityLevel.Medium) => 0x5968BAu,
             (ElementTheme.Light, DesktopRadarDensityLevel.High) => 0x193CC7u,
-            _ => ActualTheme == ElementTheme.Dark ? 0x7680ADu : 0x7B84B5u,
+            _ => ActualTheme == ElementTheme.Dark ? 0x8C94A8u : 0x737D92u,
         };
 
         return RgbBrush(rgb, 255);
