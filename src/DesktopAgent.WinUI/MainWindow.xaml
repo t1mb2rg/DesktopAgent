@@ -3,13 +3,13 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:DesktopAgent.WinUI">
-    <Window.Resources>
-        <SolidColorBrush x:Key="TesselBrandBrush" Color="#3152E8" />
-        <SolidColorBrush x:Key="TesselBrandSoftBrush" Color="#183152E8" />
-        <SolidColorBrush x:Key="TesselBrandBorderBrush" Color="#663152E8" />
-    </Window.Resources>
-
     <Grid>
+        <Grid.Resources>
+            <SolidColorBrush x:Key="TesselBrandBrush" Color="#3152E8" />
+            <SolidColorBrush x:Key="TesselBrandSoftBrush" Color="#183152E8" />
+            <SolidColorBrush x:Key="TesselBrandBorderBrush" Color="#663152E8" />
+        </Grid.Resources>
+
         <NavigationView x:Name="ShellNavigation"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
