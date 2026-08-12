@@ -111,7 +111,7 @@ internal sealed class DesktopRadarOverviewService : IDisposable
             context.Layout,
             context.Settings,
             FormatFreshness(snapshot.ObservedAtUtc),
-            statusMessage: null);
+            StatusMessage: null);
     }
 
     public void Dispose()
