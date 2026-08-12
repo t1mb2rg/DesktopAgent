@@ -48,6 +48,12 @@ public sealed partial class LayoutManagementView
 
     private async void BeginEditSelectedLayout_Click(object sender, RoutedEventArgs e)
     {
+        if (_isLayoutEditing)
+        {
+            await OpenDesktopZoneEditorAsync();
+            return;
+        }
+
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
         {
             ShowError("请选择布局", "先在左侧选择一个布局。");
@@ -63,7 +69,10 @@ public sealed partial class LayoutManagementView
             }
 
             SetLayoutInteractionMode(isEditing: true);
-            ShowInfo("可以编辑了", "修改完成后保存即可；编辑期间自动化保持暂停。", InfoBarSeverity.Informational);
+            ShowInfo(
+                "可以编辑了",
+                "再次点击“桌面编辑”可直接在目标桌面调整分区；编辑期间自动化保持暂停。",
+                InfoBarSeverity.Informational);
         }
         catch (Exception ex)
         {
@@ -88,9 +97,8 @@ public sealed partial class LayoutManagementView
     private void CancelLayoutEditWithMode_Click(object sender, RoutedEventArgs e)
     {
         CancelLayoutEdit_Click(sender, e);
-        _isLayoutEditing = false;
         SetSelectedTemplateWithoutNotification(null);
-        EditLayoutButton.IsEnabled = false;
+        SetLayoutInteractionMode(isEditing: false);
     }
 
     private async Task<bool> LoadSelectedLayoutForPassiveViewAsync(LayoutTemplateListItem selected)
@@ -126,7 +134,10 @@ public sealed partial class LayoutManagementView
         ApplyPresetButton.IsEnabled = isEditing;
         SaveLayoutButton.IsEnabled = isEditing;
         CancelLayoutEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
-        EditLayoutButton.IsEnabled = !isEditing && LayoutTemplateList.SelectedItem is LayoutTemplateListItem;
+        EditLayoutButton.Content = isEditing ? "桌面编辑" : "编辑";
+        EditLayoutButton.IsEnabled = isEditing
+            ? _draft is not null
+            : LayoutTemplateList.SelectedItem is LayoutTemplateListItem;
     }
 
     private void RestoreSelectionToCurrentDraft()
