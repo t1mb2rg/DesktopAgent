@@ -84,8 +84,8 @@ public sealed partial class DesktopRadarView : UserControl
             Height = rendered.Height,
             CornerRadius = new CornerRadius(Math.Min(9d, Math.Max(3d, rendered.Height * 0.025d))),
             BorderThickness = new Thickness(1d),
-            BorderBrush = NeutralBrush(ActualTheme == ElementTheme.Dark ? (byte)78 : (byte)56),
-            Background = NeutralBrush(ActualTheme == ElementTheme.Dark ? (byte)15 : (byte)10),
+            BorderBrush = RadarSurfaceBorderBrush(),
+            Background = RadarSurfaceBrush(),
         };
         Canvas.SetLeft(surface, rendered.Left);
         Canvas.SetTop(surface, rendered.Top);
@@ -98,7 +98,10 @@ public sealed partial class DesktopRadarView : UserControl
         {
             Text = rendered.Display.IsPrimary ? "主显示器" : "显示器",
             FontSize = 11d,
-            Opacity = 0.58d,
+            Foreground = rendered.Display.IsPrimary
+                ? RadarPrimaryLabelBrush()
+                : NeutralBrush(255),
+            Opacity = rendered.Display.IsPrimary ? 0.86d : 0.54d,
         };
         Canvas.SetLeft(label, rendered.Left + 8d);
         Canvas.SetTop(label, rendered.Top + 6d);
@@ -124,10 +127,10 @@ public sealed partial class DesktopRadarView : UserControl
             };
             var opacity = cell.Density switch
             {
-                DesktopRadarDensityLevel.Low => 0.34d,
-                DesktopRadarDensityLevel.Medium => 0.54d,
-                DesktopRadarDensityLevel.High => 0.76d,
-                _ => 0.4d,
+                DesktopRadarDensityLevel.Low => 0.42d,
+                DesktopRadarDensityLevel.Medium => 0.66d,
+                DesktopRadarDensityLevel.High => 0.90d,
+                _ => 0.46d,
             };
 
             markSize = Math.Min(markSize, Math.Max(2d, Math.Min(cellWidth, cellHeight) * 0.45d));
@@ -136,7 +139,7 @@ public sealed partial class DesktopRadarView : UserControl
                 Width = markSize,
                 Height = markSize,
                 CornerRadius = new CornerRadius(Math.Max(1d, markSize * 0.28d)),
-                Background = NeutralBrush(255),
+                Background = RadarDensityBrush(cell.Density),
                 Opacity = opacity,
             };
             var x = rendered.Left + ((cell.Column + 0.5d) * cellWidth) - (markSize / 2d);
@@ -178,8 +181,8 @@ public sealed partial class DesktopRadarView : UserControl
                 Height = height,
                 CornerRadius = new CornerRadius(Math.Min(8d, Math.Max(2d, height * 0.035d))),
                 BorderThickness = new Thickness(1d),
-                BorderBrush = RgbBrush(rgb, 125),
-                Background = RgbBrush(rgb, 14),
+                BorderBrush = RgbBrush(rgb, 145),
+                Background = RgbBrush(rgb, 20),
             };
             Canvas.SetLeft(zoneBorder, left);
             Canvas.SetTop(zoneBorder, top);
@@ -193,7 +196,7 @@ public sealed partial class DesktopRadarView : UserControl
                 Width = 3d,
                 Height = 12d,
                 CornerRadius = new CornerRadius(1.5d),
-                Background = RgbBrush(rgb, 205),
+                Background = RgbBrush(rgb, 220),
             };
             Canvas.SetLeft(identityBar, left + 7d);
             Canvas.SetTop(identityBar, top + 7d);
@@ -203,7 +206,7 @@ public sealed partial class DesktopRadarView : UserControl
             {
                 Text = zone.Name,
                 FontSize = 11d,
-                Opacity = 0.72d,
+                Opacity = 0.76d,
                 MaxWidth = Math.Max(24d, width - 24d),
                 TextTrimming = TextTrimming.CharacterEllipsis,
             };
@@ -229,6 +232,37 @@ public sealed partial class DesktopRadarView : UserControl
             TargetDisplayBindingKind.SelectedTarget => null,
             _ => null,
         };
+
+    private SolidColorBrush RadarSurfaceBrush()
+        => ActualTheme == ElementTheme.Dark
+            ? RgbBrush(0x17232B, 178)
+            : RgbBrush(0xEEF5F8, 220);
+
+    private SolidColorBrush RadarSurfaceBorderBrush()
+        => ActualTheme == ElementTheme.Dark
+            ? RgbBrush(0x8AA6B5, 118)
+            : RgbBrush(0x6F8C9D, 112);
+
+    private SolidColorBrush RadarPrimaryLabelBrush()
+        => ActualTheme == ElementTheme.Dark
+            ? RgbBrush(0x86D6EB, 255)
+            : RgbBrush(0x167FA8, 255);
+
+    private SolidColorBrush RadarDensityBrush(DesktopRadarDensityLevel density)
+    {
+        var rgb = (ActualTheme, density) switch
+        {
+            (ElementTheme.Dark, DesktopRadarDensityLevel.Low) => 0x91ACBBu,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.Medium) => 0x79B9D3u,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.High) => 0x70D2E8u,
+            (ElementTheme.Light, DesktopRadarDensityLevel.Low) => 0x678A9Du,
+            (ElementTheme.Light, DesktopRadarDensityLevel.Medium) => 0x3F87A7u,
+            (ElementTheme.Light, DesktopRadarDensityLevel.High) => 0x137FA9u,
+            _ => ActualTheme == ElementTheme.Dark ? 0x91ACBBu : 0x678A9Du,
+        };
+
+        return RgbBrush(rgb, 255);
+    }
 
     private SolidColorBrush NeutralBrush(byte alpha)
     {
