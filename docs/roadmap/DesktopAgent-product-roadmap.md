@@ -1,4 +1,4 @@
-# DesktopAgent 产品路线图
+# Tessel 产品路线图
 
 > 文档状态：活路线图  
 > 目标版本：v1.0  
@@ -8,7 +8,9 @@
 
 ## 1. 这份路线图负责什么
 
-本文档只维护 DesktopAgent 的**产品边界、技术主线、安全不变量、当前里程碑状态和发布路径**。
+本文档维护 Tessel 的**产品边界、技术主线、安全不变量、当前里程碑状态和发布路径**。
+
+Tessel 是对外产品名。仓库、程序集、namespace 和部分源码路径目前继续使用 `DesktopAgent.*` 作为内部工程名，不为了品牌迁移强行重命名稳定代码。
 
 历史实现过程、单次实验、PR 细节和物理验收记录放在 `docs/experiments/` 与 `docs/milestones/` 中，不再让活路线图承担完整施工日志。
 
@@ -22,7 +24,7 @@
 
 ## 2. v1.0 产品定位
 
-DesktopAgent v1.0 是一个面向 Windows 11 的本地桌面图标布局与自动整理工具。
+Tessel v1.0 是一个面向 Windows 11 的本地桌面图标布局与自动整理工具。
 
 它直接理解 Explorer 原生桌面的显示器、图标和空间布局，不创建替代桌面，也不接管 Explorer 的正常交互。
 
@@ -35,7 +37,8 @@ DesktopAgent v1.0 是一个面向 Windows 11 的本地桌面图标布局与自�
 - 基于新的桌面观察结果生成可视预览和执行候选；
 - 在用户授权与安全 Gate 允许时进入受控桌面图标执行链；
 - 保存安全快照、验证执行结果并在异常时保守回滚或进入恢复流程；
-- 常驻 Windows 托盘，根据用户确认过的长期策略决定哪些事情以后可以自动做。
+- 常驻 Windows 托盘，根据用户确认过的长期策略决定哪些事情以后可以自动做；
+- 在产品化阶段补齐直接桌面分区编辑，使用户即使不启用自动整理也可以先划分空间，再手动把图标拖入对应区域。
 
 ### v1.0 明确不做什么
 
@@ -50,14 +53,14 @@ DesktopAgent v1.0 是一个面向 Windows 11 的本地桌面图标布局与自�
 
 ## 3. 当前产品形态
 
-DesktopAgent 已经明确拆成两个 Surface。
+Tessel 已经明确拆成两个 Surface。
 
-### 3.1 DesktopAgent.WinUI
+### 3.1 Tessel 正式产品
 
-正式产品壳，面向日常用户：
+当前工程入口仍为 `DesktopAgent.WinUI`，面向日常用户：
 
 ```text
-DesktopAgent
+Tessel
 ├─ 概览
 ├─ AI 助手
 ├─ 待确认
@@ -135,7 +138,7 @@ DesktopAgent.Persistence
 └─ DPAPI Secret
 
 DesktopAgent.WinUI
-└─ 正式产品 Surface
+└─ Tessel 正式产品 Surface
 
 DesktopAgent.Diagnostics
 └─ 工程诊断 / acceptance Surface
@@ -232,8 +235,9 @@ Writer 受控执行
 | M5-04 | First-run / Settings / AI Config | COMPLETE |
 | M5-05 | Daily Workflow / Layout Management | COMPLETE |
 | M5-06 | Diagnostics / Workbench Split | COMPLETE |
-| M5-07 | Performance / Long-run Stability | IN PROGRESS |
-| M5-08 | Packaging / Install / Upgrade | NEXT |
+| M5-07 | Performance / Long-run Stability + Resident Optimization | IN PROGRESS |
+| M5-07.5 | Desktop Zone Editing | PLANNED |
+| M5-08 | Packaging / Install / Upgrade | PLANNED |
 | M5-09 | Product E2E / RC | PLANNED |
 | v2.0 | 真实文件系统整理 | EXPLORATION |
 
@@ -300,11 +304,11 @@ WinUI 3 / Windows App SDK 已通过真实 Windows 生命周期 Gate，正式产�
 
 WinUI 正式产品与 WPF Diagnostics 在进程身份、托盘常驻职责和 UI 语义上拆分完成。Diagnostics 普通启动不保留第二套 tray，关闭主窗口退出；WinUI 继续作为唯一产品常驻 Surface。
 
-### M5-07：Performance / Long-run Stability
+### M5-07：Performance / Long-run Stability + Resident Optimization
 
 **IN PROGRESS。**
 
-当前验证：
+先建立未优化版本的真实稳定性 baseline：
 
 - Explorer / taskbar 重启后的 tray re-registration；
 - 空闲 CPU；
@@ -315,11 +319,61 @@ WinUI 正式产品与 WPF Diagnostics 在进程身份、托盘常驻职责和 UI
 - 重复交互 soak；
 - 至少 2 小时 resident soak。
 
-首轮 3 分钟 Windows smoke 已通过，暂未出现 CPU、Private Memory、Handle、GDI 或 USER object 泄漏信号。
+首轮 3 分钟 Windows smoke 与 30 分钟 idle baseline 已通过。30 分钟 baseline 中 Private Memory 保持稳定，Working Set 后续被系统明显 trim；Handle 存在会回收的锯齿，因此继续通过 repeated interaction 与 2 小时 soak 验证长期低水位是否稳定。
+
+稳定性 baseline 完成后，再进入 Resident Lifecycle Optimization。目标不是单纯追求任务管理器里的最低数字，而是区分不同运行状态并优化生命周期：
+
+```text
+Deep Resident
+    ↓ tray interaction
+Prewarm
+    ↓ open
+Interactive
+    ↓ feature intent
+Active Tool
+    ↓ close to tray
+Warm Resident
+    ↓ timeout / memory pressure
+Deep Resident
+```
+
+重点方向：
+
+- 托盘长期驻留只保留真正必要的 resident core；
+- 打开产品后优先保证完整和流畅的交互体验；
+- 重页面与昂贵 native/service 能力按真实意图加载；
+- 托盘菜单、PointerPressed 和合适的 hover dwell 可作为无副作用的预热信号；
+- 关闭到托盘后先保留短暂 Warm Resident，再逐步收敛到 Deep Resident；
+- 不通过频繁 `GC.Collect()` 或强制 Working Set trim 伪造“低内存”；
+- 同时测量 resident footprint、恢复耗时和首次页面打开延迟，避免把启动成本偷偷转移到用户第一次点击。
+
+### M5-07.5：Desktop Zone Editing
+
+**PLANNED。**
+
+在 M5-07 稳定性与 resident 生命周期收敛后，补齐直接在原生桌面编辑布局分区的产品能力。
+
+第一版目标：
+
+- 从 Layout / Overlay 明确进入 Desktop Zone Edit Mode；
+- 直接在桌面移动、缩放、新建和删除 Zone；
+- 支持 Zone 名称、颜色以及必要的边缘 / Zone 吸附；
+- 保存后回到普通 click-through Overlay；
+- 用户可以完全手动把 Explorer 桌面图标拖入这些区域，不要求启用自动整理。
+
+安全边界：
+
+- Zone Edit Mode 属于 Layout Editing；
+- 编辑期间 Automation BLOCK；
+- 进入、拖动、缩放、保存、取消均不移动桌面图标；
+- Desktop Overlay 的被动显示职责与 Desktop Zone Editor 的交互职责分开；
+- 任何后续自动整理仍必须经过 fresh observe / fresh replan / authorization / Safety / Writer 链。
+
+后续增强可以探索“边框和 resize handle 可交互、Zone 内部继续 click-through”的混合命中方式，让用户边调分区边手动拖图标，但不把它作为第一版 Gate。
 
 ### M5-08：Packaging / Install / Upgrade
 
-**NEXT。**
+**PLANNED。**
 
 目标：
 
@@ -329,7 +383,8 @@ WinUI 正式产品与 WPF Diagnostics 在进程身份、托盘常驻职责和 UI
 - 可选开机启动；
 - 用户数据保留与升级兼容；
 - SQLite schema 向前迁移与失败保护；
-- Release artifact 与校验文件。
+- Release artifact 与校验文件；
+- Tessel 的正式产品身份、图标、开始菜单、托盘 Tooltip 与安装器文案。
 
 Packaging 决策不得通过“打包方便”为理由削弱现有安全和数据边界。
 
@@ -342,6 +397,7 @@ Packaging 决策不得通过“打包方便”为理由削弱现有安全和数�
 - 首次安装与首次运行；
 - 托盘生命周期；
 - 设置、布局、待确认与 AI 配置；
+- Desktop Zone Editing；
 - 重启与升级；
 - 长时间驻留；
 - Diagnostics 可诊断性；
@@ -356,6 +412,7 @@ v1.0 进入正式发布前至少满足：
 - 正式 WinUI 产品壳与 Diagnostics 工程工具明确分离；
 - 自动化授权语义可解释且不可绕过 Safety；
 - AI 关闭或不可用时本地规则与布局能力仍可工作；
+- 用户能够直接在桌面编辑 Zone，并在完全不启用自动整理的情况下使用 Overlay 手动整理；
 - 长期托盘驻留无明显资源无界增长；
 - Explorer 重启后产品能够恢复必要 shell presence；
 - 安装、升级和卸载行为可预测；
@@ -431,3 +488,4 @@ v1.0 主线不实施：
 |---|---|
 | 2026-08-04 | 首次冻结 M0–M5、WinUI 3 决策门与 v2.0 文件整理探索方向 |
 | 2026-08-12 | 同步 M0–M4 Core Freeze、M5-00 至 M5-06 完成状态、WinUI / Diagnostics 双 Surface 与 M5-07 当前路线 |
+| 2026-08-12 | 确定对外产品名 Tessel，记录 Resident Lifecycle Optimization，并在 Packaging 前增加 M5-07.5 Desktop Zone Editing |
