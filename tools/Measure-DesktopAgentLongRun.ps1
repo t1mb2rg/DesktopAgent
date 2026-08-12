@@ -32,12 +32,12 @@ namespace DesktopAgentLongRun
 function Get-SingleProcess([string]$Name) {
     $matches = @(Get-Process -Name $Name -ErrorAction SilentlyContinue)
     if ($matches.Count -eq 0) {
-        throw "未找到进程 '$Name'。请先启动 DesktopAgent WinUI。"
+        throw "Process '$Name' was not found. Start DesktopAgent WinUI before sampling."
     }
 
     if ($matches.Count -gt 1) {
         $ids = ($matches | ForEach-Object Id) -join ", "
-        throw "发现多个 '$Name' 进程：$ids。M5-07 采样要求单实例。"
+        throw "Multiple '$Name' processes were found: $ids. M5-07 sampling requires a single instance."
     }
 
     return $matches[0]
@@ -98,7 +98,7 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
         $process.Refresh()
     }
     catch {
-        throw "采样期间进程 PID $($process.Id) 已退出。已有样本保留在 '$OutputPath'。"
+        throw "Sampled process PID $($process.Id) exited. Existing samples remain at '$OutputPath'."
     }
 
     $now = [DateTimeOffset]::UtcNow
@@ -132,7 +132,7 @@ while ([DateTimeOffset]::UtcNow -lt $deadline) {
 
 $rows = @(Import-Csv -Path $OutputPath)
 if ($rows.Count -eq 0) {
-    throw "采样结束但没有生成有效样本。"
+    throw "Sampling completed without producing any samples."
 }
 
 $first = $rows[0]
