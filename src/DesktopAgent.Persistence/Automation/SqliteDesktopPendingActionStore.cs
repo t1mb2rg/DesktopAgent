@@ -160,6 +160,21 @@ public sealed class SqliteDesktopPendingActionStore : IDesktopPendingActionStore
         return Task.FromResult<IReadOnlyList<DesktopPendingAction>>(result);
     }
 
+    /// <summary>
+    /// 只读取 Pending Queue 数量，不反序列化 PendingAction。
+    /// 产品概览使用该轻量查询，避免为了显示一个数字加载整批队列项。
+    /// </summary>
+    public Task<int> CountAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM desktop_pending_actions;";
+        var value = command.ExecuteScalar();
+        return Task.FromResult(Convert.ToInt32(value, CultureInfo.InvariantCulture));
+    }
+
     public Task<bool> DeleteAsync(
         Guid pendingActionId,
         CancellationToken cancellationToken = default)
