@@ -10,7 +10,7 @@ Desktop Radar 是 Tessel 用来描述“当前桌面空间”的轻量可视化�
 
 ```text
 我的显示器现在是什么结构？
-当前布局怎样划分空间？
+当前布局怎样定义受管理空间？
 桌面项目主要集中在哪里？
 哪些区域比较拥挤？
 我可以从哪里进入对应布局 / 分区？
@@ -23,10 +23,12 @@ Desktop Radar 使用三层空间语义：
 ```text
 Display Geometry
     ↓
-Layout / Zone Layer
-    ↓
 Desktop Density Layer
+    ↓
+Layout / Zone Layer
 ```
+
+其中 Display 是完整桌面画布，Zone 只是叠加在完整桌面上的可选受管理空间，而不是必须铺满显示器的 partition。
 
 它服务于“看懂”和“定位”，不是执行证据。
 
@@ -73,19 +75,11 @@ Must not be used as execution evidence.
 
 ## 3. 显示器几何
 
-Radar 尽量保持真实显示器宽高比和相对方向感。
+Radar 尽量保持真实显示器宽高比、方向和多屏相对空间关系。
 
-多显示器时，每块显示器作为独立 Radar surface：
+多显示器时，每块显示器作为独立 Radar surface；横屏、竖屏、超宽屏均应保持可辨认比例，不强行绘制成统一矩形卡片。
 
-```text
-┌─────────────────────┐     ┌──────────────┐
-│ 主显示器             │     │ 副屏         │
-│                     │     │              │
-│ Zone A     Zone B   │     │ Zone C       │
-└─────────────────────┘     └──────────────┘
-```
-
-竖屏、超宽屏等应在视觉上保持可辨认的比例，不强行绘制成统一矩形卡片。
+Display surface 代表完整桌面空间，而不是 Zone 的容器壳。
 
 ## 4. Radar Mark
 
@@ -101,7 +95,7 @@ Radar 尽量保持真实显示器宽高比和相对方向感。
 - 不显示文件名；
 - 不作为独立点击目标。
 
-Mark 的位置来自真实桌面项目坐标的低分辨率空间聚合。
+Mark 的位置来自真实桌面项目坐标的低分辨率空间聚合，并覆盖完整 Display，包括 Zone 之外的自由桌面区域。
 
 `数字` 回答“多少”，Radar Mark 回答“在哪里”。
 
@@ -245,7 +239,7 @@ GridRows
 
 ## 10. Zone Layer
 
-Zone 是 Radar 的主要空间交互对象。
+Zone 是 Radar 的主要空间交互对象，但不是 Display 的完整 partition。
 
 Zone Layer 显示：
 
@@ -261,6 +255,40 @@ Zone 颜色建议：
 - Radar Mark：保持中性，不随 Zone 颜色整体染色。
 
 颜色表达“空间身份”，Mark 表达“桌面内容密度”。
+
+### 10.1 Quiet Zone Label / LOD
+
+Radar Zone 默认使用内嵌 Quiet Label，而不是常驻 Pill 或边框标题。
+
+建议视觉语言：
+
+```text
+▎ 工作区
+```
+
+其中短色条使用 Zone identity color，名称保持中性色。
+
+Zone label 根据 Radar 中的实际渲染尺寸自动选择信息密度：
+
+```text
+Large
+→ Name + exact Count
+
+Medium
+→ Name + inline Count
+
+Small
+→ Name
+
+Tiny
+→ 默认隐藏文本，Hover / tooltip / accessibility 提供完整名称
+```
+
+LOD 切换应带迟滞，避免窗口缩放时标签频繁闪动。
+
+普通状态下 Zone border / fill 保持克制；Hover 才轻微提高边框、填充和区域内 Radar Mark 的视觉权重。
+
+相邻 Zone 的共享边不得因为重复绘制而视觉加粗。外部轮廓可以柔和，内部空间关系保持连续，不把每个 Zone 画成彼此独立的浮动 Card。
 
 ## 11. 精确数量与空间密度分离
 
@@ -360,7 +388,39 @@ Radar Mark 不代表单个 item，因此不可单独点击。
 - 不触发 Automation；
 - 不移动桌面图标。
 
-## 15. 无布局 / 未分区状态
+## 15. Free Desktop / 非满铺布局
+
+Tessel 不要求 Zone 覆盖完整显示器。
+
+冻结语义：
+
+> Display 是完整桌面画布；Zone 是可选的受管理空间。Zone 外区域属于合法的 Free Desktop。
+
+因此：
+
+- Zone 可以只占屏幕的一部分；
+- Zone 之间可以存在空隙；
+- 可以有意保留大面积壁纸区域；
+- 某块 Display 可以完全没有 Zone；
+- Radar Density Layer 仍覆盖完整 Display；
+- Zone 外的 Radar Mark 使用普通中性色，不使用警告色；
+- Zone 外项目不是错误、异常或待“修复”状态；
+- 不使用“未分区”作为默认负面语义。
+
+只有当某个项目存在明确规则要求其进入特定 Zone，并且后续 automation authority 允许时，才可能形成整理候选。
+
+换言之：
+
+```text
+Item outside all Zones
+≠ violation
+≠ pending by default
+≠ automation trigger by itself
+```
+
+这条语义同样约束未来 Desktop Zone Editor：编辑器不得强制 Zone 铺满 Display，也不得自动补齐剩余空间。
+
+## 16. 无布局状态
 
 Radar 不依赖 active layout 才存在。
 
@@ -371,15 +431,9 @@ Radar 不依赖 active layout 才存在。
 - total item count；
 - 自然的“还没有设置布局”提示。
 
-Zone 外的项目直接以相同 Radar Mark 出现在 Zone 之外，不发明额外 item glyph。
+此时整个 Display 都是正常的 Free Desktop。
 
-可以补充：
-
-```text
-3 项未分区
-```
-
-## 16. Reuse
+## 17. Reuse
 
 Radar Renderer 应尽量成为 Tessel 的共享空间视觉语言，而不是 Overview 私有组件。
 
@@ -393,8 +447,8 @@ Radar Renderer 应尽量成为 Tessel 的共享空间视觉语言，而不是 Ov
 
 不同页面可以叠加不同 interaction / annotation layer，但 Display / Zone / Density 的基础语言保持一致。
 
-## 17. Frozen Design Contract
+## 18. Frozen Design Contract
 
 当前冻结：
 
-> Desktop Radar 使用按显示器独立计算的自适应网格。Grid Resolution 依据显示器比例、桌面项目数量与空间分布从有限候选层级中自动选择，并通过迟滞机制保持视觉稳定。Density Band 与所选 Grid 联合计算，Radar Mark 使用有限档位的尺寸与透明度表达拥挤程度。Radar 只用于展示和被动空间导航，不承载 item identity、Writer evidence 或 automation authority。
+> Desktop Radar 使用按显示器独立计算的自适应网格。Grid Resolution 依据显示器比例、桌面项目数量与空间分布从有限候选层级中自动选择，并通过迟滞机制保持视觉稳定。Density Band 与所选 Grid 联合计算，Radar Mark 使用有限档位的尺寸与透明度表达拥挤程度。Display 是完整桌面画布，Zone 是可选的受管理空间，不要求覆盖完整显示器；Zone 外 Free Desktop 是合法状态。Radar 只用于展示和被动空间导航，不承载 item identity、Writer evidence 或 automation authority。
