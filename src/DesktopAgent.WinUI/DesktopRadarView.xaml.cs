@@ -1,5 +1,4 @@
 using DesktopAgent.Core.DesktopLayouts.Templates;
-using DesktopAgent.Core.Geometry;
 using DesktopAgent.Core.Productization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -204,7 +203,6 @@ public sealed partial class DesktopRadarView : UserControl
             {
                 Text = zone.Name,
                 FontSize = 11d,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Opacity = 0.72d,
                 MaxWidth = Math.Max(24d, width - 24d),
                 TextTrimming = TextTrimming.CharacterEllipsis,
