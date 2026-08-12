@@ -43,7 +43,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Title = "DesktopAgent";
+        Title = "Tessel";
 
         PendingList.ItemsSource = _pendingItems;
         ShellNavigation.SelectedItem = ShellNavigation.MenuItems[0];
