@@ -7,12 +7,15 @@ namespace DesktopAgent.WinUI;
 public sealed partial class MainWindow
 {
     private readonly OverviewLightweightReadModelLoader _overviewReadModelLoader = new();
-    private readonly DesktopRadarOverviewService _desktopRadarOverviewService = new();
+    private DesktopRadarOverviewService? _desktopRadarOverviewService;
     private DesktopRadarOverviewState? _desktopRadarState;
     private long _homeVisibilityCallbackToken;
     private bool _overviewRefreshInFlight;
     private bool _radarPresentationLoadInFlight;
     private bool _radarRefreshInFlight;
+
+    private DesktopRadarOverviewService RadarService =>
+        _desktopRadarOverviewService ??= new DesktopRadarOverviewService();
 
     private async void HomeView_Loaded(object sender, RoutedEventArgs e)
     {
@@ -75,10 +78,11 @@ public sealed partial class MainWindow
         _radarPresentationLoadInFlight = true;
         try
         {
-            _desktopRadarState = await _desktopRadarOverviewService.LoadCachedAsync();
+            var service = RadarService;
+            _desktopRadarState = await service.LoadCachedAsync();
             ApplyRadarState(_desktopRadarState);
 
-            if (_desktopRadarOverviewService.ShouldRefresh(_desktopRadarState.Snapshot))
+            if (service.ShouldRefresh(_desktopRadarState.Snapshot))
                 _ = RefreshRadarAsync();
         }
         catch (Exception ex)
@@ -105,7 +109,7 @@ public sealed partial class MainWindow
         HomeRadarStatusText.Text = "正在读取当前桌面…";
         try
         {
-            _desktopRadarState = await _desktopRadarOverviewService.RefreshAsync(
+            _desktopRadarState = await RadarService.RefreshAsync(
                 _desktopRadarState?.Snapshot);
             ApplyRadarState(_desktopRadarState);
         }
