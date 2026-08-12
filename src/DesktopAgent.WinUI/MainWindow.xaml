@@ -6,8 +6,7 @@
     <Grid>
         <Grid.Resources>
             <SolidColorBrush x:Key="TesselBrandBrush" Color="#3152E8" />
-            <SolidColorBrush x:Key="TesselBrandSoftBrush" Color="#183152E8" />
-            <SolidColorBrush x:Key="TesselBrandBorderBrush" Color="#663152E8" />
+            <SolidColorBrush x:Key="TesselBrandBorderBrush" Color="#2E3152E8" />
         </Grid.Resources>
 
         <NavigationView x:Name="ShellNavigation"
@@ -92,7 +91,7 @@
                                         <TextBlock x:Name="HomeRadarFreshnessText"
                                                    Text="等待首次刷新"
                                                    Foreground="{StaticResource TesselBrandBrush}"
-                                                   Opacity="0.82" />
+                                                   Opacity="0.76" />
                                     </StackPanel>
                                     <Button x:Name="HomeRadarRefreshButton"
                                             Grid.Column="1"
@@ -179,13 +178,12 @@
 
                             <Border Padding="15"
                                     CornerRadius="10"
-                                    BorderThickness="1"
-                                    BorderBrush="{StaticResource TesselBrandBorderBrush}"
-                                    Background="{StaticResource TesselBrandSoftBrush}">
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="桌面概况"
                                                FontWeight="SemiBold"
-                                               Foreground="{StaticResource TesselBrandBrush}" />
+                                               Foreground="{StaticResource TesselBrandBrush}"
+                                               Opacity="0.82" />
                                     <TextBlock x:Name="HomeDesktopHealthText"
                                                Text="等待桌面观察"
                                                FontSize="20"
@@ -194,41 +192,6 @@
                                                Text="刷新后显示项目、屏幕与高密度区域。"
                                                TextWrapping="Wrap"
                                                Opacity="0.58" />
-                                </StackPanel>
-                            </Border>
-
-                            <Border Padding="15"
-                                    CornerRadius="10"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                                <StackPanel Spacing="9">
-                                    <TextBlock Text="快捷入口" FontWeight="SemiBold" Opacity="0.68" />
-                                    <Grid RowSpacing="8" ColumnSpacing="8">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Button Content="布局"
-                                                HorizontalAlignment="Stretch"
-                                                Click="QuickOpenLayouts_Click" />
-                                        <Button Grid.Column="1"
-                                                Content="AI 助手"
-                                                HorizontalAlignment="Stretch"
-                                                Click="QuickOpenAi_Click" />
-                                        <Button Grid.Row="1"
-                                                Content="待确认"
-                                                HorizontalAlignment="Stretch"
-                                                Click="QuickOpenPending_Click" />
-                                        <Button Grid.Row="1"
-                                                Grid.Column="1"
-                                                Content="设置"
-                                                Foreground="{StaticResource TesselBrandBrush}"
-                                                HorizontalAlignment="Stretch"
-                                                Click="QuickOpenSettings_Click" />
-                                    </Grid>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
