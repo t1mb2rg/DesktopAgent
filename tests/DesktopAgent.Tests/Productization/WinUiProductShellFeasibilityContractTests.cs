@@ -84,6 +84,31 @@ public sealed class WinUiProductShellFeasibilityContractTests
     }
 
     [Fact]
+    public void ProductShell_DeepResidentRelease_IsDelayedCancellableAndProtectsUnsavedWork()
+    {
+        var root = FindRepositoryRoot();
+        var productRoot = Path.Combine(root, "src", "DesktopAgent.WinUI");
+        var window = File.ReadAllText(Path.Combine(productRoot, "MainWindow.xaml.cs"));
+        var layoutLifecycle = File.ReadAllText(Path.Combine(productRoot, "LayoutManagementView.Lifecycle.cs"));
+        var appearanceLifecycle = File.ReadAllText(Path.Combine(productRoot, "OverlayAppearanceSettingsView.Lifecycle.cs"));
+
+        Assert.Contains("TimeSpan.FromSeconds(45)", window, StringComparison.Ordinal);
+        Assert.Contains("ScheduleResidentRelease", window, StringComparison.Ordinal);
+        Assert.Contains("_residentReleaseTimer.Stop();", window, StringComparison.Ordinal);
+        Assert.Contains("ReleaseInteractiveViews", window, StringComparison.Ordinal);
+        Assert.Contains("EnsureSelectedSectionHydrated", window, StringComparison.Ordinal);
+        Assert.Contains("CanReleaseForDeepResident", window, StringComparison.Ordinal);
+        Assert.DoesNotContain("GC.Collect", window, StringComparison.Ordinal);
+
+        Assert.Contains("_draft is null", layoutLifecycle, StringComparison.Ordinal);
+        Assert.Contains("!_zoneColorPreferencesDirty", layoutLifecycle, StringComparison.Ordinal);
+        Assert.Contains("!_overlayHost.IsVisible", layoutLifecycle, StringComparison.Ordinal);
+
+        Assert.Contains("_desktopPreviewHost.IsVisible", appearanceLifecycle, StringComparison.Ordinal);
+        Assert.Contains("AppearanceEquals", appearanceLifecycle, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LongRunSampler_RemainsAsciiOnly_ForWindowsPowerShell51Compatibility()
     {
         var root = FindRepositoryRoot();
