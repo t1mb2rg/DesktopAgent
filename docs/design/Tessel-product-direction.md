@@ -73,6 +73,71 @@ It should not be replaced simply to match the Overview page. Later refinement sh
 
 The desktop canvas remains the visual center of the layout workflow.
 
+## Desktop Zone Editing
+
+Tessel should preserve a direct desktop-editing path for layout zones.
+
+The point is not only to let Tessel organize icons automatically. A user should also be able to define the space first, leave the normal Overlay visible, and manually drag Explorer desktop icons into those areas.
+
+Preferred interaction model:
+
+```text
+Normal Overlay
+    |
+    | explicit Edit Zones command
+    v
+Desktop Zone Edit Mode
+    |
+    | move / resize / create / delete zones
+    | rename / recolor zones
+    | optional edge and zone snapping
+    v
+Save / Cancel
+    |
+    v
+Normal click-through Overlay
+```
+
+Important boundary: editing zones is **layout editing**, not desktop execution.
+
+While Desktop Zone Edit Mode is active:
+
+- Automation remains BLOCKED by the existing Layout Editing gate;
+- no desktop icon is moved by entering, dragging, resizing, saving or cancelling zone edits;
+- editing does not grant new Writer authority;
+- normal product execution still requires fresh observation, fresh planning and the existing authorization/safety chain.
+
+The first implementation should prefer a clear explicit edit mode over trying to make the normal Overlay simultaneously serve every interaction.
+
+The normal Overlay and the desktop editor should therefore remain separate responsibilities:
+
+```text
+DesktopOverlayDisplay
+= passive display
+= click-through
+= no activation
+
+DesktopZoneEditor
+= explicit editing surface
+= pointer / resize interaction
+= no Writer authority
+```
+
+A later refinement may allow zone borders and resize handles to receive pointer input while the zone interior remains click-through to Explorer. That would let a user resize a zone and then immediately drag desktop icons inside it, but this is an enhancement rather than a requirement for the first safe version.
+
+Desktop Zone Editing should support three natural usage levels without forcing users into automation:
+
+```text
+Manual
+zones + normal Overlay + user drags icons
+
+Assisted
+user-designed zones + rules + preview + confirmation
+
+Automatic
+saved layout + confirmed rules + existing automation policy
+```
+
 ## Runtime lifecycle and footprint direction
 
 Tessel is a resident utility, so the resource target depends on whether the user is actively using the product or it is only sitting in the notification area.
