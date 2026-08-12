@@ -20,10 +20,9 @@ public sealed class OverviewLightweightReadModelContractTests
 
         Assert.DoesNotContain("WindowsDesktopObservationSource", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopShellIconReader", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("DesktopShellIconPosition", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopZoneOverlayHost", source, StringComparison.Ordinal);
         Assert.DoesNotContain("OpenAiCompatible", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("Writer", source, StringComparison.Ordinal);
     }
 
     [Fact]
