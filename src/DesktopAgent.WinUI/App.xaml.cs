@@ -6,6 +6,8 @@ public partial class App : Microsoft.UI.Xaml.Application
 {
     private MainWindow? _mainWindow;
 
+    internal MainWindow? ProductWindow => _mainWindow;
+
     public App()
     {
         InitializeComponent();
