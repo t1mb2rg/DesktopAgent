@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Productization;
 using Microsoft.UI.Windowing;
@@ -236,7 +237,7 @@ internal sealed class DesktopZoneEditorWindow : Window
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var exStyle = GetWindowLongPtr(hwnd, GwlExStyle);
-        _ = SetWindowLongPtr(hwnd, GwlExStyle, exStyle | WsExLayered);
+        _ = SetWindowLongPtr(hwnd, GwlExStyle, exStyle | (nint)WsExLayered);
         _ = SetLayeredWindowAttributes(hwnd, 0, WindowOpacity, LwaAlpha);
 
         RenderZones();
@@ -410,19 +411,9 @@ internal sealed class DesktopZoneEditorWindow : Window
     private void Canvas_PointerCanceled(object sender, PointerRoutedEventArgs e)
         => EndDrag(e.Pointer);
 
-    private void EndDrag(Microsoft.UI.Input.PointerPoint? pointerPoint)
+    private void EndDrag(Pointer pointer)
     {
-        // This overload is intentionally unused; PointerRoutedEventArgs supplies Pointer instead.
-    }
-
-    private void EndDrag(Microsoft.UI.Input.InputPointerSource? pointerSource)
-    {
-        // Reserved for future native input integration.
-    }
-
-    private void EndDrag(Microsoft.UI.Xaml.Input.Pointer? pointer)
-    {
-        if (pointer is null || _activePointerId != pointer.PointerId)
+        if (_activePointerId != pointer.PointerId)
             return;
 
         _canvas.ReleasePointerCapture(pointer);
@@ -541,7 +532,7 @@ internal sealed class DesktopZoneEditorWindow : Window
             _zoneNameBox.Text = zone.Name;
             _deleteButton.IsEnabled = _zones.Count > 1 &&
                 !_sourceDraft.RuleSet.Rules.Any(rule =>
-                    rule.Kind == DesktopAgent.Core.DesktopLayouts.Templates.Rules.DesktopLayoutIconRuleKind.ZoneOverride &&
+                    rule.Kind == DesktopLayoutIconRuleKind.ZoneOverride &&
                     rule.TargetZoneId == zone.ZoneId);
             _colorPicker.Color = ToColor(ResolveZoneColor(zone.ZoneId));
             _colorButton.Content = _zoneColorOverrides.ContainsKey(zone.ZoneId)
