@@ -268,17 +268,12 @@ public sealed class DesktopRadarSnapshotBuilder
     private static string ComputeTopologyFingerprint(IReadOnlyList<DisplayDescriptor> displays)
     {
         var canonical = string.Join(
-            '\n',
+            "\n",
             displays
                 .OrderBy(display => display.DeviceName, StringComparer.Ordinal)
-                .Select(display => string.Join(
-                    '|',
-                    display.DeviceName,
-                    display.Bounds.Left,
-                    display.Bounds.Top,
-                    display.Bounds.Right,
-                    display.Bounds.Bottom,
-                    display.IsPrimary ? 1 : 0)));
+                .Select(display =>
+                    $"{display.DeviceName}|{display.Bounds.Left}|{display.Bounds.Top}|" +
+                    $"{display.Bounds.Right}|{display.Bounds.Bottom}|{(display.IsPrimary ? 1 : 0)}"));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
