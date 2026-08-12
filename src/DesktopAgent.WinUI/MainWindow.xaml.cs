@@ -17,6 +17,7 @@ public sealed partial class MainWindow : Window
 {
     private const int PendingDisplayLimit = 100;
     private const string DefaultAiSecretReference = "openai-compatible-api-key";
+    private static readonly TimeSpan ResidentWarmRetention = TimeSpan.FromSeconds(45);
 
     private readonly AppWindow _appWindow;
     private readonly TrayIconHost _trayIcon;
@@ -27,6 +28,10 @@ public sealed partial class MainWindow : Window
     private readonly DpapiIntelligenceSecretStore _secretStore =
         new(DesktopAgentDataPaths.DefaultSecretsDirectory);
     private readonly ObservableCollection<PendingActionListItem> _pendingItems = new();
+    private readonly DispatcherTimer _residentReleaseTimer = new()
+    {
+        Interval = ResidentWarmRetention,
+    };
 
     private LayoutManagementView? _layoutManagementView;
     private OverlayAppearanceSettingsView? _overlayAppearanceSettingsView;
@@ -42,6 +47,7 @@ public sealed partial class MainWindow : Window
 
         PendingList.ItemsSource = _pendingItems;
         ShellNavigation.SelectedItem = ShellNavigation.MenuItems[0];
+        _residentReleaseTimer.Tick += ResidentReleaseTimer_Tick;
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -61,11 +67,8 @@ public sealed partial class MainWindow : Window
         LayoutsView.Children.Add(_layoutManagementView);
     }
 
-    private void AttachOverlayAppearanceSettingsView()
+    private StackPanel GetSettingsStack()
     {
-        if (_overlayAppearanceSettingsView is not null)
-            return;
-
         if (SettingsView.Children.Count == 0 ||
             SettingsView.Children[0] is not ScrollViewer scrollViewer ||
             scrollViewer.Content is not StackPanel settingsStack)
@@ -73,6 +76,15 @@ public sealed partial class MainWindow : Window
             throw new InvalidOperationException("设置页结构不符合预期，无法挂载分区框外观面板。 ");
         }
 
+        return settingsStack;
+    }
+
+    private void AttachOverlayAppearanceSettingsView()
+    {
+        if (_overlayAppearanceSettingsView is not null)
+            return;
+
+        var settingsStack = GetSettingsStack();
         _overlayAppearanceSettingsView = new OverlayAppearanceSettingsView();
 
         // 标题 / 副标题 / 首次运行 / Automation / AI 之后，状态栏与保存按钮之前。
@@ -81,12 +93,29 @@ public sealed partial class MainWindow : Window
             _overlayAppearanceSettingsView);
     }
 
+    private void EnsureSectionHydrated(string tag)
+    {
+        if (string.Equals(tag, "layouts", StringComparison.Ordinal))
+            EnsureLayoutManagementView();
+        else if (string.Equals(tag, "settings", StringComparison.Ordinal))
+            AttachOverlayAppearanceSettingsView();
+    }
+
+    private void EnsureSelectedSectionHydrated()
+    {
+        var tag = (ShellNavigation.SelectedItem as NavigationViewItem)?.Tag?.ToString();
+        if (tag is not null)
+            EnsureSectionHydrated(tag);
+    }
+
     internal void ShowFromBackground()
     {
         if (_exitRequested)
             return;
 
+        _residentReleaseTimer.Stop();
         _appWindow.Show(activateWindow: true);
+        EnsureSelectedSectionHydrated();
         Activate();
     }
 
@@ -161,10 +190,7 @@ public sealed partial class MainWindow : Window
 
     private void ShowSection(string tag)
     {
-        if (string.Equals(tag, "layouts", StringComparison.Ordinal))
-            EnsureLayoutManagementView();
-        else if (string.Equals(tag, "settings", StringComparison.Ordinal))
-            AttachOverlayAppearanceSettingsView();
+        EnsureSectionHydrated(tag);
 
         HomeView.Visibility = string.Equals(tag, "home", StringComparison.Ordinal)
             ? Visibility.Visible
@@ -362,10 +388,54 @@ public sealed partial class MainWindow : Window
     }
 
     private void Hide_Click(object sender, RoutedEventArgs e)
-        => _appWindow.Hide();
+        => HideToTray();
 
     private void Exit_Click(object sender, RoutedEventArgs e)
         => ExitApplication();
+
+    private void HideToTray()
+    {
+        _appWindow.Hide();
+        ScheduleResidentRelease();
+    }
+
+    private void ScheduleResidentRelease()
+    {
+        _residentReleaseTimer.Stop();
+        if (_exitRequested ||
+            (_layoutManagementView is null && _overlayAppearanceSettingsView is null))
+        {
+            return;
+        }
+
+        _residentReleaseTimer.Start();
+    }
+
+    private void ResidentReleaseTimer_Tick(object? sender, object e)
+    {
+        _residentReleaseTimer.Stop();
+        if (_exitRequested)
+            return;
+
+        ReleaseInteractiveViews();
+    }
+
+    private void ReleaseInteractiveViews()
+    {
+        if (_layoutManagementView is not null &&
+            _layoutManagementView.CanReleaseForDeepResident)
+        {
+            LayoutsView.Children.Remove(_layoutManagementView);
+            _layoutManagementView = null;
+        }
+
+        if (_overlayAppearanceSettingsView is not null &&
+            _overlayAppearanceSettingsView.CanReleaseForDeepResident)
+        {
+            GetSettingsStack().Children.Remove(_overlayAppearanceSettingsView);
+            _overlayAppearanceSettingsView = null;
+        }
+    }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
@@ -373,7 +443,7 @@ public sealed partial class MainWindow : Window
             return;
 
         args.Cancel = true;
-        _appWindow.Hide();
+        HideToTray();
     }
 
     private void ExitApplication()
@@ -382,6 +452,8 @@ public sealed partial class MainWindow : Window
             return;
 
         _exitRequested = true;
+        _residentReleaseTimer.Stop();
+        _residentReleaseTimer.Tick -= ResidentReleaseTimer_Tick;
         _trayIcon.Dispose();
         _appWindow.Closing -= OnAppWindowClosing;
         Close();
