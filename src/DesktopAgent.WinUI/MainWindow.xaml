@@ -42,7 +42,7 @@
             </NavigationView.FooterMenuItems>
 
             <Grid Padding="32,24,32,32">
-                <Grid x:Name="HomeView">
+                <Grid x:Name="HomeView" Loaded="HomeView_Loaded">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -59,9 +59,27 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
                         <Border Padding="18"
+                                CornerRadius="10"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="当前布局" FontWeight="SemiBold" Opacity="0.72" />
+                                <TextBlock x:Name="HomeCurrentLayoutText"
+                                           Text="正在读取…"
+                                           FontSize="26"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="HomeCurrentLayoutDetailText"
+                                           Text="正在读取布局摘要。"
+                                           TextWrapping="Wrap"
+                                           Opacity="0.58" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1"
+                                Padding="18"
                                 CornerRadius="10"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <StackPanel Spacing="6">
@@ -72,14 +90,16 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Grid.Column="1"
+                        <Border Grid.Column="2"
                                 Padding="18"
                                 CornerRadius="10"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <StackPanel Spacing="6">
-                                <TextBlock Text="桌面执行" FontWeight="SemiBold" Opacity="0.72" />
-                                <TextBlock Text="安全预览" FontSize="26" />
-                                <TextBlock Text="当前版本只观察、预览和保存布局。"
+                                <TextBlock Text="待确认" FontWeight="SemiBold" Opacity="0.72" />
+                                <TextBlock x:Name="HomePendingCountText" Text="—" FontSize="26" />
+                                <TextBlock x:Name="HomePendingDetailText"
+                                           Text="正在读取待确认队列。"
+                                           TextWrapping="Wrap"
                                            Opacity="0.58" />
                             </StackPanel>
                         </Border>
