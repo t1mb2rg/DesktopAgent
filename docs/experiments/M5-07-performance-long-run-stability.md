@@ -107,6 +107,57 @@ Handle Count 存在值得继续观察的周期性锯齿：前约 20 分钟从 24
 
 当前基线也说明性能优化的首要目标应是启动 / 常驻 footprint，而不是先追逐一次 GC 或 Working Set 瞬时数字。是否进一步拆分 Resident / Interactive 生命周期，在 M5-07 稳定性 Gate 完成后单独评估。
 
+### Repeated interaction soak
+
+真实 Windows 采样 180 个样本 / 约 15 分钟，5 秒间隔。前约 110 秒进行页面切换、布局交互与 Overlay 操作，随后保持 Desktop Overlay 可见并静置约 13 分钟。
+
+完整采样范围：
+
+```text
+CPU median:        0.000%
+CPU max:           2.644%
+Working Set:       195.32 -> 297.23 MiB   (max 299.82 MiB)
+Private Memory:    112.80 -> 148.28 MiB   (max 150.82 MiB)
+Handles:           2438 -> 2883            (max 2883)
+Threads:           65 -> 58                 (max 67)
+GDI Objects:       16 -> 24                 (max 24)
+USER Objects:      41 -> 50                 (max 52)
+```
+
+操作结束后的静置区间约为 110 s -> 899 s：
+
+```text
+CPU median:        0.000%
+CPU max:           0.117%
+Working Set:       296.94 -> 297.23 MiB
+Private Memory:    150.01 -> 148.28 MiB
+Handles:           2843 -> 2883   (range 2836..2883)
+Threads:           60 -> 58       (range 56..60)
+GDI Objects:       24 -> 24
+USER Objects:      51 -> 50
+```
+
+判定：`PASS WITH NOTE`。
+
+交互与 Overlay 将进程推入明显更高的 Active Tool 资源平台，但操作停止后 CPU 回到 0 附近，Private Memory 略有回落，Threads / GDI / USER 稳定，没有出现持续增长形状。GDI / USER 在 Overlay 打开后形成固定平台，当前未见逐轮 native object 泄漏证据。
+
+Handle Count 仍是主要观察项：本轮静置区间在 2836..2883 之间波动并最终停在高点，尚不能据此判定泄漏，也不能宣布完全稳定。2 h resident soak 继续观察低水位是否长期抬高。
+
+该数据同时建立了一个未优化的 Active Tool baseline：布局交互 + Overlay 可见时约 148 MiB Private / 297-300 MiB Working Set。后续 Resident lifecycle optimization 应与此 baseline 分开比较，不把 Active Tool footprint 与纯 resident footprint 混为一个指标。
+
+### Explorer restart physical gate
+
+2026-08-12 在真实 Windows 上人工重启 Windows Explorer / taskbar 后验证：
+
+- `DesktopAgent.WinUI` 进程继续存活；
+- tray icon 自动重新出现；
+- 左键恢复仍正常；
+- 右键 tray menu 仍正常；
+- 未出现重复 tray icon；
+- 未观察到新的 Writer authority 或桌面图标移动。
+
+判定：`PASS`。
+
 ## 验证阶段
 
 ### Gate 0 - Automated freshness
@@ -114,6 +165,8 @@ Handle Count 存在值得继续观察的周期性锯齿：前约 20 分钟从 24
 - full solution Debug build PASS；
 - full solution tests PASS；
 - WinUI product-shell contract tests 锁定 `TaskbarCreated` + `RegisterWindowMessageW`。
+
+当前状态：`PENDING`。
 
 ### Gate 1 - Sampler smoke
 
@@ -154,7 +207,7 @@ Handle Count 存在值得继续观察的周期性锯齿：前约 20 分钟从 24
 
 关注操作停止后的资源是否回到稳定平台，而不是要求每次都回到完全相同的瞬时值。
 
-当前状态：`PENDING`。
+当前状态：`PASS WITH NOTE (Active Tool footprint / handles)`。
 
 ### Gate 4 - Explorer restart physical gate
 
@@ -168,7 +221,7 @@ Handle Count 存在值得继续观察的周期性锯齿：前约 20 分钟从 24
 
 此 Gate 不由自动脚本主动杀 Explorer。
 
-当前状态：`PENDING`。
+当前状态：`PASS`。
 
 ### Gate 5 - Extended resident soak
 
@@ -182,7 +235,7 @@ Handle Count 存在值得继续观察的周期性锯齿：前约 20 分钟从 24
 - 资源曲线无持续无界增长趋势；
 - 未发现新的 HWND / GDI / USER 泄漏证据。
 
-当前状态：`PENDING`。
+当前状态：`IN PROGRESS`。
 
 ## 判定原则
 
