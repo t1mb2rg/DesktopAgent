@@ -106,6 +106,29 @@ public sealed class SqliteDesktopPendingActionStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task CountAsync_TracksQueueWithoutMaterializingActions()
+    {
+        var store = new SqliteDesktopPendingActionStore(_dbPath);
+        await store.InitializeAsync();
+
+        Assert.Equal(0, await store.CountAsync());
+
+        var first = CreateAction(
+            Guid.NewGuid(),
+            new DateTimeOffset(2026, 8, 10, 1, 0, 0, TimeSpan.Zero));
+        var second = CreateAction(
+            Guid.NewGuid(),
+            new DateTimeOffset(2026, 8, 10, 1, 1, 0, TimeSpan.Zero));
+
+        await store.SaveAsync(first);
+        await store.SaveAsync(second);
+        Assert.Equal(2, await store.CountAsync());
+
+        Assert.True(await store.DeleteAsync(first.PendingActionId));
+        Assert.Equal(1, await store.CountAsync());
+    }
+
+    [Fact]
     public async Task NoExecutableDecision_RoundTripsWithoutSyntheticDecision()
     {
         var store = new SqliteDesktopPendingActionStore(_dbPath);
