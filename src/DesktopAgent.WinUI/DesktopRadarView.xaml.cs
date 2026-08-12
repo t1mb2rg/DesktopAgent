@@ -101,7 +101,7 @@ public sealed partial class DesktopRadarView : UserControl
             Foreground = rendered.Display.IsPrimary
                 ? RadarPrimaryLabelBrush()
                 : NeutralBrush(255),
-            Opacity = rendered.Display.IsPrimary ? 0.86d : 0.54d,
+            Opacity = rendered.Display.IsPrimary ? 0.90d : 0.54d,
         };
         Canvas.SetLeft(label, rendered.Left + 8d);
         Canvas.SetTop(label, rendered.Top + 6d);
@@ -127,9 +127,9 @@ public sealed partial class DesktopRadarView : UserControl
             };
             var opacity = cell.Density switch
             {
-                DesktopRadarDensityLevel.Low => 0.42d,
-                DesktopRadarDensityLevel.Medium => 0.66d,
-                DesktopRadarDensityLevel.High => 0.90d,
+                DesktopRadarDensityLevel.Low => 0.40d,
+                DesktopRadarDensityLevel.Medium => 0.68d,
+                DesktopRadarDensityLevel.High => 0.94d,
                 _ => 0.46d,
             };
 
@@ -235,30 +235,30 @@ public sealed partial class DesktopRadarView : UserControl
 
     private SolidColorBrush RadarSurfaceBrush()
         => ActualTheme == ElementTheme.Dark
-            ? RgbBrush(0x17232B, 178)
-            : RgbBrush(0xEEF5F8, 220);
+            ? RgbBrush(0x11182B, 220)
+            : RgbBrush(0xF4F6FF, 238);
 
     private SolidColorBrush RadarSurfaceBorderBrush()
         => ActualTheme == ElementTheme.Dark
-            ? RgbBrush(0x8AA6B5, 118)
-            : RgbBrush(0x6F8C9D, 112);
+            ? RgbBrush(0x3655D4, 142)
+            : RgbBrush(0x4D64D7, 126);
 
     private SolidColorBrush RadarPrimaryLabelBrush()
         => ActualTheme == ElementTheme.Dark
-            ? RgbBrush(0x86D6EB, 255)
-            : RgbBrush(0x167FA8, 255);
+            ? RgbBrush(0x7184FF, 255)
+            : RgbBrush(0x1737C6, 255);
 
     private SolidColorBrush RadarDensityBrush(DesktopRadarDensityLevel density)
     {
         var rgb = (ActualTheme, density) switch
         {
-            (ElementTheme.Dark, DesktopRadarDensityLevel.Low) => 0x91ACBBu,
-            (ElementTheme.Dark, DesktopRadarDensityLevel.Medium) => 0x79B9D3u,
-            (ElementTheme.Dark, DesktopRadarDensityLevel.High) => 0x70D2E8u,
-            (ElementTheme.Light, DesktopRadarDensityLevel.Low) => 0x678A9Du,
-            (ElementTheme.Light, DesktopRadarDensityLevel.Medium) => 0x3F87A7u,
-            (ElementTheme.Light, DesktopRadarDensityLevel.High) => 0x137FA9u,
-            _ => ActualTheme == ElementTheme.Dark ? 0x91ACBBu : 0x678A9Du,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.Low) => 0x7680ADu,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.Medium) => 0x5368DEu,
+            (ElementTheme.Dark, DesktopRadarDensityLevel.High) => 0x3152FFu,
+            (ElementTheme.Light, DesktopRadarDensityLevel.Low) => 0x7B84B5u,
+            (ElementTheme.Light, DesktopRadarDensityLevel.Medium) => 0x4E60CFu,
+            (ElementTheme.Light, DesktopRadarDensityLevel.High) => 0x193CC7u,
+            _ => ActualTheme == ElementTheme.Dark ? 0x7680ADu : 0x7B84B5u,
         };
 
         return RgbBrush(rgb, 255);
