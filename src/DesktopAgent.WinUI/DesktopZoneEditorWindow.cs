@@ -607,6 +607,18 @@ internal sealed class DesktopZoneEditorWindow : Window
         uint flags);
 }
 
-internal sealed record DesktopZoneEditorCompletedEventArgs(
-    IReadOnlyList<DesktopLayoutZone> Zones,
-    IReadOnlyDictionary<Guid, uint> ZoneColorOverrides);
+internal sealed class DesktopZoneEditorCompletedEventArgs : EventArgs
+{
+    internal DesktopZoneEditorCompletedEventArgs(
+        IReadOnlyList<DesktopLayoutZone> zones,
+        IReadOnlyDictionary<Guid, uint> zoneColorOverrides)
+    {
+        Zones = zones ?? throw new ArgumentNullException(nameof(zones));
+        ZoneColorOverrides = zoneColorOverrides ??
+            throw new ArgumentNullException(nameof(zoneColorOverrides));
+    }
+
+    internal IReadOnlyList<DesktopLayoutZone> Zones { get; }
+
+    internal IReadOnlyDictionary<Guid, uint> ZoneColorOverrides { get; }
+}
