@@ -1,3 +1,4 @@
+using DesktopAgent.Core.Productization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -136,6 +137,8 @@ public sealed partial class MainWindow
         if (snapshot is null)
         {
             HomeRadarSummaryText.Text = "等待桌面观察";
+            HomeDesktopHealthText.Text = "等待桌面观察";
+            HomeDesktopHealthDetailText.Text = "刷新后显示项目、屏幕与高密度区域。";
             return;
         }
 
@@ -147,10 +150,31 @@ public sealed partial class MainWindow
             ? " · 还没有设置布局"
             : $" · {state.ActiveLayout.Zones.Count} 个分区";
         HomeRadarSummaryText.Text = itemText + displayText + layoutText;
+
+        var highDensityRegions = snapshot.Displays.Sum(display =>
+            display.DensityCells.Count(cell => cell.Density == DesktopRadarDensityLevel.High));
+        var healthDisplayText = snapshot.Displays.Count > 1
+            ? $"{snapshot.Displays.Count} 块屏幕"
+            : "1 块屏幕";
+        HomeDesktopHealthText.Text = $"{snapshot.TotalItemCount} 个项目";
+        HomeDesktopHealthDetailText.Text =
+            $"{healthDisplayText} · {highDensityRegions} 个高密度区域";
     }
 
     private void OpenCurrentLayout_Click(object sender, RoutedEventArgs e)
         => NavigateToSection("layouts");
+
+    private void QuickOpenLayouts_Click(object sender, RoutedEventArgs e)
+        => NavigateToSection("layouts");
+
+    private void QuickOpenAi_Click(object sender, RoutedEventArgs e)
+        => NavigateToSection("ai");
+
+    private void QuickOpenPending_Click(object sender, RoutedEventArgs e)
+        => NavigateToSection("pending");
+
+    private void QuickOpenSettings_Click(object sender, RoutedEventArgs e)
+        => NavigateToSection("settings");
 
     private void CurrentLayoutCard_Tapped(object sender, TappedRoutedEventArgs e)
         => NavigateToSection("layouts");
