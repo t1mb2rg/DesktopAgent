@@ -62,6 +62,18 @@ public sealed class WinUiProductShellFeasibilityContractTests
     }
 
     [Fact]
+    public void LongRunSampler_RemainsAsciiOnly_ForWindowsPowerShell51Compatibility()
+    {
+        var root = FindRepositoryRoot();
+        var samplerPath = Path.Combine(root, "tools", "Measure-DesktopAgentLongRun.ps1");
+        var sampler = File.ReadAllText(samplerPath);
+
+        Assert.All(
+            sampler,
+            character => Assert.InRange((int)character, 0, 0x7F));
+    }
+
+    [Fact]
     public void FrozenUpstreamProjects_DoNotReferenceProductUi()
     {
         var root = FindRepositoryRoot();
