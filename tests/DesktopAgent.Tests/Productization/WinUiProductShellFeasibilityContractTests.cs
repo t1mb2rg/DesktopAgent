@@ -62,6 +62,28 @@ public sealed class WinUiProductShellFeasibilityContractTests
     }
 
     [Fact]
+    public void ProductShell_HeavyInteractiveViews_AreConstructedOnDemand()
+    {
+        var root = FindRepositoryRoot();
+        var windowPath = Path.Combine(root, "src", "DesktopAgent.WinUI", "MainWindow.xaml.cs");
+        var window = File.ReadAllText(windowPath);
+
+        Assert.Contains("private LayoutManagementView? _layoutManagementView;", window, StringComparison.Ordinal);
+        Assert.Contains("private OverlayAppearanceSettingsView? _overlayAppearanceSettingsView;", window, StringComparison.Ordinal);
+        Assert.Contains("EnsureLayoutManagementView();", window, StringComparison.Ordinal);
+        Assert.Contains("AttachOverlayAppearanceSettingsView();", window, StringComparison.Ordinal);
+
+        Assert.DoesNotContain(
+            "LayoutsView.Children.Add(new LayoutManagementView());",
+            window,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "private readonly OverlayAppearanceSettingsView _overlayAppearanceSettingsView = new();",
+            window,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LongRunSampler_RemainsAsciiOnly_ForWindowsPowerShell51Compatibility()
     {
         var root = FindRepositoryRoot();
