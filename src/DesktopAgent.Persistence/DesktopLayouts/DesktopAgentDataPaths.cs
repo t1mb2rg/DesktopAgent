@@ -21,4 +21,11 @@ public static class DesktopAgentDataPaths
     /// <summary>DPAPI 保护后的 Secret blob 目录。</summary>
     public static string DefaultSecretsDirectory =>
         Path.Combine(DefaultRootDirectory, "secrets");
+
+    /// <summary>
+    /// Desktop Radar presentation-only cache。
+    /// 删除该文件只会丢失 Overview 首帧缓存，不影响 Layout / Recovery / Writer 事实。
+    /// </summary>
+    public static string DefaultRadarCachePath =>
+        Path.Combine(DefaultRootDirectory, "cache", "desktop-radar.json");
 }
