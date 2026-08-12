@@ -1,7 +1,8 @@
 <Window
     x:Class="DesktopAgent.WinUI.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:DesktopAgent.WinUI">
     <Grid>
         <NavigationView x:Name="ShellNavigation"
                         IsBackButtonVisible="Collapsed"
@@ -45,69 +46,132 @@
                 <Grid x:Name="HomeView" Loaded="HomeView_Loaded">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <StackPanel Spacing="5">
-                        <TextBlock Text="DesktopAgent" FontSize="30" FontWeight="SemiBold" />
-                        <TextBlock Text="你的桌面，按你的习惯保持有序。"
+                        <TextBlock Text="Tessel" FontSize="30" FontWeight="SemiBold" />
+                        <TextBlock Text="看懂当前桌面，需要时再调整。"
                                    Opacity="0.62" />
                     </StackPanel>
 
-                    <Grid Grid.Row="1" Margin="0,24,0,0" ColumnSpacing="12">
+                    <Grid Grid.Row="1" Margin="0,22,0,0" ColumnSpacing="14">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="300" />
                         </Grid.ColumnDefinitions>
 
                         <Border Padding="18"
-                                CornerRadius="10"
+                                CornerRadius="12"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="当前布局" FontWeight="SemiBold" Opacity="0.72" />
-                                <TextBlock x:Name="HomeCurrentLayoutText"
-                                           Text="正在读取…"
-                                           FontSize="26"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="HomeCurrentLayoutDetailText"
-                                           Text="正在读取布局摘要。"
-                                           TextWrapping="Wrap"
-                                           Opacity="0.58" />
-                            </StackPanel>
+                            <Grid RowSpacing="10">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="当前桌面"
+                                                   FontSize="18"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock x:Name="HomeRadarFreshnessText"
+                                                   Text="等待首次刷新"
+                                                   Opacity="0.52" />
+                                    </StackPanel>
+                                    <Button x:Name="HomeRadarRefreshButton"
+                                            Grid.Column="1"
+                                            Content="↻ 刷新"
+                                            VerticalAlignment="Center"
+                                            Click="RefreshRadar_Click" />
+                                </Grid>
+
+                                <local:DesktopRadarView x:Name="HomeRadarView"
+                                                        Grid.Row="1"
+                                                        MinHeight="360" />
+
+                                <Grid Grid.Row="2" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock x:Name="HomeRadarSummaryText"
+                                                   Text="等待桌面观察"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock x:Name="HomeRadarStatusText"
+                                                   Text="Radar 只用于展示，不作为桌面执行依据。"
+                                                   Opacity="0.50"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Content="打开布局"
+                                            VerticalAlignment="Center"
+                                            Click="OpenCurrentLayout_Click" />
+                                </Grid>
+                            </Grid>
                         </Border>
 
-                        <Border Grid.Column="1"
-                                Padding="18"
-                                CornerRadius="10"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="自动化" FontWeight="SemiBold" Opacity="0.72" />
-                                <TextBlock x:Name="HomeAutomationModeText" Text="Assisted" FontSize="26" />
-                                <TextBlock Text="需要你的地方会留给你决定。"
-                                           Opacity="0.58" />
-                            </StackPanel>
-                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="10">
+                            <Border Padding="16"
+                                    CornerRadius="10"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    Tapped="CurrentLayoutCard_Tapped">
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="当前布局" FontWeight="SemiBold" Opacity="0.68" />
+                                    <TextBlock x:Name="HomeCurrentLayoutText"
+                                               Text="正在读取…"
+                                               FontSize="22"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="HomeCurrentLayoutDetailText"
+                                               Text="正在读取布局摘要。"
+                                               TextWrapping="Wrap"
+                                               Opacity="0.56" />
+                                </StackPanel>
+                            </Border>
 
-                        <Border Grid.Column="2"
-                                Padding="18"
-                                CornerRadius="10"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="待确认" FontWeight="SemiBold" Opacity="0.72" />
-                                <TextBlock x:Name="HomePendingCountText" Text="—" FontSize="26" />
-                                <TextBlock x:Name="HomePendingDetailText"
-                                           Text="正在读取待确认队列。"
-                                           TextWrapping="Wrap"
-                                           Opacity="0.58" />
-                            </StackPanel>
-                        </Border>
+                            <Border Padding="16"
+                                    CornerRadius="10"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    Tapped="AutomationCard_Tapped">
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="自动化" FontWeight="SemiBold" Opacity="0.68" />
+                                    <TextBlock x:Name="HomeAutomationModeText"
+                                               Text="Assisted"
+                                               FontSize="22" />
+                                    <TextBlock Text="需要你的地方会留给你决定。"
+                                               TextWrapping="Wrap"
+                                               Opacity="0.56" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Padding="16"
+                                    CornerRadius="10"
+                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    Tapped="PendingCard_Tapped">
+                                <StackPanel Spacing="5">
+                                    <TextBlock Text="待确认" FontWeight="SemiBold" Opacity="0.68" />
+                                    <TextBlock x:Name="HomePendingCountText"
+                                               Text="—"
+                                               FontSize="22" />
+                                    <TextBlock x:Name="HomePendingDetailText"
+                                               Text="正在读取待确认队列。"
+                                               TextWrapping="Wrap"
+                                               Opacity="0.56" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
                     </Grid>
 
                     <Border Grid.Row="2"
                             Margin="0,12,0,0"
-                            Padding="18"
+                            Padding="14,12"
                             CornerRadius="10"
                             Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                         <Grid ColumnSpacing="16">
@@ -115,12 +179,15 @@
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4">
+                            <StackPanel Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Text="常驻" FontWeight="SemiBold" />
                                 <TextBlock Text="关闭主窗口后仍留在托盘，需要时再叫它回来。"
-                                           Opacity="0.58" />
+                                           Opacity="0.54" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        VerticalAlignment="Center">
                                 <Button Content="隐藏" Click="Hide_Click" />
                                 <Button Content="退出" Click="Exit_Click" />
                             </StackPanel>
