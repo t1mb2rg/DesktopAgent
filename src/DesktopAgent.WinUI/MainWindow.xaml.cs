@@ -27,8 +27,9 @@ public sealed partial class MainWindow : Window
     private readonly DpapiIntelligenceSecretStore _secretStore =
         new(DesktopAgentDataPaths.DefaultSecretsDirectory);
     private readonly ObservableCollection<PendingActionListItem> _pendingItems = new();
-    private readonly OverlayAppearanceSettingsView _overlayAppearanceSettingsView = new();
 
+    private LayoutManagementView? _layoutManagementView;
+    private OverlayAppearanceSettingsView? _overlayAppearanceSettingsView;
     private DesktopProductSettings _settings = DesktopProductSettings.CreateDefault();
     private bool _pendingStoreInitialized;
     private bool _settingsLoaded;
@@ -40,9 +41,6 @@ public sealed partial class MainWindow : Window
         Title = "DesktopAgent";
 
         PendingList.ItemsSource = _pendingItems;
-        LayoutsView.Children.Clear();
-        LayoutsView.Children.Add(new LayoutManagementView());
-        AttachOverlayAppearanceSettingsView();
         ShellNavigation.SelectedItem = ShellNavigation.MenuItems[0];
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -53,14 +51,29 @@ public sealed partial class MainWindow : Window
         _trayIcon = new TrayIconHost(hwnd, ShowFromBackground);
     }
 
+    private void EnsureLayoutManagementView()
+    {
+        if (_layoutManagementView is not null)
+            return;
+
+        _layoutManagementView = new LayoutManagementView();
+        LayoutsView.Children.Clear();
+        LayoutsView.Children.Add(_layoutManagementView);
+    }
+
     private void AttachOverlayAppearanceSettingsView()
     {
+        if (_overlayAppearanceSettingsView is not null)
+            return;
+
         if (SettingsView.Children.Count == 0 ||
             SettingsView.Children[0] is not ScrollViewer scrollViewer ||
             scrollViewer.Content is not StackPanel settingsStack)
         {
             throw new InvalidOperationException("设置页结构不符合预期，无法挂载分区框外观面板。 ");
         }
+
+        _overlayAppearanceSettingsView = new OverlayAppearanceSettingsView();
 
         // 标题 / 副标题 / 首次运行 / Automation / AI 之后，状态栏与保存按钮之前。
         settingsStack.Children.Insert(
@@ -148,6 +161,11 @@ public sealed partial class MainWindow : Window
 
     private void ShowSection(string tag)
     {
+        if (string.Equals(tag, "layouts", StringComparison.Ordinal))
+            EnsureLayoutManagementView();
+        else if (string.Equals(tag, "settings", StringComparison.Ordinal))
+            AttachOverlayAppearanceSettingsView();
+
         HomeView.Visibility = string.Equals(tag, "home", StringComparison.Ordinal)
             ? Visibility.Visible
             : Visibility.Collapsed;
