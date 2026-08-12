@@ -13,7 +13,7 @@ public sealed partial class MainWindow
         if (_homeVisibilityCallbackToken == 0)
         {
             _homeVisibilityCallbackToken = HomeView.RegisterPropertyChangedCallback(
-                VisibilityProperty,
+                UIElement.VisibilityProperty,
                 OnHomeVisibilityChanged);
         }
 
