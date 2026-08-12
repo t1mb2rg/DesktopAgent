@@ -1,0 +1,22 @@
+<UserControl
+    x:Class="DesktopAgent.WinUI.DesktopRadarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    MinHeight="280">
+    <Grid SizeChanged="RadarRoot_SizeChanged">
+        <Canvas x:Name="RadarCanvas" />
+
+        <StackPanel x:Name="RadarEmptyState"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="6">
+            <TextBlock Text="正在准备桌面地图"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="首次读取完成后，这里会显示你的桌面空间。"
+                       Opacity="0.55"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+    </Grid>
+</UserControl>
