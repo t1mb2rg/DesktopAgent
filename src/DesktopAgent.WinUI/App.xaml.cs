@@ -1,3 +1,4 @@
+using DesktopAgent.Core.Productization;
 using Microsoft.UI.Xaml;
 
 namespace DesktopAgent.WinUI;
@@ -16,7 +17,10 @@ public partial class App : Microsoft.UI.Xaml.Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _mainWindow = new MainWindow();
+        _mainWindow = new MainWindow
+        {
+            Title = TesselProductIdentity.DisplayName,
+        };
         _mainWindow.Activate();
     }
 
