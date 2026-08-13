@@ -54,6 +54,58 @@ public sealed class DesktopZoneEditOperationsTests
     }
 
     [Fact]
+    public void Replace_zone_snaps_small_move_overlap_to_neighbor_edge()
+    {
+        var first = Zone("A", 0, 0, 5000, 10000, 0);
+        var second = Zone("B", 5000, 0, 10000, 10000, 1);
+        var nearEdge = DesktopZoneEditOperations.Move(second, -50, 0);
+
+        var updated = DesktopZoneEditOperations.ReplaceZone([first, second], nearEdge);
+
+        Assert.Equal(new NormalizedRect(5000, 0, 10000, 10000), updated[1].Bounds);
+    }
+
+    [Fact]
+    public void Replace_zone_snaps_move_to_desktop_edge()
+    {
+        var zone = Zone("A", 100, 100, 3100, 3100, 0);
+        var nearEdge = DesktopZoneEditOperations.Move(zone, -30, 0);
+
+        var updated = DesktopZoneEditOperations.ReplaceZone([zone], nearEdge);
+
+        Assert.Equal(new NormalizedRect(0, 100, 3000, 3100), updated[0].Bounds);
+    }
+
+    [Fact]
+    public void Replace_zone_keeps_move_outside_snap_threshold()
+    {
+        var first = Zone("A", 0, 0, 4000, 10000, 0);
+        var second = Zone("B", 5000, 0, 8000, 10000, 1);
+        var moved = DesktopZoneEditOperations.Move(second, -200, 0);
+
+        var updated = DesktopZoneEditOperations.ReplaceZone([first, second], moved);
+
+        Assert.Equal(new NormalizedRect(4800, 0, 7800, 10000), updated[1].Bounds);
+    }
+
+    [Fact]
+    public void Replace_zone_snaps_bottom_right_resize_to_neighbor_edge()
+    {
+        var first = Zone("A", 0, 0, 4000, 10000, 0);
+        var second = Zone("B", 5000, 0, 10000, 10000, 1);
+        var nearEdge = DesktopZoneEditOperations.ResizeBottomRight(
+            first,
+            950,
+            0,
+            minimumWidth: 500,
+            minimumHeight: 500);
+
+        var updated = DesktopZoneEditOperations.ReplaceZone([first, second], nearEdge);
+
+        Assert.Equal(new NormalizedRect(0, 0, 5000, 10000), updated[0].Bounds);
+    }
+
+    [Fact]
     public void Add_zone_uses_legal_free_desktop_without_overlap()
     {
         var existing = Zone("A", 0, 0, 5000, 10000, 0);
