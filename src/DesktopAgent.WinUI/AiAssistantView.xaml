@@ -1,0 +1,131 @@
+<UserControl
+    x:Class="DesktopAgent.WinUI.AiAssistantView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="5">
+                <TextBlock Text="AI 助手" FontSize="30" FontWeight="SemiBold" />
+                <TextBlock Text="让 Tessel 理解当前桌面，再用你的修正逐轮校准。"
+                           Opacity="0.62" />
+            </StackPanel>
+            <ProgressRing x:Name="AiProgressRing"
+                          Grid.Column="1"
+                          Width="24"
+                          Height="24"
+                          IsActive="False"
+                          Visibility="Collapsed"
+                          VerticalAlignment="Center" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="1"
+                      Margin="0,20,0,16"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
+                <Border Padding="18"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="✦"
+                                   FontSize="34"
+                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                   VerticalAlignment="Top" />
+                        <StackPanel Grid.Column="1" Spacing="5">
+                            <TextBlock Text="理解当前桌面"
+                                       FontSize="20"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="Tessel 会 fresh 读取桌面项目名称、类型等受控语义事实，并调用你在设置中配置的 OpenAI-compatible Provider。"
+                                       TextWrapping="Wrap"
+                                       Opacity="0.62" />
+                            <TextBlock Text="这一页只生成语义草案，不生成物理坐标，不调用 Writer，也不会移动任何桌面图标。"
+                                       TextWrapping="Wrap"
+                                       Opacity="0.48" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <InfoBar x:Name="AiStatusBar"
+                         IsOpen="False"
+                         IsClosable="False" />
+
+                <Border x:Name="AiResultCard"
+                        Visibility="Collapsed"
+                        Padding="18"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="14">
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="Tessel 对当前桌面的理解"
+                                       FontSize="20"
+                                       FontWeight="SemiBold" />
+                            <TextBlock x:Name="AiResultMetaText"
+                                       Opacity="0.48"
+                                       TextWrapping="Wrap" />
+                            <TextBlock x:Name="AiDesktopSummaryText"
+                                       FontSize="16"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="当前意图摘要" FontWeight="SemiBold" />
+                            <TextBlock x:Name="AiIntentSummaryText"
+                                       TextWrapping="Wrap"
+                                       Opacity="0.68" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="7">
+                            <TextBlock Text="建议分类" FontWeight="SemiBold" />
+                            <StackPanel x:Name="AiCategoriesPanel" Spacing="7" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="7">
+                            <TextBlock Text="建议区域" FontWeight="SemiBold" />
+                            <StackPanel x:Name="AiZonesPanel" Spacing="7" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="7">
+                            <TextBlock Text="需要你确认" FontWeight="SemiBold" />
+                            <StackPanel x:Name="AiQuestionsPanel" Spacing="7" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Grid Grid.Row="2" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="AiGuidanceTextBox"
+                     MaxLength="4096"
+                     PlaceholderText="例如：项目文件尽量放右边，课程资料放左上"
+                     VerticalAlignment="Center" />
+            <Button x:Name="AiAnalyzeButton"
+                    Grid.Column="1"
+                    Content="分析当前桌面"
+                    Click="AnalyzeDesktop_Click" />
+            <Button x:Name="AiCancelButton"
+                    Grid.Column="2"
+                    Content="取消"
+                    Visibility="Collapsed"
+                    Click="CancelAnalysis_Click" />
+        </Grid>
+    </Grid>
+</UserControl>
