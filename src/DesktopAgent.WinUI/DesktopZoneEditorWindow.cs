@@ -139,7 +139,7 @@ internal sealed class DesktopZoneEditorWindow : Window
 
         _zoneNameBox.Width = 170;
         _zoneNameBox.PlaceholderText = "分区名称";
-        _zoneNameBox.LostFocus += (_, _) => CommitSelectedZoneName();
+        _zoneNameBox.TextChanged += ZoneNameBox_TextChanged;
 
         var newButton = new Button { Content = "＋ 新建分区" };
         newButton.Click += NewZone_Click;
@@ -154,7 +154,7 @@ internal sealed class DesktopZoneEditorWindow : Window
 
         var doneButton = new Button
         {
-            Content = "完成并保存",
+            Content = "保存并退出",
             Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x31, 0x52, 0xE8)),
             Foreground = new SolidColorBrush(Colors.White),
         };
@@ -425,6 +425,34 @@ internal sealed class DesktopZoneEditorWindow : Window
         RenderZones();
     }
 
+    private void ZoneNameBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_suppressInspectorEvents || _selectedZoneId is not Guid zoneId)
+            return;
+
+        var name = _zoneNameBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            _statusText.Text = "分区名称不能为空 · 当前修改尚未保存";
+            return;
+        }
+
+        var zone = _zones.First(item => item.ZoneId == zoneId);
+        if (string.Equals(name, zone.Name, StringComparison.Ordinal))
+            return;
+
+        var renamed = new DesktopLayoutZone(
+            zone.ZoneId,
+            name,
+            zone.Bounds,
+            zone.SortOrder,
+            zone.PlacementFlow,
+            zone.MaxItemCount);
+        _zones = DesktopZoneEditOperations.ReplaceZone(_zones, renamed);
+        _statusText.Text = $"{name} · 名称修改尚未保存";
+        RenderZones();
+    }
+
     private void NewZone_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -432,7 +460,7 @@ internal sealed class DesktopZoneEditorWindow : Window
             CommitSelectedZoneName();
             _zones = DesktopZoneEditOperations.AddZone(_zones);
             _selectedZoneId = _zones.OrderBy(zone => zone.SortOrder).Last().ZoneId;
-            _statusText.Text = "已创建新分区 · 仍需完成并保存";
+            _statusText.Text = "已创建新分区 · 仍需保存并退出";
             RefreshInspector();
             RenderZones();
         }
@@ -455,7 +483,7 @@ internal sealed class DesktopZoneEditorWindow : Window
                 zoneId);
             _zoneColorOverrides.Remove(zoneId);
             _selectedZoneId = _zones.OrderBy(zone => zone.SortOrder).First().ZoneId;
-            _statusText.Text = "分区已删除 · 仍需完成并保存";
+            _statusText.Text = "分区已删除 · 仍需保存并退出";
             RefreshInspector();
             RenderZones();
         }
