@@ -85,19 +85,25 @@ public static class DesktopZoneEditOperations
         if (index < 0)
             throw new InvalidOperationException("要更新的 Zone 不在当前草稿中。 ");
 
+        var adjusted = DesktopZoneSnapOperations.Snap(
+            zones,
+            index,
+            zones[index],
+            replacement);
+
         for (var i = 0; i < zones.Count; i++)
         {
             if (i == index)
                 continue;
-            if (zones[i].Bounds.Overlaps(replacement.Bounds))
+            if (zones[i].Bounds.Overlaps(adjusted.Bounds))
             {
                 throw new InvalidOperationException(
-                    $"分区“{replacement.Name}”不能与“{zones[i].Name}”重叠。 ");
+                    $"分区“{adjusted.Name}”不能与“{zones[i].Name}”重叠。 ");
             }
         }
 
         var updated = zones.ToArray();
-        updated[index] = replacement;
+        updated[index] = adjusted;
         return Array.AsReadOnly(updated);
     }
 
