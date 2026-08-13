@@ -5,5 +5,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <TesselChannel Condition="'$(TesselChannel)' == '' and '$(Configuration)' == 'Debug'">Dev</TesselChannel>
+    <TesselChannel Condition="'$(TesselChannel)' == '' and '$(Configuration)' != 'Debug'">Stable</TesselChannel>
+
+    <DefineConstants Condition="'$(TesselChannel)' == 'Dev'">$(DefineConstants);TESSEL_DEV_CHANNEL</DefineConstants>
+    <DefineConstants Condition="'$(TesselChannel)' == 'PackagingTest'">$(DefineConstants);TESSEL_PACKAGING_TEST_CHANNEL</DefineConstants>
+    <DefineConstants Condition="'$(TesselChannel)' == 'Stable'">$(DefineConstants);TESSEL_STABLE_CHANNEL</DefineConstants>
   </PropertyGroup>
+
+  <Target Name="ValidateTesselChannel" BeforeTargets="BeforeBuild"
+          Condition="'$(TesselChannel)' != 'Dev' and '$(TesselChannel)' != 'PackagingTest' and '$(TesselChannel)' != 'Stable'">
+    <Error Text="Unsupported TesselChannel '$(TesselChannel)'. Expected Dev, PackagingTest, or Stable." />
+  </Target>
 </Project>
