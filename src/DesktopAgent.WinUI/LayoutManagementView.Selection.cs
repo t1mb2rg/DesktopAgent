@@ -125,6 +125,8 @@ public sealed partial class LayoutManagementView
 
     private void SetLayoutInteractionMode(bool isEditing)
     {
+        ConfigureTargetDisplayUx();
+
         _isLayoutEditing = isEditing;
         EditingBadge.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
         LayoutNameTextBox.IsReadOnly = !isEditing;
@@ -138,6 +140,17 @@ public sealed partial class LayoutManagementView
         EditLayoutButton.IsEnabled = isEditing
             ? _draft is not null
             : LayoutTemplateList.SelectedItem is LayoutTemplateListItem;
+    }
+
+    private void ConfigureTargetDisplayUx()
+    {
+        if (LayoutTargetBindingCombo.Items.Count > 1 &&
+            LayoutTargetBindingCombo.Items[1] is ComboBoxItem selectedTargetItem)
+        {
+            selectedTargetItem.Content = "临时指定";
+        }
+
+        LayoutDeviceNameTextBox.PlaceholderText = "请输入设备名，例如 \\.\\DISPLAY1";
     }
 
     private void RestoreSelectionToCurrentDraft()
