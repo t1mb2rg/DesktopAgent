@@ -1,3 +1,4 @@
+using DesktopAgent.Core.Productization;
 using Microsoft.UI.Dispatching;
 using Microsoft.Windows.AppLifecycle;
 
@@ -5,8 +6,6 @@ namespace DesktopAgent.WinUI;
 
 public static class Program
 {
-    private const string InstanceKey = "DesktopAgent.ProductShell";
-
     internal static event EventHandler? SecondaryActivationReceived;
 
     [STAThread]
@@ -15,7 +14,7 @@ public static class Program
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
-        var instance = AppInstance.FindOrRegisterForKey(InstanceKey);
+        var instance = AppInstance.FindOrRegisterForKey(TesselProductIdentity.InstanceKey);
         if (!instance.IsCurrent)
         {
             instance.RedirectActivationToAsync(activation).AsTask().GetAwaiter().GetResult();
