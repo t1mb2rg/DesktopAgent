@@ -3,7 +3,7 @@ namespace DesktopAgent.Tests.Productization;
 public sealed class DesktopZoneEditingProductBoundaryContractTests
 {
     [Fact]
-    public void DesktopEditor_IsExplicitAndDoesNotOwnDesktopIconExecution()
+    public void DesktopEditor_IsExplicitAndKeepsExecutionInfrastructureOut()
     {
         var root = FindRepositoryRoot();
         var editor = File.ReadAllText(Path.Combine(
@@ -20,12 +20,25 @@ public sealed class DesktopZoneEditingProductBoundaryContractTests
         Assert.Contains("不会移动桌面图标", editor, StringComparison.Ordinal);
         Assert.Contains("CapturePreviewAsync(draft)", integration, StringComparison.Ordinal);
         Assert.Contains("LayoutTemplateAndRulesSaveCoordinator.SaveAsync", integration, StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsInterop.DesktopIcons", editor, StringComparison.Ordinal);
+        Assert.DoesNotContain("Templates.Execution", editor, StringComparison.Ordinal);
+    }
 
-        Assert.DoesNotContain("DesktopShellIconPositionWriter", editor, StringComparison.Ordinal);
-        Assert.DoesNotContain("DesktopIconMovePlanner", editor, StringComparison.Ordinal);
-        Assert.DoesNotContain("WriterCommand", editor, StringComparison.Ordinal);
-        Assert.DoesNotContain("DesktopShellIconPositionWriter", integration, StringComparison.Ordinal);
-        Assert.DoesNotContain("WriterCommand", integration, StringComparison.Ordinal);
+    [Fact]
+    public void DesktopEditor_RenamePreviewsLiveAndSaveCopyMatchesExitBehavior()
+    {
+        var root = FindRepositoryRoot();
+        var editor = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "DesktopZoneEditorWindow.cs"));
+
+        Assert.Contains("_zoneNameBox.TextChanged += ZoneNameBox_TextChanged", editor, StringComparison.Ordinal);
+        Assert.Contains("名称修改尚未保存", editor, StringComparison.Ordinal);
+        Assert.Contains("Content = \"保存并退出\"", editor, StringComparison.Ordinal);
+        Assert.Contains("Completed?.Invoke", editor, StringComparison.Ordinal);
+        Assert.Contains("Cancelled?.Invoke", editor, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -46,7 +59,7 @@ public sealed class DesktopZoneEditingProductBoundaryContractTests
 
         Assert.Contains("WsExTransparent", overlay, StringComparison.Ordinal);
         Assert.Contains("HtTransparent", overlay, StringComparison.Ordinal);
-        Assert.Contains("鼠标穿透", overlay, StringComparison.Ordinal);
+        Assert.Contains("WmMouseActivate", overlay, StringComparison.Ordinal);
         Assert.DoesNotContain("WsExTransparent", editor, StringComparison.Ordinal);
     }
 
