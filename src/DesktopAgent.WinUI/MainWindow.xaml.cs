@@ -95,7 +95,9 @@ public sealed partial class MainWindow : Window
 
     private void EnsureSectionHydrated(string tag)
     {
-        if (string.Equals(tag, "layouts", StringComparison.Ordinal))
+        if (string.Equals(tag, "ai", StringComparison.Ordinal))
+            EnsureAiAssistantView();
+        else if (string.Equals(tag, "layouts", StringComparison.Ordinal))
             EnsureLayoutManagementView();
         else if (string.Equals(tag, "settings", StringComparison.Ordinal))
             AttachOverlayAppearanceSettingsView();
@@ -182,6 +184,9 @@ public sealed partial class MainWindow : Window
         NavigationViewSelectionChangedEventArgs args)
     {
         var tag = (args.SelectedItemContainer as NavigationViewItem)?.Tag?.ToString() ?? "home";
+        if (!string.Equals(tag, "ai", StringComparison.Ordinal))
+            CancelAiAssistantRequest();
+
         ShowSection(tag);
 
         if (string.Equals(tag, "pending", StringComparison.Ordinal))
@@ -395,6 +400,8 @@ public sealed partial class MainWindow : Window
 
     private void HideToTray()
     {
+        CancelAiAssistantRequest();
+        ReleaseAiAssistantView();
         _appWindow.Hide();
         ScheduleResidentRelease();
     }
@@ -452,6 +459,8 @@ public sealed partial class MainWindow : Window
             return;
 
         _exitRequested = true;
+        CancelAiAssistantRequest();
+        ReleaseAiAssistantView();
         _residentReleaseTimer.Stop();
         _residentReleaseTimer.Tick -= ResidentReleaseTimer_Tick;
         _trayIcon.Dispose();
