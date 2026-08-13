@@ -38,6 +38,8 @@ internal sealed record AiDesktopUnderstandingProductResult(
 /// </summary>
 internal sealed class AiDesktopUnderstandingService
 {
+    internal static readonly TimeSpan ProductUnderstandingTimeout = TimeSpan.FromSeconds(90);
+
     internal async Task<AiDesktopUnderstandingProductResult> AnalyzeAsync(
         string? previousIntentSummary,
         string? latestUserGuidance,
@@ -48,8 +50,8 @@ internal sealed class AiDesktopUnderstandingService
         await settingsStore.InitializeAsync(cancellationToken);
         var settings = await settingsStore.GetAsync(cancellationToken);
 
-        var options = DesktopProductIntelligenceOptionsFactory.Create(settings);
-        if (options is null)
+        var configuredOptions = DesktopProductIntelligenceOptionsFactory.Create(settings);
+        if (configuredOptions is null)
         {
             return new AiDesktopUnderstandingProductResult(
                 AiDesktopUnderstandingProductStatus.AiDisabled,
@@ -60,6 +62,14 @@ internal sealed class AiDesktopUnderstandingService
                 HttpStatusCode: null,
                 Message: "AI 当前已关闭，请先在设置中配置并启用 Provider。");
         }
+
+        // M4 Provider 默认 30 秒保持冻结；整桌理解属于天然重请求，
+        // 仅在产品组合层为这一条链路提供更宽的有界预算。
+        var options = new OpenAiCompatibleProviderOptions(
+            configuredOptions.BaseUri,
+            configuredOptions.Model,
+            configuredOptions.SecretReference,
+            ProductUnderstandingTimeout);
 
         using var staExecutor = new StaThreadExecutor();
         var observationSource = new WindowsDesktopObservationSource(
