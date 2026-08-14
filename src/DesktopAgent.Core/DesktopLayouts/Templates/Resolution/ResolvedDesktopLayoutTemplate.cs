@@ -23,7 +23,6 @@ public sealed record ResolvedDesktopLayoutTemplate
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
 
-        // long 安全验证 WorkArea
         long waWidth = (long)workArea.Right - workArea.Left;
         long waHeight = (long)workArea.Bottom - workArea.Top;
         if (waWidth <= 0)
@@ -56,7 +55,6 @@ public sealed record ResolvedDesktopLayoutTemplate
                 $"Zones 数量 ({zoneList.Count}) 与 Template.Zones 数量 ({template.Zones.Count}) 不一致。",
                 nameof(zones));
 
-        // 验证每个 Zone 的来源、边界和容量自洽性
         for (var i = 0; i < zoneList.Count; i++)
         {
             if (zoneList[i] is null)
@@ -65,35 +63,38 @@ public sealed record ResolvedDesktopLayoutTemplate
                 throw new ArgumentException(
                     $"Zones[{i}] 的 Zone 与 Template.Zones[{i}] 不是同一实例。", nameof(zones));
 
-            var pb = zoneList[i].PixelBounds;
+            var resolvedZone = zoneList[i];
+            var pb = resolvedZone.PixelBounds;
             if (!DesktopIconLayoutGeometry.IsFullyContained(pb, workArea))
                 throw new ArgumentException(
                     $"Zones[{i}] PixelBounds ({pb.Left},{pb.Top})-({pb.Right},{pb.Bottom}) " +
                     $"不完全位于 WorkArea ({workArea.Left},{workArea.Top})-({workArea.Right},{workArea.Bottom}) 内。",
                     nameof(zones));
 
-            // 核验 ColumnCount/RowCount 与 PixelBounds/IconSpacing 一致
-            long pWidth = (long)pb.Right - pb.Left;
-            long pHeight = (long)pb.Bottom - pb.Top;
-            int expectedCol = (int)(pWidth / iconSpacing.X);
-            int expectedRow = (int)(pHeight / iconSpacing.Y);
-            if (zoneList[i].ColumnCount != expectedCol)
+            // 容量从 PlacementOrigin 而不是可视 PixelBounds 左上角开始计算。
+            // 默认两者一致；Explorer 网格相位校准时 PlacementOrigin 会向内偏移。
+            long availableWidth = Math.Max(0L, (long)pb.Right - resolvedZone.PlacementOrigin.X);
+            long availableHeight = Math.Max(0L, (long)pb.Bottom - resolvedZone.PlacementOrigin.Y);
+            int expectedCol = checked((int)(availableWidth / iconSpacing.X));
+            int expectedRow = checked((int)(availableHeight / iconSpacing.Y));
+            if (resolvedZone.ColumnCount != expectedCol)
                 throw new ArgumentException(
-                    $"Zones[{i}] ZoneId=\"{zoneList[i].Zone.ZoneId:D}\" " +
+                    $"Zones[{i}] ZoneId=\"{resolvedZone.Zone.ZoneId:D}\" " +
+                    $"PlacementOrigin=({resolvedZone.PlacementOrigin.X},{resolvedZone.PlacementOrigin.Y}) " +
                     $"PixelBounds=({pb.Left},{pb.Top})-({pb.Right},{pb.Bottom}) " +
                     $"IconSpacing=({iconSpacing.X},{iconSpacing.Y}) " +
-                    $"ColumnCount: 期望 {expectedCol}，实际 {zoneList[i].ColumnCount}。",
+                    $"ColumnCount: 期望 {expectedCol}，实际 {resolvedZone.ColumnCount}。",
                     nameof(zones));
-            if (zoneList[i].RowCount != expectedRow)
+            if (resolvedZone.RowCount != expectedRow)
                 throw new ArgumentException(
-                    $"Zones[{i}] ZoneId=\"{zoneList[i].Zone.ZoneId:D}\" " +
+                    $"Zones[{i}] ZoneId=\"{resolvedZone.Zone.ZoneId:D}\" " +
+                    $"PlacementOrigin=({resolvedZone.PlacementOrigin.X},{resolvedZone.PlacementOrigin.Y}) " +
                     $"PixelBounds=({pb.Left},{pb.Top})-({pb.Right},{pb.Bottom}) " +
                     $"IconSpacing=({iconSpacing.X},{iconSpacing.Y}) " +
-                    $"RowCount: 期望 {expectedRow}，实际 {zoneList[i].RowCount}。",
+                    $"RowCount: 期望 {expectedRow}，实际 {resolvedZone.RowCount}。",
                     nameof(zones));
         }
 
-        // 不重叠验证
         for (var i = 0; i < zoneList.Count; i++)
         {
             for (var j = i + 1; j < zoneList.Count; j++)
@@ -104,7 +105,6 @@ public sealed record ResolvedDesktopLayoutTemplate
             }
         }
 
-        // 总容量
         long totalTheo = 0;
         long totalEff = 0;
         foreach (var z in zoneList)
