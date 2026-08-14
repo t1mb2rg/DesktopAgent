@@ -8,7 +8,7 @@ namespace DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 /// 一次基于新鲜 DesktopObservation 生成的只读影响预览。
 ///
 /// 为了让后续 Direct Apply 能证明“执行的就是用户实际看过的那一版”，预览同时冻结：
-/// 当前 Draft、原始 Observation、SelectedTarget 与显式跨屏入站 StableId。
+/// 当前 Draft、原始 Observation、SelectedTarget 与显式跨屏入站授权。
 /// 它仍然不包含 WriterCommand；任何真实执行都必须重新观察并 Fresh Replan，
 /// 再与这份冻结事实做语义比较。
 /// </summary>
@@ -40,19 +40,13 @@ public sealed record DesktopLayoutImpactPreview
             throw new ArgumentException("ObservationId 与 Observation.ObservationId 不一致。", nameof(observationId));
 
         var inbound = NormalizeInboundStableIds(explicitInboundStableIds);
-        if (inbound.Count != plan.InboundMigrationIconCount)
+        var planAuthorized = plan.ResolutionPlan.ExplicitInboundStableIds;
+        if (!inbound.SequenceEqual(planAuthorized, StringComparer.Ordinal))
         {
             throw new ArgumentException(
-                $"显式入站 StableId 数量 ({inbound.Count}) 与 PreviewPlan.InboundMigrationIconCount " +
-                $"({plan.InboundMigrationIconCount}) 不一致。",
+                "显式跨屏授权 StableId 与 PreviewPlan.ResolutionPlan 不一致。",
                 nameof(explicitInboundStableIds));
         }
-        var planInbound = plan.InboundMigrationIcons
-            .Select(static icon => icon.StableId)
-            .OrderBy(static stableId => stableId, StringComparer.Ordinal)
-            .ToArray();
-        if (!inbound.SequenceEqual(planInbound, StringComparer.Ordinal))
-            throw new ArgumentException("显式入站 StableId 与 PreviewPlan.InboundMigrationIcons 不一致。", nameof(explicitInboundStableIds));
 
         ObservationId = observationId;
         ObservedAtUtc = observedAtUtc.ToUniversalTime();
@@ -99,14 +93,18 @@ public static class DesktopLayoutImpactPreviewService
         ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(observation);
 
-        // 明确冻结生成本次 Preview 时的草稿语义，不能让后续 UI 修改悄悄改变这份证据。
+        // 如果调用方没有额外提供，统一使用 Draft 自己冻结的跨屏授权。
+        // 因此布局页的 Preview、Overlay、DirectApply 不需要各自维护一份 UI 旁路状态。
+        var effectiveInbound = explicitInboundStableIds ?? draft.ExplicitInboundStableIds;
+
         var frozenDraft = new DesktopLayoutEditDraft(
             draft.TemplateId,
             draft.SourceVersion,
             draft.Name,
             draft.TargetDisplayBinding,
             draft.Zones,
-            draft.RuleSet);
+            draft.RuleSet,
+            effectiveInbound);
 
         var template = frozenDraft.BuildPreviewTemplate();
         var icons = observation.Icons
@@ -122,9 +120,7 @@ public static class DesktopLayoutImpactPreviewService
                 icon.IsFileSystemItem))
             .ToArray();
 
-        var inboundSet = explicitInboundStableIds is null
-            ? null
-            : explicitInboundStableIds.ToHashSet(StringComparer.Ordinal);
+        var inboundSet = effectiveInbound.ToHashSet(StringComparer.Ordinal);
         var plan = DesktopLayoutRuleAwarePreviewPlanner.Plan(
             template,
             frozenDraft.RuleSet,
@@ -141,6 +137,6 @@ public static class DesktopLayoutImpactPreviewService
             frozenDraft,
             observation,
             selectedTargetDeviceName,
-            explicitInboundStableIds);
+            effectiveInbound);
     }
 }
