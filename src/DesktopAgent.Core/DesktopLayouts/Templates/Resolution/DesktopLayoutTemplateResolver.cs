@@ -19,6 +19,18 @@ public static class DesktopLayoutTemplateResolver
         DesktopLayoutTemplate template,
         PixelRect workArea,
         PixelPoint iconSpacing)
+        => Resolve(template, workArea, iconSpacing, explorerGridPhase: null);
+
+    /// <summary>
+    /// 使用可选 Explorer 全局网格相位解析模板。
+    /// GridPhase 是 X/Y 对 spacing 的余数，不改变 Zone 的 PixelBounds；
+    /// 只把每个 Zone 的 PlacementOrigin 向内部对齐到真实 Explorer 网格。
+    /// </summary>
+    public static ResolvedDesktopLayoutTemplate Resolve(
+        DesktopLayoutTemplate template,
+        PixelRect workArea,
+        PixelPoint iconSpacing,
+        PixelPoint? explorerGridPhase)
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
 
@@ -47,11 +59,29 @@ public static class DesktopLayoutTemplateResolver
             throw new ArgumentOutOfRangeException(nameof(iconSpacing),
                 $"IconSpacing.Y 必须大于 0，实际 {iconSpacing.Y}。");
 
+        if (explorerGridPhase.HasValue)
+        {
+            var phase = explorerGridPhase.Value;
+            if (phase.X < 0 || phase.X >= iconSpacing.X)
+                throw new ArgumentOutOfRangeException(nameof(explorerGridPhase),
+                    $"GridPhase.X 必须在 [0, {iconSpacing.X})，实际 {phase.X}。");
+            if (phase.Y < 0 || phase.Y >= iconSpacing.Y)
+                throw new ArgumentOutOfRangeException(nameof(explorerGridPhase),
+                    $"GridPhase.Y 必须在 [0, {iconSpacing.Y})，实际 {phase.Y}。");
+        }
+
         // ═══ 解析每个 Zone ═══
         var resolvedZones = new List<ResolvedDesktopLayoutZone>(template.Zones.Count);
         foreach (var zone in template.Zones)
         {
-            var resolved = ResolveZone(zone, template.TemplateId, workArea, waWidth, waHeight, iconSpacing);
+            var resolved = ResolveZone(
+                zone,
+                template.TemplateId,
+                workArea,
+                waWidth,
+                waHeight,
+                iconSpacing,
+                explorerGridPhase);
             resolvedZones.Add(resolved);
         }
 
@@ -76,7 +106,8 @@ public static class DesktopLayoutTemplateResolver
         PixelRect workArea,
         long waWidth,
         long waHeight,
-        PixelPoint iconSpacing)
+        PixelPoint iconSpacing,
+        PixelPoint? explorerGridPhase)
     {
         var bounds = zone.Bounds;
 
@@ -101,9 +132,20 @@ public static class DesktopLayoutTemplateResolver
 
         var pixelBounds = new PixelRect(pixelLeft, pixelTop, pixelRight, pixelBottom);
 
-        // 容量计算
-        int columnCount = pixelBounds.Width / iconSpacing.X;
-        int rowCount = pixelBounds.Height / iconSpacing.Y;
+        var placementOrigin = explorerGridPhase.HasValue
+            ? new PixelPoint(
+                DesktopExplorerGridPhaseResolver.AlignUpToPhase(
+                    pixelLeft, iconSpacing.X, explorerGridPhase.Value.X),
+                DesktopExplorerGridPhaseResolver.AlignUpToPhase(
+                    pixelTop, iconSpacing.Y, explorerGridPhase.Value.Y))
+            : new PixelPoint(pixelLeft, pixelTop);
+
+        // 容量必须从真实 PlacementOrigin 开始计算。
+        // 当对齐后原点已经越过 Zone 右/下边界时，该轴容量为 0，fail-closed 不产生目标槽位。
+        var availableWidth = Math.Max(0L, (long)pixelRight - placementOrigin.X);
+        var availableHeight = Math.Max(0L, (long)pixelBottom - placementOrigin.Y);
+        int columnCount = checked((int)(availableWidth / iconSpacing.X));
+        int rowCount = checked((int)(availableHeight / iconSpacing.Y));
         long theoreticalCapacity = checked((long)columnCount * rowCount);
 
         long effectiveCapacity = zone.MaxItemCount.HasValue
@@ -111,7 +153,12 @@ public static class DesktopLayoutTemplateResolver
             : theoreticalCapacity;
 
         return new ResolvedDesktopLayoutZone(
-            zone, pixelBounds, columnCount, rowCount,
-            theoreticalCapacity, effectiveCapacity);
+            zone,
+            pixelBounds,
+            columnCount,
+            rowCount,
+            theoreticalCapacity,
+            effectiveCapacity,
+            placementOrigin);
     }
 }
