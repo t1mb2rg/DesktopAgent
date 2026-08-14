@@ -46,7 +46,7 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
-    public void ProductAiService_UsesNinetySecondBudgetOnlyForWholeDesktopUnderstanding()
+    public void ProductAiService_UsesFiveMinuteBudgetOnlyForWholeDesktopUnderstanding()
     {
         var root = FindRepositoryRoot();
         var service = File.ReadAllText(Path.Combine(
@@ -56,7 +56,7 @@ public sealed class AiProductIntegrationContractTests
             "AiDesktopUnderstandingService.cs"));
 
         Assert.Contains(
-            "ProductUnderstandingTimeout = TimeSpan.FromSeconds(90)",
+            "ProductUnderstandingTimeout = TimeSpan.FromMinutes(5)",
             service,
             StringComparison.Ordinal);
 
@@ -76,7 +76,7 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
-    public void ProductAiService_SamplesLargeDesktopBeforeCallingFrozenM4UnderstandingProvider()
+    public void ProductAiService_PassesAllFreshObservedItemsIntoFrozenM4UnderstandingProvider()
     {
         var root = FindRepositoryRoot();
         var service = File.ReadAllText(Path.Combine(
@@ -85,12 +85,11 @@ public sealed class AiProductIntegrationContractTests
             "DesktopAgent.WinUI",
             "AiDesktopUnderstandingService.cs"));
 
-        Assert.Contains("ProductUnderstandingSampleLimit = 32", service, StringComparison.Ordinal);
-        Assert.Contains("var observedFacts = icons.Select(ToFacts).ToArray();", service, StringComparison.Ordinal);
-        Assert.Contains("var facts = BuildRepresentativeSample(observedFacts);", service, StringComparison.Ordinal);
-        Assert.Contains("GroupBy", service, StringComparison.Ordinal);
-        Assert.Contains("new Queue<DesktopItemFacts>", service, StringComparison.Ordinal);
-        Assert.Contains("AnalyzedItemCount", service, StringComparison.Ordinal);
+        Assert.Contains("var facts = icons.Select(ToFacts).ToArray();", service, StringComparison.Ordinal);
+        Assert.Contains("new DesktopFirstRunUnderstandingRequest(\n            facts,", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductUnderstandingSampleLimit", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildRepresentativeSample", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("AnalyzedItemCount", service, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -142,7 +141,7 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
-    public void AiSurface_ExposesProviderProbeSamplingAndSemanticDraftSafetyBoundary()
+    public void AiSurface_ExposesProviderProbeFullUnderstandingAndSemanticDraftSafetyBoundary()
     {
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(
@@ -150,13 +149,24 @@ public sealed class AiProductIntegrationContractTests
             "src",
             "DesktopAgent.WinUI",
             "AiAssistantView.xaml"));
+        var codeBehind = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiAssistantView.xaml.cs"));
 
         Assert.Contains("测试 AI 连接", xaml, StringComparison.Ordinal);
         Assert.Contains("TestAiConnection_Click", xaml, StringComparison.Ordinal);
-        Assert.Contains("代表性样本", xaml, StringComparison.Ordinal);
+        Assert.Contains("全部项目", xaml, StringComparison.Ordinal);
+        Assert.Contains("可能需要几分钟", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("代表性样本", xaml, StringComparison.Ordinal);
         Assert.Contains("只生成语义草案", xaml, StringComparison.Ordinal);
         Assert.Contains("不调用 Writer", xaml, StringComparison.Ordinal);
         Assert.Contains("不会移动任何桌面图标", xaml, StringComparison.Ordinal);
+        Assert.Contains("正在完整理解当前桌面", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("随时取消", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("完整桌面理解超过 5 分钟", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("Fresh 观察并分析了", codeBehind, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
