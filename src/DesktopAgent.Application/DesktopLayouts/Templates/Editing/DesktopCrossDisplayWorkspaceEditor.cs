@@ -113,24 +113,7 @@ public static class DesktopCrossDisplayWorkspaceEditor
                 "请先应用或取消当前迁移，再重新选择目标屏。");
         }
 
-        var byDevice = new Dictionary<string, DesktopLayoutEditDraft>(StringComparer.Ordinal);
-        foreach (var draft in drafts)
-        {
-            ArgumentNullException.ThrowIfNull(draft);
-            if (draft.TargetDisplayBinding.Kind != TargetDisplayBindingKind.ExactDeviceName
-                || string.IsNullOrWhiteSpace(draft.TargetDisplayBinding.DeviceName))
-            {
-                throw new ArgumentException(
-                    "跨屏工作区中的每份 Draft 必须绑定 ExactDeviceName。",
-                    nameof(drafts));
-            }
-
-            if (!byDevice.TryAdd(draft.TargetDisplayBinding.DeviceName, draft))
-                throw new ArgumentException(
-                    $"显示器 {draft.TargetDisplayBinding.DeviceName} 在工作区中重复。",
-                    nameof(drafts));
-        }
-
+        var byDevice = ValidateWorkspaceDrafts(drafts);
         if (!byDevice.TryGetValue(sourceDeviceName, out var sourceDraft))
             throw new ArgumentException($"工作区中不存在源显示器 {sourceDeviceName}。", nameof(sourceDeviceName));
         if (!byDevice.TryGetValue(targetDeviceName, out var targetDraft))
@@ -176,18 +159,97 @@ public static class DesktopCrossDisplayWorkspaceEditor
             else if (string.Equals(deviceName, targetDeviceName, StringComparison.Ordinal))
                 rules.Add(DesktopLayoutIconRule.ForZoneOverride(stableId, targetZoneId));
 
-            var inbound = migrations
-                .Where(item => string.Equals(item.TargetDeviceName, deviceName, StringComparison.Ordinal))
-                .Select(static item => item.StableId)
-                .ToArray();
             updated.Add(CloneWithRuleSet(
                 draft,
                 new DesktopLayoutIconRuleSet(draft.TemplateId, rules),
-                inbound));
+                ExplicitInboundForDevice(migrations, deviceName)));
         }
 
         return new DesktopCrossDisplayWorkspaceEditResult(updated, migrations);
     }
+
+    /// <summary>
+    /// 在真实 Direct Apply 已成功收敛后提交一组迁移。
+    /// 只清除临时 explicit-inbound / pending 状态；目标 ZoneOverride 与源 Exclude 均保留，
+    /// 因而物理迁移后的稳定布局语义不会丢失。
+    /// </summary>
+    public static DesktopCrossDisplayWorkspaceEditResult CompleteTargetMigrations(
+        IReadOnlyList<DesktopLayoutEditDraft> drafts,
+        IReadOnlyList<DesktopCrossDisplayMigrationIntent> existingMigrations,
+        string targetDeviceName,
+        IReadOnlyCollection<string> completedStableIds)
+    {
+        ArgumentNullException.ThrowIfNull(drafts);
+        ArgumentNullException.ThrowIfNull(existingMigrations);
+        ArgumentNullException.ThrowIfNull(completedStableIds);
+        if (string.IsNullOrWhiteSpace(targetDeviceName))
+            throw new ArgumentException("TargetDeviceName 不能为空。", nameof(targetDeviceName));
+
+        _ = ValidateWorkspaceDrafts(drafts);
+        var completed = completedStableIds.ToHashSet(StringComparer.Ordinal);
+        if (completed.Count != completedStableIds.Count)
+            throw new ArgumentException("completedStableIds 不能重复。", nameof(completedStableIds));
+        if (completed.Count == 0)
+            return new DesktopCrossDisplayWorkspaceEditResult(drafts, existingMigrations);
+
+        foreach (var stableId in completed)
+        {
+            var migration = existingMigrations.SingleOrDefault(item =>
+                string.Equals(item.StableId, stableId, StringComparison.Ordinal));
+            if (migration is null)
+                throw new InvalidOperationException($"StableId \"{stableId}\" 没有待执行跨屏迁移。 ");
+            if (!string.Equals(migration.TargetDeviceName, targetDeviceName, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"StableId \"{stableId}\" 的迁移目标是 {migration.TargetDeviceName}，" +
+                    $"不能由 {targetDeviceName} 的成功执行提交。");
+        }
+
+        var remaining = existingMigrations
+            .Where(item => !completed.Contains(item.StableId))
+            .OrderBy(static item => item.StableId, StringComparer.Ordinal)
+            .ToList();
+
+        var updated = drafts
+            .Select(draft => CloneWithRuleSet(
+                draft,
+                draft.RuleSet,
+                ExplicitInboundForDevice(remaining, draft.TargetDisplayBinding.DeviceName!)))
+            .ToArray();
+
+        return new DesktopCrossDisplayWorkspaceEditResult(updated, remaining);
+    }
+
+    private static Dictionary<string, DesktopLayoutEditDraft> ValidateWorkspaceDrafts(
+        IReadOnlyList<DesktopLayoutEditDraft> drafts)
+    {
+        var byDevice = new Dictionary<string, DesktopLayoutEditDraft>(StringComparer.Ordinal);
+        foreach (var draft in drafts)
+        {
+            ArgumentNullException.ThrowIfNull(draft);
+            if (draft.TargetDisplayBinding.Kind != TargetDisplayBindingKind.ExactDeviceName
+                || string.IsNullOrWhiteSpace(draft.TargetDisplayBinding.DeviceName))
+            {
+                throw new ArgumentException(
+                    "跨屏工作区中的每份 Draft 必须绑定 ExactDeviceName。",
+                    nameof(drafts));
+            }
+
+            if (!byDevice.TryAdd(draft.TargetDisplayBinding.DeviceName, draft))
+                throw new ArgumentException(
+                    $"显示器 {draft.TargetDisplayBinding.DeviceName} 在工作区中重复。",
+                    nameof(drafts));
+        }
+        return byDevice;
+    }
+
+    private static string[] ExplicitInboundForDevice(
+        IReadOnlyList<DesktopCrossDisplayMigrationIntent> migrations,
+        string deviceName)
+        => migrations
+            .Where(item => string.Equals(item.TargetDeviceName, deviceName, StringComparison.Ordinal))
+            .Select(static item => item.StableId)
+            .OrderBy(static stableId => stableId, StringComparer.Ordinal)
+            .ToArray();
 
     private static DesktopLayoutEditDraft CloneWithRuleSet(
         DesktopLayoutEditDraft draft,
