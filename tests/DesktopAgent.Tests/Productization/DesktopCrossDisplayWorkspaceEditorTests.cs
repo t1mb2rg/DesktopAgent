@@ -1,0 +1,177 @@
+using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
+
+namespace DesktopAgent.Tests.Productization;
+
+public sealed class DesktopCrossDisplayWorkspaceEditorTests
+{
+    [Fact]
+    public void Reassign_MovesExplicitRuleToTarget_AndExcludesSource()
+    {
+        var sourceZone = Zone("源区", 0);
+        var targetZone = Zone("目标区", 0);
+        var source = Draft(
+            @"\\.\DISPLAY1",
+            sourceZone,
+            DesktopLayoutIconRule.ForZoneOverride("icon-a", sourceZone.ZoneId),
+            DesktopLayoutIconRule.ForZoneOverride("keep-source", sourceZone.ZoneId));
+        var target = Draft(
+            @"\\.\DISPLAY2",
+            targetZone,
+            DesktopLayoutIconRule.ForZoneOverride("keep-target", targetZone.ZoneId));
+
+        var result = DesktopCrossDisplayWorkspaceEditor.Reassign(
+            new[] { source, target },
+            existingMigrations: null,
+            stableId: "icon-a",
+            sourceDeviceName: @"\\.\DISPLAY1",
+            targetDeviceName: @"\\.\DISPLAY2",
+            targetZoneId: targetZone.ZoneId);
+
+        var updatedSource = Assert.Single(result.Drafts, draft =>
+            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY1");
+        var updatedTarget = Assert.Single(result.Drafts, draft =>
+            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY2");
+
+        var sourceRule = Assert.Single(updatedSource.RuleSet.Rules, rule => rule.StableId == "icon-a");
+        Assert.Equal(DesktopLayoutIconRuleKind.Exclude, sourceRule.Kind);
+        Assert.Null(sourceRule.TargetZoneId);
+        Assert.Contains(updatedSource.RuleSet.Rules, rule => rule.StableId == "keep-source");
+
+        var targetRule = Assert.Single(updatedTarget.RuleSet.Rules, rule => rule.StableId == "icon-a");
+        Assert.Equal(DesktopLayoutIconRuleKind.ZoneOverride, targetRule.Kind);
+        Assert.Equal(targetZone.ZoneId, targetRule.TargetZoneId);
+        Assert.Contains(updatedTarget.RuleSet.Rules, rule => rule.StableId == "keep-target");
+
+        var migration = Assert.Single(result.Migrations);
+        Assert.Equal("icon-a", migration.StableId);
+        Assert.Equal(@"\\.\DISPLAY1", migration.SourceDeviceName);
+        Assert.Equal(@"\\.\DISPLAY2", migration.TargetDeviceName);
+        Assert.Equal(targetZone.ZoneId, migration.TargetZoneId);
+        Assert.Equal(DesktopLayoutIconRuleKind.ZoneOverride, migration.SourceRuleBeforeMigration.Kind);
+
+        Assert.Contains("icon-a", result.GetExplicitInboundStableIds(@"\\.\DISPLAY2"));
+        Assert.Empty(result.GetExplicitInboundStableIds(@"\\.\DISPLAY1"));
+    }
+
+    [Fact]
+    public void Reassign_ReplacesPriorMigrationForSameStableId_InsteadOfDuplicatingIntent()
+    {
+        var z1 = Zone("D1", 0);
+        var z2 = Zone("D2", 0);
+        var z3 = Zone("D3", 0);
+        var d1 = Draft(@"\\.\DISPLAY1", z1,
+            DesktopLayoutIconRule.ForZoneOverride("icon-a", z1.ZoneId));
+        var d2 = Draft(@"\\.\DISPLAY2", z2);
+        var d3 = Draft(@"\\.\DISPLAY3", z3);
+
+        var first = DesktopCrossDisplayWorkspaceEditor.Reassign(
+            new[] { d1, d2, d3 }, null,
+            "icon-a", @"\\.\DISPLAY1", @"\\.\DISPLAY2", z2.ZoneId);
+
+        var second = DesktopCrossDisplayWorkspaceEditor.Reassign(
+            first.Drafts,
+            first.Migrations,
+            "icon-a", @"\\.\DISPLAY2", @"\\.\DISPLAY3", z3.ZoneId);
+
+        var migration = Assert.Single(second.Migrations);
+        Assert.Equal(@"\\.\DISPLAY2", migration.SourceDeviceName);
+        Assert.Equal(@"\\.\DISPLAY3", migration.TargetDeviceName);
+
+        var d2After = Assert.Single(second.Drafts, draft =>
+            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY2");
+        Assert.Equal(
+            DesktopLayoutIconRuleKind.Exclude,
+            Assert.Single(d2After.RuleSet.Rules, rule => rule.StableId == "icon-a").Kind);
+
+        var d3After = Assert.Single(second.Drafts, draft =>
+            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY3");
+        Assert.Equal(
+            DesktopLayoutIconRuleKind.ZoneOverride,
+            Assert.Single(d3After.RuleSet.Rules, rule => rule.StableId == "icon-a").Kind);
+    }
+
+    [Fact]
+    public void Reassign_RejectsPinOrExcludeSource_InsteadOfSilentlyChangingAuthority()
+    {
+        var z1 = Zone("D1", 0);
+        var z2 = Zone("D2", 0);
+        var source = Draft(@"\\.\DISPLAY1", z1,
+            DesktopLayoutIconRule.ForPin("icon-a"));
+        var target = Draft(@"\\.\DISPLAY2", z2);
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            DesktopCrossDisplayWorkspaceEditor.Reassign(
+                new[] { source, target }, null,
+                "icon-a", @"\\.\DISPLAY1", @"\\.\DISPLAY2", z2.ZoneId));
+
+        Assert.Contains("Pin", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reassign_RejectsUnknownTargetZone()
+    {
+        var z1 = Zone("D1", 0);
+        var z2 = Zone("D2", 0);
+        var source = Draft(@"\\.\DISPLAY1", z1,
+            DesktopLayoutIconRule.ForZoneOverride("icon-a", z1.ZoneId));
+        var target = Draft(@"\\.\DISPLAY2", z2);
+
+        Assert.Throws<ArgumentException>(() =>
+            DesktopCrossDisplayWorkspaceEditor.Reassign(
+                new[] { source, target }, null,
+                "icon-a", @"\\.\DISPLAY1", @"\\.\DISPLAY2", Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void CrossDisplayEditor_RemainsApplicationOnly_WithoutWriterAuthority()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepoRoot(),
+            "src", "DesktopAgent.Application", "DesktopLayouts", "Templates", "Editing",
+            "DesktopCrossDisplayWorkspaceEditor.cs"));
+
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IDesktopIconPositionWriter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("MoveDesktopIcon", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("TargetDisplayLayoutExecutionCoordinator", source, StringComparison.Ordinal);
+    }
+
+    private static DesktopLayoutEditDraft Draft(
+        string deviceName,
+        DesktopLayoutZone zone,
+        params DesktopLayoutIconRule[] rules)
+    {
+        var templateId = Guid.NewGuid();
+        return new DesktopLayoutEditDraft(
+            templateId,
+            0,
+            $"布局 {deviceName}",
+            TargetDisplayBinding.ForExactDeviceName(deviceName),
+            new[] { zone },
+            new DesktopLayoutIconRuleSet(templateId, rules));
+    }
+
+    private static DesktopLayoutZone Zone(string name, int sortOrder)
+        => new(
+            Guid.NewGuid(),
+            name,
+            new NormalizedRect(0, 0, 10000, 10000),
+            sortOrder,
+            ZonePlacementFlow.ColumnMajor,
+            null);
+
+    private static string FindRepoRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "DesktopAgent.sln")))
+                return current.FullName;
+            current = current.Parent;
+        }
+
+        throw new InvalidOperationException("找不到 DesktopAgent.sln，无法定位源码合同测试根目录。");
+    }
+}
