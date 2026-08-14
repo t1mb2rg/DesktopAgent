@@ -49,7 +49,7 @@
                             <TextBlock Text="理解当前桌面"
                                        FontSize="20"
                                        FontWeight="SemiBold" />
-                            <TextBlock Text="Tessel 会 fresh 读取桌面项目名称、类型等受控语义事实，并调用你在设置中配置的 OpenAI-compatible Provider。"
+                            <TextBlock Text="Tessel 会 fresh 读取桌面项目名称、类型等受控语义事实，并调用你在设置中配置的 OpenAI-compatible Provider。项目较多时会从完整观察中选取代表性样本进行语义理解，以控制响应时间与输出规模。"
                                        TextWrapping="Wrap"
                                        Opacity="0.62" />
                             <TextBlock Text="这一页只生成语义草案，不生成物理坐标，不调用 Writer，也不会移动任何桌面图标。"
