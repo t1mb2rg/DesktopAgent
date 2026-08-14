@@ -65,10 +65,18 @@ public sealed class M5077DirectLayoutApplyUiContractTests
             "src",
             "DesktopAgent.WinUI",
             "LayoutManagementView.DirectApply.cs"));
+        var previewGate = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "LayoutManagementView.PreviewGate.cs"));
 
         Assert.Contains("x:Name=\"ApplyToDesktopButton\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"应用到桌面\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"False\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ApplyToDesktop_Click\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("PreviewLayoutWithDirectApplyGate_Click", xaml, StringComparison.Ordinal);
+        Assert.Contains("preview.Plan.IsComplete && preview.Plan.MoveRequiredCount > 0", previewGate, StringComparison.Ordinal);
         Assert.Contains("new ContentDialog", directApply, StringComparison.Ordinal);
         Assert.Contains("DefaultButton = ContentDialogButton.Close", directApply, StringComparison.Ordinal);
         Assert.Contains("CreateFromPreview(_latestPreview)", directApply, StringComparison.Ordinal);
