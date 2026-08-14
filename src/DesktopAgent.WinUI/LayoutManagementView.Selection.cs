@@ -88,6 +88,7 @@ public sealed partial class LayoutManagementView
             return;
         }
 
+        ClearAiMultiDisplayWorkspace();
         SetSelectedTemplateWithoutNotification(null);
         NewLayout_Click(sender, e);
         if (_draft is not null)
@@ -97,6 +98,7 @@ public sealed partial class LayoutManagementView
     private void CancelLayoutEditWithMode_Click(object sender, RoutedEventArgs e)
     {
         CancelLayoutEdit_Click(sender, e);
+        ClearAiMultiDisplayWorkspace();
         SetSelectedTemplateWithoutNotification(null);
         SetLayoutInteractionMode(isEditing: false);
     }
@@ -117,6 +119,7 @@ public sealed partial class LayoutManagementView
             return false;
         }
 
+        ClearAiMultiDisplayWorkspace();
         _draft = DesktopLayoutEditDraft.FromPersisted(template, rules);
         LoadDraftIntoEditor(_draft);
         LayoutCanvasStatusText.Text = $"{_draft.Zones.Count} 个分区 · 点击预览读取当前桌面";
@@ -128,10 +131,11 @@ public sealed partial class LayoutManagementView
         ConfigureTargetDisplayUx();
 
         _isLayoutEditing = isEditing;
+        var isAiMultiDisplayWorkspace = _activeAiWorkspaceIndex >= 0;
         EditingBadge.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
         LayoutNameTextBox.IsReadOnly = !isEditing;
-        LayoutTargetBindingCombo.IsEnabled = isEditing;
-        LayoutDeviceNameTextBox.IsReadOnly = !isEditing;
+        LayoutTargetBindingCombo.IsEnabled = isEditing && !isAiMultiDisplayWorkspace;
+        LayoutDeviceNameTextBox.IsReadOnly = !isEditing || isAiMultiDisplayWorkspace;
         LayoutPresetCombo.IsEnabled = isEditing;
         ApplyPresetButton.IsEnabled = isEditing;
         SaveLayoutButton.IsEnabled = isEditing;
