@@ -65,10 +65,6 @@ public sealed record DesktopCrossDisplayWorkspaceEditResult
         Migrations = Array.AsReadOnly(migrations.ToArray());
     }
 
-    /// <summary>
-    /// 返回某块目标显示器上由用户显式迁入的 StableId。
-    /// 这组值后续作为 Preview 的 explicit-inbound 白名单，不能由 AI 自动生成。
-    /// </summary>
     public IReadOnlySet<string> GetExplicitInboundStableIds(string targetDeviceName)
     {
         if (string.IsNullOrWhiteSpace(targetDeviceName))
@@ -154,6 +150,17 @@ public static class DesktopCrossDisplayWorkspaceEditor
                 "请先解除 Pin/Exclude，再执行跨屏迁移。");
         }
 
+        var migrations = (existingMigrations ?? Array.Empty<DesktopCrossDisplayMigrationIntent>())
+            .Where(item => !string.Equals(item.StableId, stableId, StringComparison.Ordinal))
+            .ToList();
+        migrations.Add(new DesktopCrossDisplayMigrationIntent(
+            stableId,
+            sourceDeviceName,
+            targetDeviceName,
+            targetZoneId,
+            sourceRule));
+        migrations.Sort((a, b) => StringComparer.Ordinal.Compare(a.StableId, b.StableId));
+
         var updated = new List<DesktopLayoutEditDraft>(drafts.Count);
         foreach (var draft in drafts)
         {
@@ -172,32 +179,29 @@ public static class DesktopCrossDisplayWorkspaceEditor
                 rules.Add(DesktopLayoutIconRule.ForZoneOverride(stableId, targetZoneId));
             }
 
-            updated.Add(CloneWithRuleSet(draft, new DesktopLayoutIconRuleSet(draft.TemplateId, rules)));
+            var inbound = migrations
+                .Where(item => string.Equals(item.TargetDeviceName, deviceName, StringComparison.Ordinal))
+                .Select(static item => item.StableId)
+                .ToArray();
+            updated.Add(CloneWithRuleSet(
+                draft,
+                new DesktopLayoutIconRuleSet(draft.TemplateId, rules),
+                inbound));
         }
-
-        var migrations = (existingMigrations ?? Array.Empty<DesktopCrossDisplayMigrationIntent>())
-            .Where(item => !string.Equals(item.StableId, stableId, StringComparison.Ordinal))
-            .ToList();
-        migrations.Add(new DesktopCrossDisplayMigrationIntent(
-            stableId,
-            sourceDeviceName,
-            targetDeviceName,
-            targetZoneId,
-            sourceRule));
-
-        migrations.Sort((a, b) => StringComparer.Ordinal.Compare(a.StableId, b.StableId));
 
         return new DesktopCrossDisplayWorkspaceEditResult(updated, migrations);
     }
 
     private static DesktopLayoutEditDraft CloneWithRuleSet(
         DesktopLayoutEditDraft draft,
-        DesktopLayoutIconRuleSet ruleSet)
+        DesktopLayoutIconRuleSet ruleSet,
+        IReadOnlyCollection<string> explicitInboundStableIds)
         => new(
             draft.TemplateId,
             draft.SourceVersion,
             draft.Name,
             draft.TargetDisplayBinding,
             draft.Zones,
-            ruleSet);
+            ruleSet,
+            explicitInboundStableIds);
 }
