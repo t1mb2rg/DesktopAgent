@@ -8,19 +8,18 @@ namespace DesktopAgent.Core.DesktopLayouts.Templates.Resolution;
 ///
 /// GetSpacing 只提供网格步长，不提供网格原点。启用“将图标与网格对齐”时，
 /// Explorer 可能在 SelectAndPositionItems 返回后把任意目标吸附到自己的全局网格。
-/// 这里仅在当前图标位置对 X/Y 余数形成强多数时采用推断；否则返回 null，
-/// 继续沿用旧的 Zone-local 数学网格，避免对自由摆放桌面做猜测式校准。
+/// 只有真实图标的二维余数对 (X mod spacingX, Y mod spacingY) 形成强多数时才采用；
+/// 否则返回 null，继续沿用旧的 Zone-local 数学网格，避免对自由摆放桌面做猜测式校准。
 /// </summary>
 public static class DesktopExplorerGridPhaseResolver
 {
     public sealed record Inference(
         PixelPoint Phase,
         int SampleCount,
-        int XConsensusCount,
-        int YConsensusCount)
+        int ConsensusCount)
     {
-        public double XConsensusRatio => SampleCount == 0 ? 0d : XConsensusCount / (double)SampleCount;
-        public double YConsensusRatio => SampleCount == 0 ? 0d : YConsensusCount / (double)SampleCount;
+        public double ConsensusRatio =>
+            SampleCount == 0 ? 0d : ConsensusCount / (double)SampleCount;
     }
 
     public static Inference? TryInfer(
@@ -40,29 +39,33 @@ public static class DesktopExplorerGridPhaseResolver
         if (icons.Count < 2)
             return null;
 
-        var xCounts = new Dictionary<int, int>();
-        var yCounts = new Dictionary<int, int>();
+        var phaseCounts = new Dictionary<(int X, int Y), int>();
         foreach (var icon in icons)
         {
             if (icon is null)
                 throw new ArgumentException("Icons 不能包含 null 元素。", nameof(icons));
 
-            Increment(xCounts, PositiveModulo(icon.PixelPosition.X, spacing.X));
-            Increment(yCounts, PositiveModulo(icon.PixelPosition.Y, spacing.Y));
+            var phase = (
+                PositiveModulo(icon.PixelPosition.X, spacing.X),
+                PositiveModulo(icon.PixelPosition.Y, spacing.Y));
+            phaseCounts.TryGetValue(phase, out var count);
+            phaseCounts[phase] = count + 1;
         }
 
-        var xMode = SelectMode(xCounts);
-        var yMode = SelectMode(yCounts);
+        var mode = phaseCounts
+            .OrderByDescending(static pair => pair.Value)
+            .ThenBy(static pair => pair.Key.X)
+            .ThenBy(static pair => pair.Key.Y)
+            .First();
         var required = Math.Max(2, (int)Math.Ceiling(icons.Count * minimumConsensusRatio));
 
-        if (xMode.Count < required || yMode.Count < required)
+        if (mode.Value < required)
             return null;
 
         return new Inference(
-            new PixelPoint(xMode.Residue, yMode.Residue),
+            new PixelPoint(mode.Key.X, mode.Key.Y),
             icons.Count,
-            xMode.Count,
-            yMode.Count);
+            mode.Value);
     }
 
     internal static int AlignUpToPhase(int value, int spacing, int phase)
@@ -82,17 +85,4 @@ public static class DesktopExplorerGridPhaseResolver
         var remainder = value % modulus;
         return remainder < 0 ? remainder + modulus : remainder;
     }
-
-    private static void Increment(Dictionary<int, int> counts, int residue)
-    {
-        counts.TryGetValue(residue, out var count);
-        counts[residue] = count + 1;
-    }
-
-    private static (int Residue, int Count) SelectMode(IReadOnlyDictionary<int, int> counts)
-        => counts
-            .OrderByDescending(static pair => pair.Value)
-            .ThenBy(static pair => pair.Key)
-            .Select(static pair => (pair.Key, pair.Value))
-            .First();
 }
