@@ -65,7 +65,10 @@ public sealed partial class AiAssistantView : UserControl
                 ? InfoBarSeverity.Informational
                 : InfoBarSeverity.Error;
             AiStatusBar.Title = "AI 连接测试失败";
-            AiStatusBar.Message = FormatProviderFailure(result.Status, result.HttpStatusCode);
+            AiStatusBar.Message = FormatProviderFailure(
+                result.Status,
+                result.HttpStatusCode,
+                result.Message);
             AiStatusBar.IsOpen = true;
         }
         catch (OperationCanceledException)
@@ -275,7 +278,10 @@ public sealed partial class AiAssistantView : UserControl
                 AiStatusBar.Title = "AI Provider 没有返回可用结果";
                 AiStatusBar.Message = result.ProviderStatus == IntelligenceProviderStatus.Timeout
                     ? "完整桌面理解超过 5 分钟仍未完成，已安全停止。可以稍后重试或检查 Provider 服务状态。"
-                    : FormatProviderFailure(result.ProviderStatus, result.HttpStatusCode);
+                    : FormatProviderFailure(
+                        result.ProviderStatus,
+                        result.HttpStatusCode,
+                        result.Message);
                 break;
 
             default:
@@ -324,23 +330,38 @@ public sealed partial class AiAssistantView : UserControl
 
     private static string FormatProviderFailure(
         IntelligenceProviderStatus? status,
-        int? httpStatusCode)
+        int? httpStatusCode,
+        string? diagnosticMessage = null)
     {
+        string summary;
         if (httpStatusCode is 401 or 403)
-            return $"Provider 拒绝了认证（HTTP {httpStatusCode}）。请检查设置中的 API Key。";
-
-        if (httpStatusCode.HasValue)
-            return $"Provider 请求失败（HTTP {httpStatusCode}，{status?.ToString() ?? "Unknown"}）。请检查 Base URI、Model 与 Provider 状态。";
-
-        return status switch
         {
-            IntelligenceProviderStatus.NotConfigured => "Provider 配置或 Secret 不完整，请检查 AI 设置。",
-            IntelligenceProviderStatus.Timeout => "Provider 请求超时，可以稍后重试或检查网络与服务状态。",
-            IntelligenceProviderStatus.Cancelled => "当前请求已取消。",
-            IntelligenceProviderStatus.InvalidResponse => "Provider 返回了不符合 Tessel 语义合同的结果，已安全拒绝。",
-            IntelligenceProviderStatus.Unavailable => "Provider 当前不可用，请检查网络、Base URI 与服务状态。",
-            _ => "Provider 当前没有返回可用结果。",
-        };
+            summary = $"Provider 拒绝了认证（HTTP {httpStatusCode}）。请检查设置中的 API Key。";
+        }
+        else if (httpStatusCode.HasValue)
+        {
+            summary = $"Provider 请求失败（HTTP {httpStatusCode}，{status?.ToString() ?? "Unknown"}）。请检查 Base URI、Model 与 Provider 状态。";
+        }
+        else
+        {
+            summary = status switch
+            {
+                IntelligenceProviderStatus.NotConfigured => "Provider 配置或 Secret 不完整，请检查 AI 设置。",
+                IntelligenceProviderStatus.Timeout => "Provider 请求超时，可以稍后重试或检查网络与服务状态。",
+                IntelligenceProviderStatus.Cancelled => "当前请求已取消。",
+                IntelligenceProviderStatus.InvalidResponse => "Provider 返回了不符合 Tessel 语义合同的结果，已安全拒绝。",
+                IntelligenceProviderStatus.Unavailable => "Provider 当前不可用，请检查网络、Base URI 与服务状态。",
+                _ => "Provider 当前没有返回可用结果。",
+            };
+        }
+
+        if (status != IntelligenceProviderStatus.InvalidResponse ||
+            string.IsNullOrWhiteSpace(diagnosticMessage))
+        {
+            return summary;
+        }
+
+        return $"{summary}\n技术诊断：{diagnosticMessage}";
     }
 
     private static string FormatPlacement(DesktopZonePlacementHint hint)
