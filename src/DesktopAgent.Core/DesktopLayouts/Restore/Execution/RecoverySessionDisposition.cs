@@ -64,6 +64,7 @@ public readonly record struct RecoverySessionDisposition(
 
             RecoverySessionLifecycle.Completed
                 or RecoverySessionLifecycle.FailedAndRolledBack
+                or RecoverySessionLifecycle.AcceptedCurrentState
                 => new(RecoverySessionHandling.None, RecoverySessionSafetyClass.None),
 
             RecoverySessionLifecycle.FailedRollbackIncomplete
