@@ -29,8 +29,8 @@ public sealed class DesktopExplorerGridPhaseResolverTests
         Assert.NotNull(inference);
         Assert.Equal(new PixelPoint(62, 81), inference!.Phase);
         Assert.Equal(5, inference.SampleCount);
-        Assert.Equal(5, inference.XConsensusCount);
-        Assert.Equal(5, inference.YConsensusCount);
+        Assert.Equal(5, inference.ConsensusCount);
+        Assert.Equal(1d, inference.ConsensusRatio);
     }
 
     [Fact]
@@ -43,6 +43,25 @@ public sealed class DesktopExplorerGridPhaseResolverTests
             Icon(1, "b", 22, 17),
             Icon(2, "c", 41, 39),
             Icon(3, "d", 63, 71),
+        };
+
+        var inference = DesktopExplorerGridPhaseResolver.TryInfer(icons, spacing);
+
+        Assert.Null(inference);
+    }
+
+    [Fact]
+    public void TryInfer_IndependentAxisMajoritiesWithoutJointMajority_DoesNotInventPhase()
+    {
+        var spacing = new PixelPoint(80, 80);
+        var icons = new[]
+        {
+            // X=10 has 3/5, Y=20 has 3/5, but pair (10,20) only 1/5.
+            Icon(0, "a", 10, 20),
+            Icon(1, "b", 90, 31),
+            Icon(2, "c", 170, 42),
+            Icon(3, "d", 23, 100),
+            Icon(4, "e", 34, 180),
         };
 
         var inference = DesktopExplorerGridPhaseResolver.TryInfer(icons, spacing);
