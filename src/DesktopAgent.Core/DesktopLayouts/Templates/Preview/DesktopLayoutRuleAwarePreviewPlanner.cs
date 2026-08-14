@@ -70,7 +70,6 @@ public sealed class DesktopLayoutRuleAwarePreviewItem
             throw new ArgumentException(
                 "CurrentPosition 必须等于 Icon.PixelPosition。");
 
-        // Disposition consistency
         switch (disposition)
         {
             case DesktopLayoutRuleAwarePreviewItemDisposition.Excluded:
@@ -91,7 +90,6 @@ public sealed class DesktopLayoutRuleAwarePreviewItem
                 break;
         }
 
-        // Rule StableId consistency
         if (rule is not null)
         {
             if (!StringComparer.Ordinal.Equals(rule.StableId, icon.StableId))
@@ -99,7 +97,6 @@ public sealed class DesktopLayoutRuleAwarePreviewItem
                     $"Rule.StableId \"{rule.StableId}\" 与 Icon.StableId \"{icon.StableId}\" 不一致。");
         }
 
-        // PlacementState consistency
         switch (placementState)
         {
             case DesktopLayoutRuleAwarePreviewPlacementState.Fixed:
@@ -155,10 +152,6 @@ public sealed class DesktopLayoutRuleAwarePreviewItem
     }
 }
 
-/// <summary>
-/// 规则感知预览计划 — 不可变 sealed class。
-/// 包含完整的输入、分区、规则感知布局和投影预览项。
-/// </summary>
 public sealed class DesktopLayoutRuleAwarePreviewPlan
 {
     public DesktopLayoutTemplate Template { get; }
@@ -211,7 +204,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         if (outOfScopeIcons is null) throw new ArgumentNullException(nameof(outOfScopeIcons));
         if (items is null) throw new ArgumentNullException(nameof(items));
 
-        // 引用链一致性
         if (!ReferenceEquals(resolvedTemplate.Template, template))
             throw new ArgumentException("ResolvedTemplate.Template 与 template 不是同一实例。");
         if (!ReferenceEquals(resolutionPlan.Template, template))
@@ -221,12 +213,9 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         if (!ReferenceEquals(placementPlan.ResolutionPlan, resolutionPlan))
             throw new ArgumentException("PlacementPlan.ResolutionPlan 与 resolutionPlan 不是同一实例。");
 
-        // TargetDisplay 一致性
         if (!ReferenceEquals(resolutionPlan.TargetDisplay, targetDisplay))
             throw new ArgumentException("ResolutionPlan.TargetDisplay 与 targetDisplay 不是同一实例。");
 
-        // ═══ ResolutionPlan 来源验证 ═══
-        // InputIcons 与 resolutionPlan.InputIcons 逐项同引用
         if (inputIcons.Count != resolutionPlan.InputIcons.Count)
             throw new ArgumentException(
                 $"InputIcons 数量 ({inputIcons.Count}) != ResolutionPlan.InputIcons ({resolutionPlan.InputIcons.Count})。");
@@ -234,27 +223,23 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             if (!ReferenceEquals(inputIcons[i], resolutionPlan.InputIcons[i]))
                 throw new ArgumentException($"InputIcons[{i}] 与 ResolutionPlan.InputIcons[{i}] 不是同一实例。");
 
-        // TargetDisplayIcons 与 resolutionPlan 逐项同引用
         if (targetDisplayIcons.Count != resolutionPlan.TargetDisplayIcons.Count)
             throw new ArgumentException("TargetDisplayIcons 数量与 ResolutionPlan 不一致。");
         for (var i = 0; i < targetDisplayIcons.Count; i++)
             if (!ReferenceEquals(targetDisplayIcons[i], resolutionPlan.TargetDisplayIcons[i]))
                 throw new ArgumentException($"TargetDisplayIcons[{i}] 与 ResolutionPlan 不是同一实例。");
 
-        // OutOfScopeIcons 与 resolutionPlan 逐项同引用
         if (outOfScopeIcons.Count != resolutionPlan.OutOfScopeIcons.Count)
             throw new ArgumentException("OutOfScopeIcons 数量与 ResolutionPlan 不一致。");
         for (var i = 0; i < outOfScopeIcons.Count; i++)
             if (!ReferenceEquals(outOfScopeIcons[i], resolutionPlan.OutOfScopeIcons[i]))
                 throw new ArgumentException($"OutOfScopeIcons[{i}] 与 ResolutionPlan 不是同一实例。");
 
-        // 输入集合验证 + 防御性复制
         var inputList = inputIcons.ToList();
         var targetList = targetDisplayIcons.ToList();
         var oosList = outOfScopeIcons.ToList();
         var itemsList = items.ToList();
 
-        // InputIcons: 无 null, Ordinal ASC 唯一, StableId 唯一
         var inputRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
         var inputOrdinals = new HashSet<int>();
         var inputSids = new HashSet<string>(StringComparer.Ordinal);
@@ -274,7 +259,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             prev = inputList[i].Ordinal;
         }
 
-        // Target + OOS: 原引用、无重叠、完整覆盖
         var targetRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
         var oosRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < targetList.Count; i++)
@@ -292,7 +276,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
                 throw new ArgumentException($"OutOfScopeIcons[{i}] 为 null。");
             if (!inputRefs.Contains(oosList[i]))
                 throw new ArgumentException($"OutOfScopeIcons[{i}] 不在 InputIcons 中。");
-            if (!oosRefs.Add(oosList[i]))
+            if (!oosRefs.Add(inputList[i]))
                 throw new ArgumentException("OutOfScopeIcons 重复。");
         }
         foreach (var t in targetRefs)
@@ -301,7 +285,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         if (targetRefs.Count + oosRefs.Count != inputRefs.Count)
             throw new ArgumentException("Target+OOS 未完整覆盖 InputIcons。");
 
-        // Items 与 TargetDisplayIcons 一一对应
         if (itemsList.Count != targetList.Count)
             throw new ArgumentException($"Items 数量 ({itemsList.Count}) ≠ TargetDisplayIcons ({targetList.Count})。");
         var itemIconRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
@@ -315,7 +298,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
                 throw new ArgumentException($"Items 中 Icon 重复。");
         }
 
-        // 分类计数与 PlacementPlan 一致
         int excluded = 0, pinned = 0, ovrAssigned = 0, ovrUnassigned = 0,
             defAssigned = 0, defUnassigned = 0;
         foreach (var item in itemsList)
@@ -349,8 +331,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         if (defUnassigned != placementPlan.DefaultUnassignedCount)
             throw new ArgumentException("DefaultUnassignedCount 不一致。");
 
-        // ═══ 每个 PreviewItem 精确对应 PlacementPlan 原始来源 ═══
-        // 构建 PlacementPlan 引用索引
         var ppExcludedByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopLayoutRuleAwareFixedItem>(
             ReferenceEqualityComparer.Instance);
         foreach (var fi in placementPlan.ExcludedItems)
@@ -430,7 +410,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             }
         }
 
-        // 统计
         int atTarget = 0, moveReq = 0;
         foreach (var item in itemsList)
         {
@@ -440,7 +419,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
                 moveReq++;
         }
 
-        // CellBounds 验证
         for (var i = 0; i < itemsList.Count; i++)
         {
             var item = itemsList[i];
@@ -485,10 +463,6 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
     }
 }
 
-/// <summary>
-/// 规则感知预览规划器 — 纯 Core，无副作用。
-/// 串联规则解析 → 规则感知 Placement → 投影预览项。
-/// </summary>
 public static class DesktopLayoutRuleAwarePreviewPlanner
 {
     public static DesktopLayoutRuleAwarePreviewPlan Plan(
@@ -511,7 +485,6 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
             throw new ArgumentException(
                 $"RuleSet.TemplateId ({ruleSet.TemplateId}) 与 Template.TemplateId ({template.TemplateId}) 不一致。");
 
-        // 图标验证 + 按 Ordinal ASC
         var iconList = new List<DesktopIconSnapshotItem>(icons.Count);
         var seenOrdinals = new HashSet<int>();
         var seenStableIds = new HashSet<string>(StringComparer.Ordinal);
@@ -527,11 +500,9 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
         }
         iconList.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
 
-        // 解析目标显示器
         var targetDisplay = DesktopLayoutTargetDisplayResolver.Resolve(
             template.TargetDisplayBinding, displays, selectedTargetDeviceName);
 
-        // 分离目标显示器和 OutOfScope 图标
         var targetIcons = new List<DesktopIconSnapshotItem>();
         var oosIcons = new List<DesktopIconSnapshotItem>();
         foreach (var icon in iconList)
@@ -542,19 +513,19 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
                 oosIcons.Add(icon);
         }
 
-        // 模板解析
         var resolvedTemplate = DesktopLayoutTemplateResolver.Resolve(
             template, targetDisplay.WorkArea, iconSpacing);
 
-        // 规则解析
         var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
             template, targetDisplay, icons, ruleSet);
 
-        // 规则感知 Placement
         var placementPlan = DesktopLayoutRuleAwarePlacementPlanner.Plan(
             resolvedTemplate, resolutionPlan, iconSpacing);
 
-        // 投影 PreviewItems
+        // PlacementPlanner 可能依据 fresh 目标屏图标推断 Explorer 全局网格相位并重新 Resolve。
+        // Preview 必须继续使用同一对象，保持既有引用链不变量。
+        resolvedTemplate = placementPlan.ResolvedTemplate;
+
         var items = new List<DesktopLayoutRuleAwarePreviewItem>();
 
         foreach (var fi in placementPlan.ExcludedItems)
@@ -625,7 +596,6 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
                 null));
         }
 
-        // 按 original TargetDisplayIcons 顺序排列
         var itemByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopLayoutRuleAwarePreviewItem>(
             ReferenceEqualityComparer.Instance);
         foreach (var item in items)
