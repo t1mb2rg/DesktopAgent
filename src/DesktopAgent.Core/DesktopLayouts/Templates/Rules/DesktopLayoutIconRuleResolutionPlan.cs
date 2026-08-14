@@ -13,6 +13,12 @@ public sealed class DesktopLayoutIconRuleResolutionPlan
     public DisplayDescriptor TargetDisplay { get; }
     public DesktopLayoutIconRuleSet RuleSet { get; }
 
+    /// <summary>
+    /// 产品层显式提交的跨屏迁入授权 StableId。它是用户意图，不等于“当前仍在别屏”。
+    /// 某个图标迁移成功后可以继续保留在此集合中，此时它会作为普通 TargetDisplayIcon 管理。
+    /// </summary>
+    public IReadOnlyList<string> ExplicitInboundStableIds { get; }
+
     // ═══ 图标分区 ═══
 
     /// <summary>全部输入图标（按 Ordinal ASC）。</summary>
@@ -23,7 +29,6 @@ public sealed class DesktopLayoutIconRuleResolutionPlan
 
     /// <summary>
     /// 当前物理不在目标显示器，但由产品层显式授权迁入、且存在 ZoneOverride 的图标。
-    /// AI 初始规则不会自动进入这里；调用方必须单独提交 explicit-inbound StableId 白名单。
     /// </summary>
     public IReadOnlyList<DesktopIconSnapshotItem> InboundMigrationIcons { get; }
 
@@ -35,27 +40,22 @@ public sealed class DesktopLayoutIconRuleResolutionPlan
 
     // ═══ 规则匹配 ═══
 
-    /// <summary>Pin 规则匹配（按 Icon.Ordinal ASC）。</summary>
     public IReadOnlyList<DesktopLayoutResolvedIconRule> PinnedMatches { get; }
-
-    /// <summary>Exclude 规则匹配（按 Icon.Ordinal ASC）。</summary>
     public IReadOnlyList<DesktopLayoutResolvedIconRule> ExcludedMatches { get; }
 
     /// <summary>
-    /// ZoneOverride 规则匹配（按 Icon.Ordinal ASC）。
-    /// 包含目标屏内 Override，以及显式授权的跨屏迁入 Override；后者 IsOnTargetDisplay=false。
+    /// ZoneOverride 规则匹配。包含目标屏内 Override，以及显式授权且仍在屏外的迁入 Override；
+    /// 后者 IsOnTargetDisplay=false。
     /// </summary>
     public IReadOnlyList<DesktopLayoutResolvedIconRule> ZoneOverrideMatches { get; }
 
-    /// <summary>真正 OutOfScope 图标的规则匹配（按 Icon.Ordinal ASC）。</summary>
     public IReadOnlyList<DesktopLayoutResolvedIconRule> OutOfScopeRuleMatches { get; }
-
-    /// <summary>未匹配到任何图标的规则（按 StableId Ordinal ASC）。</summary>
     public IReadOnlyList<DesktopLayoutIconRule> UnmatchedRules { get; }
 
     // ═══ 统计 ═══
 
     public int InputIconCount => InputIcons.Count;
+    public int ExplicitInboundAuthorizationCount => ExplicitInboundStableIds.Count;
     public int TargetDisplayIconCount => TargetDisplayIcons.Count;
     public int InboundMigrationIconCount => InboundMigrationIcons.Count;
     public int ManagedTargetIconCount => TargetDisplayIconCount + InboundMigrationIconCount;
@@ -71,12 +71,14 @@ public sealed class DesktopLayoutIconRuleResolutionPlan
     public bool HasRules => RuleSet.HasRules;
     public bool HasEffectiveRules => EffectiveRuleCount > 0;
     public bool HasUnmatchedRules => UnmatchedRuleCount > 0;
+    public bool HasExplicitInboundAuthorization => ExplicitInboundAuthorizationCount > 0;
     public bool HasInboundMigrations => InboundMigrationIconCount > 0;
 
     internal DesktopLayoutIconRuleResolutionPlan(
         DesktopLayoutTemplate template,
         DisplayDescriptor targetDisplay,
         DesktopLayoutIconRuleSet ruleSet,
+        IReadOnlyList<string> explicitInboundStableIds,
         IReadOnlyList<DesktopIconSnapshotItem> inputIcons,
         IReadOnlyList<DesktopIconSnapshotItem> targetDisplayIcons,
         IReadOnlyList<DesktopIconSnapshotItem> inboundMigrationIcons,
@@ -92,7 +94,7 @@ public sealed class DesktopLayoutIconRuleResolutionPlan
         TargetDisplay = targetDisplay ?? throw new ArgumentNullException(nameof(targetDisplay));
         RuleSet = ruleSet ?? throw new ArgumentNullException(nameof(ruleSet));
 
-        // 防御性复制
+        ExplicitInboundStableIds = explicitInboundStableIds.ToList().AsReadOnly();
         InputIcons = inputIcons.ToList().AsReadOnly();
         TargetDisplayIcons = targetDisplayIcons.ToList().AsReadOnly();
         InboundMigrationIcons = inboundMigrationIcons.ToList().AsReadOnly();
