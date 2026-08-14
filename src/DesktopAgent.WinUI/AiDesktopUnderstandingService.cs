@@ -22,6 +22,7 @@ internal sealed record AiDesktopUnderstandingProductResult(
     AiDesktopUnderstandingProductStatus Status,
     DesktopUnderstandingDraft? Draft,
     int ObservedItemCount,
+    int AnalyzedItemCount,
     string? ActiveLayoutName,
     IntelligenceProviderStatus? ProviderStatus,
     int? HttpStatusCode,
@@ -48,6 +49,7 @@ internal sealed record AiProviderProbeProductResult(
 internal sealed class AiDesktopUnderstandingService
 {
     internal static readonly TimeSpan ProductUnderstandingTimeout = TimeSpan.FromSeconds(90);
+    internal const int ProductUnderstandingSampleLimit = 32;
 
     /// <summary>
     /// 轻量 Provider 探针。只复用现有 M4 分类 Provider 验证 BaseUri / Model / Secret /
@@ -113,6 +115,7 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.AiDisabled,
                 Draft: null,
                 ObservedItemCount: 0,
+                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
@@ -141,6 +144,7 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.DesktopUnavailable,
                 Draft: null,
                 ObservedItemCount: 0,
+                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
@@ -154,6 +158,7 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.DesktopUnavailable,
                 Draft: null,
                 ObservedItemCount: 0,
+                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
@@ -166,13 +171,15 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.DesktopUnavailable,
                 Draft: null,
                 ObservedItemCount: icons.Count,
+                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
                 Message: $"当前桌面有 {icons.Count} 个项目，超过单轮 AI 理解上限 {DesktopFirstRunUnderstandingRequest.MaxItems}。请先减少桌面项目后重试。");
         }
 
-        var facts = icons.Select(ToFacts).ToArray();
+        var observedFacts = icons.Select(ToFacts).ToArray();
+        var facts = BuildRepresentativeSample(observedFacts);
         var (activeLayoutName, existingZones) = await LoadExistingZonesAsync(
             settings.ActiveLayoutTemplateId,
             cancellationToken);
@@ -198,7 +205,8 @@ internal sealed class AiDesktopUnderstandingService
             return new AiDesktopUnderstandingProductResult(
                 AiDesktopUnderstandingProductStatus.ProviderFailure,
                 Draft: null,
-                ObservedItemCount: facts.Length,
+                ObservedItemCount: observedFacts.Length,
+                AnalyzedItemCount: facts.Length,
                 ActiveLayoutName: activeLayoutName,
                 ProviderStatus: providerResult.Status,
                 HttpStatusCode: providerResult.HttpStatusCode,
@@ -208,11 +216,57 @@ internal sealed class AiDesktopUnderstandingService
         return new AiDesktopUnderstandingProductResult(
             AiDesktopUnderstandingProductStatus.Success,
             providerResult.Draft,
+            observedFacts.Length,
             facts.Length,
             activeLayoutName,
             IntelligenceProviderStatus.Success,
             HttpStatusCode: null,
             Message: null);
+    }
+
+    private static DesktopItemFacts[] BuildRepresentativeSample(
+        IReadOnlyList<DesktopItemFacts> items)
+    {
+        if (items.Count <= ProductUnderstandingSampleLimit)
+            return items.ToArray();
+
+        // 仅在本地按“项目类型 + 扩展名 + 系统项目标志”分桶，再轮询取样。
+        // 这样既能覆盖不同文件类型，也不会把某一种大量项目完全挤掉。
+        var queues = items
+            .GroupBy(static item => (
+                item.ItemKind,
+                Extension: (item.FileExtension ?? string.Empty).ToUpperInvariant(),
+                item.IsSystemItem))
+            .OrderByDescending(static group => group.Key.IsSystemItem)
+            .ThenByDescending(static group => group.Count())
+            .ThenBy(static group => group.Key.ItemKind)
+            .ThenBy(static group => group.Key.Extension, StringComparer.Ordinal)
+            .Select(static group => new Queue<DesktopItemFacts>(
+                group
+                    .OrderBy(static item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(static item => item.StableId, StringComparer.Ordinal)))
+            .ToList();
+
+        var selected = new List<DesktopItemFacts>(ProductUnderstandingSampleLimit);
+        while (selected.Count < ProductUnderstandingSampleLimit)
+        {
+            var tookAny = false;
+            foreach (var queue in queues)
+            {
+                if (queue.Count == 0)
+                    continue;
+
+                selected.Add(queue.Dequeue());
+                tookAny = true;
+                if (selected.Count == ProductUnderstandingSampleLimit)
+                    break;
+            }
+
+            if (!tookAny)
+                break;
+        }
+
+        return selected.ToArray();
     }
 
     private static DesktopItemFacts ToFacts(DesktopIconDescriptor icon)
