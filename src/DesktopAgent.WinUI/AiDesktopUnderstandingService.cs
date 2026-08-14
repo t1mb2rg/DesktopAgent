@@ -22,7 +22,6 @@ internal sealed record AiDesktopUnderstandingProductResult(
     AiDesktopUnderstandingProductStatus Status,
     DesktopUnderstandingDraft? Draft,
     int ObservedItemCount,
-    int AnalyzedItemCount,
     string? ActiveLayoutName,
     IntelligenceProviderStatus? ProviderStatus,
     int? HttpStatusCode,
@@ -48,8 +47,9 @@ internal sealed record AiProviderProbeProductResult(
 /// </summary>
 internal sealed class AiDesktopUnderstandingService
 {
-    internal static readonly TimeSpan ProductUnderstandingTimeout = TimeSpan.FromSeconds(90);
-    internal const int ProductUnderstandingSampleLimit = 32;
+    // 首次/完整桌面理解优先保证信息完整性。M4 Provider 默认 30 秒保持冻结；
+    // 产品层仅为这一条天然重请求使用既有 v1.0 契约允许的最大 5 分钟有界预算。
+    internal static readonly TimeSpan ProductUnderstandingTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// 轻量 Provider 探针。只复用现有 M4 分类 Provider 验证 BaseUri / Model / Secret /
@@ -115,15 +115,12 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.AiDisabled,
                 Draft: null,
                 ObservedItemCount: 0,
-                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
                 Message: "AI 当前已关闭，请先在设置中配置并启用 Provider。");
         }
 
-        // M4 Provider 默认 30 秒保持冻结；整桌理解属于天然重请求，
-        // 仅在产品组合层为这一条链路提供更宽的有界预算。
         var options = new OpenAiCompatibleProviderOptions(
             configuredOptions.BaseUri,
             configuredOptions.Model,
@@ -144,7 +141,6 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.DesktopUnavailable,
                 Draft: null,
                 ObservedItemCount: 0,
-                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
@@ -158,7 +154,6 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.DesktopUnavailable,
                 Draft: null,
                 ObservedItemCount: 0,
-                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
@@ -171,15 +166,14 @@ internal sealed class AiDesktopUnderstandingService
                 AiDesktopUnderstandingProductStatus.DesktopUnavailable,
                 Draft: null,
                 ObservedItemCount: icons.Count,
-                AnalyzedItemCount: 0,
                 ActiveLayoutName: null,
                 ProviderStatus: null,
                 HttpStatusCode: null,
                 Message: $"当前桌面有 {icons.Count} 个项目，超过单轮 AI 理解上限 {DesktopFirstRunUnderstandingRequest.MaxItems}。请先减少桌面项目后重试。");
         }
 
-        var observedFacts = icons.Select(ToFacts).ToArray();
-        var facts = BuildRepresentativeSample(observedFacts);
+        // 首次完整理解不抽样：fresh 观察到的全部项目都进入既有 M4-02 语义合同。
+        var facts = icons.Select(ToFacts).ToArray();
         var (activeLayoutName, existingZones) = await LoadExistingZonesAsync(
             settings.ActiveLayoutTemplateId,
             cancellationToken);
@@ -205,8 +199,7 @@ internal sealed class AiDesktopUnderstandingService
             return new AiDesktopUnderstandingProductResult(
                 AiDesktopUnderstandingProductStatus.ProviderFailure,
                 Draft: null,
-                ObservedItemCount: observedFacts.Length,
-                AnalyzedItemCount: facts.Length,
+                ObservedItemCount: facts.Length,
                 ActiveLayoutName: activeLayoutName,
                 ProviderStatus: providerResult.Status,
                 HttpStatusCode: providerResult.HttpStatusCode,
@@ -216,57 +209,11 @@ internal sealed class AiDesktopUnderstandingService
         return new AiDesktopUnderstandingProductResult(
             AiDesktopUnderstandingProductStatus.Success,
             providerResult.Draft,
-            observedFacts.Length,
             facts.Length,
             activeLayoutName,
             IntelligenceProviderStatus.Success,
             HttpStatusCode: null,
             Message: null);
-    }
-
-    private static DesktopItemFacts[] BuildRepresentativeSample(
-        IReadOnlyList<DesktopItemFacts> items)
-    {
-        if (items.Count <= ProductUnderstandingSampleLimit)
-            return items.ToArray();
-
-        // 仅在本地按“项目类型 + 扩展名 + 系统项目标志”分桶，再轮询取样。
-        // 这样既能覆盖不同文件类型，也不会把某一种大量项目完全挤掉。
-        var queues = items
-            .GroupBy(static item => (
-                item.ItemKind,
-                Extension: (item.FileExtension ?? string.Empty).ToUpperInvariant(),
-                item.IsSystemItem))
-            .OrderByDescending(static group => group.Key.IsSystemItem)
-            .ThenByDescending(static group => group.Count())
-            .ThenBy(static group => group.Key.ItemKind)
-            .ThenBy(static group => group.Key.Extension, StringComparer.Ordinal)
-            .Select(static group => new Queue<DesktopItemFacts>(
-                group
-                    .OrderBy(static item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(static item => item.StableId, StringComparer.Ordinal)))
-            .ToList();
-
-        var selected = new List<DesktopItemFacts>(ProductUnderstandingSampleLimit);
-        while (selected.Count < ProductUnderstandingSampleLimit)
-        {
-            var tookAny = false;
-            foreach (var queue in queues)
-            {
-                if (queue.Count == 0)
-                    continue;
-
-                selected.Add(queue.Dequeue());
-                tookAny = true;
-                if (selected.Count == ProductUnderstandingSampleLimit)
-                    break;
-            }
-
-            if (!tookAny)
-                break;
-        }
-
-        return selected.ToArray();
     }
 
     private static DesktopItemFacts ToFacts(DesktopIconDescriptor icon)
