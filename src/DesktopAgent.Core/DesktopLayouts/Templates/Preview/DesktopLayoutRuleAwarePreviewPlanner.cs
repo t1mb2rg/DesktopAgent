@@ -158,10 +158,14 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
     public PixelPoint IconSpacing { get; }
     public IReadOnlyList<DesktopIconSnapshotItem> InputIcons { get; }
     public IReadOnlyList<DesktopIconSnapshotItem> TargetDisplayIcons { get; }
+    public IReadOnlyList<DesktopIconSnapshotItem> InboundMigrationIcons { get; }
+    public IReadOnlyList<DesktopIconSnapshotItem> ManagedTargetIcons { get; }
     public IReadOnlyList<DesktopIconSnapshotItem> OutOfScopeIcons { get; }
     public IReadOnlyList<DesktopLayoutRuleAwarePreviewItem> Items { get; }
     public int InputIconCount { get; }
     public int TargetDisplayIconCount { get; }
+    public int InboundMigrationIconCount { get; }
+    public int ManagedTargetIconCount { get; }
     public int OutOfScopeIconCount { get; }
     public int ExcludedCount { get; }
     public int PinnedCount { get; }
@@ -171,8 +175,10 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
     public int DefaultUnassignedCount { get; }
     public int AlreadyAtTargetCount { get; }
     public int MoveRequiredCount { get; }
+    public int InboundMoveRequiredCount { get; }
     public bool IsComplete { get; }
     public bool HasChanges { get; }
+    public bool HasCrossDisplayChanges => InboundMoveRequiredCount > 0;
 
     internal DesktopLayoutRuleAwarePreviewPlan(
         DesktopLayoutTemplate template,
@@ -183,6 +189,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         PixelPoint iconSpacing,
         IReadOnlyList<DesktopIconSnapshotItem> inputIcons,
         IReadOnlyList<DesktopIconSnapshotItem> targetDisplayIcons,
+        IReadOnlyList<DesktopIconSnapshotItem> inboundMigrationIcons,
         IReadOnlyList<DesktopIconSnapshotItem> outOfScopeIcons,
         IReadOnlyList<DesktopLayoutRuleAwarePreviewItem> items)
     {
@@ -195,6 +202,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             throw new ArgumentException("IconSpacing X/Y 必须 > 0。");
         if (inputIcons is null) throw new ArgumentNullException(nameof(inputIcons));
         if (targetDisplayIcons is null) throw new ArgumentNullException(nameof(targetDisplayIcons));
+        if (inboundMigrationIcons is null) throw new ArgumentNullException(nameof(inboundMigrationIcons));
         if (outOfScopeIcons is null) throw new ArgumentNullException(nameof(outOfScopeIcons));
         if (items is null) throw new ArgumentNullException(nameof(items));
 
@@ -222,6 +230,12 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             if (!ReferenceEquals(targetDisplayIcons[i], resolutionPlan.TargetDisplayIcons[i]))
                 throw new ArgumentException($"TargetDisplayIcons[{i}] 与 ResolutionPlan 不是同一实例。");
 
+        if (inboundMigrationIcons.Count != resolutionPlan.InboundMigrationIcons.Count)
+            throw new ArgumentException("InboundMigrationIcons 数量与 ResolutionPlan 不一致。");
+        for (var i = 0; i < inboundMigrationIcons.Count; i++)
+            if (!ReferenceEquals(inboundMigrationIcons[i], resolutionPlan.InboundMigrationIcons[i]))
+                throw new ArgumentException($"InboundMigrationIcons[{i}] 与 ResolutionPlan 不是同一实例。");
+
         if (outOfScopeIcons.Count != resolutionPlan.OutOfScopeIcons.Count)
             throw new ArgumentException("OutOfScopeIcons 数量与 ResolutionPlan 不一致。");
         for (var i = 0; i < outOfScopeIcons.Count; i++)
@@ -230,6 +244,11 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
 
         var inputList = inputIcons.ToList();
         var targetList = targetDisplayIcons.ToList();
+        var inboundList = inboundMigrationIcons.ToList();
+        var managedList = targetList
+            .Concat(inboundList)
+            .OrderBy(static icon => icon.Ordinal)
+            .ToList();
         var oosList = outOfScopeIcons.ToList();
         var itemsList = items.ToList();
 
@@ -253,6 +272,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         }
 
         var targetRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
+        var inboundRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
         var oosRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < targetList.Count; i++)
         {
@@ -263,6 +283,17 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             if (!targetRefs.Add(targetList[i]))
                 throw new ArgumentException("TargetDisplayIcons 重复。");
         }
+        for (var i = 0; i < inboundList.Count; i++)
+        {
+            if (inboundList[i] is null)
+                throw new ArgumentException($"InboundMigrationIcons[{i}] 为 null。");
+            if (!inputRefs.Contains(inboundList[i]))
+                throw new ArgumentException($"InboundMigrationIcons[{i}] 不在 InputIcons 中。");
+            if (!inboundRefs.Add(inboundList[i]))
+                throw new ArgumentException("InboundMigrationIcons 重复。");
+            if (targetRefs.Contains(inboundList[i]))
+                throw new ArgumentException("InboundMigrationIcons 不得与 TargetDisplayIcons 重叠。");
+        }
         for (var i = 0; i < oosList.Count; i++)
         {
             if (oosList[i] is null)
@@ -271,22 +302,22 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
                 throw new ArgumentException($"OutOfScopeIcons[{i}] 不在 InputIcons 中。");
             if (!oosRefs.Add(oosList[i]))
                 throw new ArgumentException("OutOfScopeIcons 重复。");
+            if (targetRefs.Contains(oosList[i]) || inboundRefs.Contains(oosList[i]))
+                throw new ArgumentException("OutOfScopeIcons 不得与目标管理范围重叠。");
         }
-        foreach (var t in targetRefs)
-            if (oosRefs.Contains(t))
-                throw new ArgumentException("Target 与 OOS 重叠。");
-        if (targetRefs.Count + oosRefs.Count != inputRefs.Count)
-            throw new ArgumentException("Target+OOS 未完整覆盖 InputIcons。");
+        if (targetRefs.Count + inboundRefs.Count + oosRefs.Count != inputRefs.Count)
+            throw new ArgumentException("Target + Inbound + OOS 未完整覆盖 InputIcons。");
 
-        if (itemsList.Count != targetList.Count)
-            throw new ArgumentException($"Items 数量 ({itemsList.Count}) ≠ TargetDisplayIcons ({targetList.Count})。");
+        if (itemsList.Count != managedList.Count)
+            throw new ArgumentException(
+                $"Items 数量 ({itemsList.Count}) ≠ ManagedTargetIcons ({managedList.Count})。");
         var itemIconRefs = new HashSet<DesktopIconSnapshotItem>(ReferenceEqualityComparer.Instance);
         for (var i = 0; i < itemsList.Count; i++)
         {
             if (itemsList[i] is null)
                 throw new ArgumentException($"Items[{i}] 为 null。");
-            if (!ReferenceEquals(itemsList[i].Icon, targetList[i]))
-                throw new ArgumentException($"Items[{i}].Icon 与 TargetDisplayIcons[{i}] 不是同一实例。");
+            if (!ReferenceEquals(itemsList[i].Icon, managedList[i]))
+                throw new ArgumentException($"Items[{i}].Icon 与 ManagedTargetIcons[{i}] 不是同一实例。");
             if (!itemIconRefs.Add(itemsList[i].Icon))
                 throw new ArgumentException("Items 中 Icon 重复。");
         }
@@ -414,6 +445,10 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
             }
         }
 
+        var inboundSids = inboundList
+            .Select(static icon => icon.StableId)
+            .ToHashSet(StringComparer.Ordinal);
+
         Template = template;
         TargetDisplay = targetDisplay;
         ResolvedTemplate = resolvedTemplate;
@@ -422,10 +457,14 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         IconSpacing = iconSpacing;
         InputIcons = inputList.AsReadOnly();
         TargetDisplayIcons = targetList.AsReadOnly();
+        InboundMigrationIcons = inboundList.AsReadOnly();
+        ManagedTargetIcons = managedList.AsReadOnly();
         OutOfScopeIcons = oosList.AsReadOnly();
         Items = itemsList.AsReadOnly();
         InputIconCount = inputList.Count;
         TargetDisplayIconCount = targetList.Count;
+        InboundMigrationIconCount = inboundList.Count;
+        ManagedTargetIconCount = managedList.Count;
         OutOfScopeIconCount = oosList.Count;
         ExcludedCount = excluded;
         PinnedCount = pinned;
@@ -435,6 +474,8 @@ public sealed class DesktopLayoutRuleAwarePreviewPlan
         DefaultUnassignedCount = defUnassigned;
         AlreadyAtTargetCount = atTarget;
         MoveRequiredCount = moveReq;
+        InboundMoveRequiredCount = itemsList.Count(item =>
+            item.RequiresMove && inboundSids.Contains(item.Icon.StableId));
         IsComplete = placementPlan.IsComplete;
         HasChanges = moveReq > 0;
     }
@@ -448,7 +489,8 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
         IReadOnlyList<DisplayDescriptor> displays,
         string? selectedTargetDeviceName,
         PixelPoint iconSpacing,
-        IReadOnlyList<DesktopIconSnapshotItem> icons)
+        IReadOnlyList<DesktopIconSnapshotItem> icons,
+        IReadOnlySet<string>? explicitInboundStableIds = null)
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
         if (ruleSet is null) throw new ArgumentNullException(nameof(ruleSet));
@@ -478,24 +520,19 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
         var targetDisplay = DesktopLayoutTargetDisplayResolver.Resolve(
             template.TargetDisplayBinding, displays, selectedTargetDeviceName);
 
-        var targetIcons = new List<DesktopIconSnapshotItem>();
-        var oosIcons = new List<DesktopIconSnapshotItem>();
-        foreach (var icon in iconList)
-        {
-            if (string.Equals(icon.MonitorDeviceName, targetDisplay.DeviceName, StringComparison.Ordinal))
-                targetIcons.Add(icon);
-            else
-                oosIcons.Add(icon);
-        }
-
         var resolvedTemplate = DesktopLayoutTemplateResolver.Resolve(
             template, targetDisplay.WorkArea, iconSpacing);
         var resolutionPlan = DesktopLayoutIconRuleResolver.Resolve(
-            template, targetDisplay, icons, ruleSet);
+            template,
+            targetDisplay,
+            iconList,
+            ruleSet,
+            explicitInboundStableIds);
         var placementPlan = DesktopLayoutRuleAwarePlacementPlanner.Plan(
             resolvedTemplate, resolutionPlan, iconSpacing);
 
         // PlacementPlanner 可能依据 fresh 目标屏图标推断 Explorer 全局网格相位并重新 Resolve。
+        // 显式迁入图标仍位于别的屏幕，不参与目标屏 grid phase 推断。
         resolvedTemplate = placementPlan.ResolvedTemplate;
 
         var items = new List<DesktopLayoutRuleAwarePreviewItem>();
@@ -511,7 +548,11 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
                 fi.CurrentPosition, null, null, null, null, fi.FixedRect, null));
         foreach (var ai in placementPlan.OverrideAssignedItems)
         {
-            var atTarget = ai.TargetPosition == ai.Icon.PixelPosition;
+            var atTarget = ai.TargetPosition == ai.Icon.PixelPosition
+                && string.Equals(
+                    ai.Icon.MonitorDeviceName,
+                    targetDisplay.DeviceName,
+                    StringComparison.Ordinal);
             items.Add(new DesktopLayoutRuleAwarePreviewItem(
                 ai.Icon, ai.Rule, DesktopLayoutRuleAwarePreviewItemDisposition.ZoneOverride,
                 atTarget ? DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget : DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired,
@@ -526,7 +567,11 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
                 DesktopIconLayoutGeometry.CreateRectChecked(ou.Icon.PixelPosition, iconSpacing), null));
         foreach (var ai in placementPlan.DefaultAssignedItems)
         {
-            var atTarget = ai.TargetPosition == ai.Icon.PixelPosition;
+            var atTarget = ai.TargetPosition == ai.Icon.PixelPosition
+                && string.Equals(
+                    ai.Icon.MonitorDeviceName,
+                    targetDisplay.DeviceName,
+                    StringComparison.Ordinal);
             items.Add(new DesktopLayoutRuleAwarePreviewItem(
                 ai.Icon, null, DesktopLayoutRuleAwarePreviewItemDisposition.Default,
                 atTarget ? DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget : DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired,
@@ -543,18 +588,31 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
         var itemByIcon = new Dictionary<DesktopIconSnapshotItem, DesktopLayoutRuleAwarePreviewItem>(ReferenceEqualityComparer.Instance);
         foreach (var item in items) itemByIcon[item.Icon] = item;
 
-        var orderedItems = new List<DesktopLayoutRuleAwarePreviewItem>();
-        foreach (var tIcon in targetIcons)
+        var managedIcons = resolutionPlan.TargetDisplayIcons
+            .Concat(resolutionPlan.InboundMigrationIcons)
+            .OrderBy(static icon => icon.Ordinal)
+            .ToArray();
+        var orderedItems = new List<DesktopLayoutRuleAwarePreviewItem>(managedIcons.Length);
+        foreach (var managedIcon in managedIcons)
         {
-            if (itemByIcon.TryGetValue(tIcon, out var item))
+            if (itemByIcon.TryGetValue(managedIcon, out var item))
                 orderedItems.Add(item);
             else
                 throw new InvalidOperationException(
-                    $"图标 (Ordinal={tIcon.Ordinal}, StableId=\"{tIcon.StableId}\") 未映射到 PreviewItem。");
+                    $"图标 (Ordinal={managedIcon.Ordinal}, StableId=\"{managedIcon.StableId}\") 未映射到 PreviewItem。");
         }
 
         return new DesktopLayoutRuleAwarePreviewPlan(
-            template, targetDisplay, resolvedTemplate, resolutionPlan, placementPlan, iconSpacing,
-            iconList, targetIcons, oosIcons, orderedItems);
+            template,
+            targetDisplay,
+            resolvedTemplate,
+            resolutionPlan,
+            placementPlan,
+            iconSpacing,
+            iconList,
+            resolutionPlan.TargetDisplayIcons,
+            resolutionPlan.InboundMigrationIcons,
+            resolutionPlan.OutOfScopeIcons,
+            orderedItems);
     }
 }
