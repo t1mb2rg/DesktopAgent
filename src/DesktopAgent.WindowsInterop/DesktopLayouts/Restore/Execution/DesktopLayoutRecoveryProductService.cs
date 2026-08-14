@@ -11,6 +11,7 @@ public enum DesktopLayoutRecoveryProductOutcome
     Reconciled = 2,
     StillNeedsAttention = 3,
     Failed = 4,
+    AcceptedCurrentState = 5,
 }
 
 /// <summary>
@@ -26,7 +27,8 @@ public sealed record DesktopLayoutRecoveryProductResult
     public TargetDisplayLayoutExecutionRunResult? RecoveryResult { get; }
     public IReadOnlyList<string> Issues { get; }
 
-    public bool IsResolved => Outcome == DesktopLayoutRecoveryProductOutcome.Reconciled;
+    public bool IsResolved => Outcome is DesktopLayoutRecoveryProductOutcome.Reconciled
+        or DesktopLayoutRecoveryProductOutcome.AcceptedCurrentState;
 
     public DesktopLayoutRecoveryProductResult(
         DesktopLayoutRecoveryProductOutcome outcome,
@@ -51,12 +53,14 @@ public sealed record DesktopLayoutRecoveryProductResult
 /// </summary>
 public sealed class DesktopLayoutRecoveryProductService
 {
+    private readonly IRecoverySessionStore? _recoveryStore;
     private readonly PersistedRecoveryCoordinator _coordinator;
     private readonly SemaphoreSlim _recoveryLock = new(1, 1);
 
     public DesktopLayoutRecoveryProductService(IRecoverySessionStore recoveryStore)
     {
         ArgumentNullException.ThrowIfNull(recoveryStore);
+        _recoveryStore = recoveryStore;
 
         var topologyReader = new NativeDisplayTopologyReader();
         var iconReader = new DesktopShellIconReader();
@@ -162,6 +166,80 @@ public sealed class DesktopLayoutRecoveryProductService
                 record.SessionId,
                 recovery,
                 issues);
+        }
+        finally
+        {
+            _recoveryLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 用户显式接受当前真实桌面，并结束恰好一笔需要人工介入的恢复会话。
+    /// 本路径不读取/调用 Writer，不尝试恢复 Original 或 Desired，也不删除历史证据；
+    /// 仅以 CAS 更新 Lifecycle=AcceptedCurrentState，使该会话不再阻断新的用户执行。
+    /// </summary>
+    public async Task<DesktopLayoutRecoveryProductResult> AcceptCurrentStateSingleAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_recoveryStore is null)
+            throw new InvalidOperationException("当前 RecoveryProductService 未提供可更新的 Recovery Store。");
+
+        await _recoveryLock.WaitAsync(cancellationToken);
+        try
+        {
+            await _recoveryStore.InitializeAsync(cancellationToken);
+            var pending = await _recoveryStore.ListUnresolvedAsync(limit: 2, cancellationToken);
+
+            if (pending.Count == 0)
+            {
+                return new DesktopLayoutRecoveryProductResult(
+                    DesktopLayoutRecoveryProductOutcome.NoPendingRecovery,
+                    0,
+                    null,
+                    null);
+            }
+
+            if (pending.Count != 1)
+            {
+                return new DesktopLayoutRecoveryProductResult(
+                    DesktopLayoutRecoveryProductOutcome.MultiplePendingRecoveries,
+                    pending.Count,
+                    null,
+                    null,
+                    new[] { $"检测到至少 {pending.Count} 笔未解决恢复会话。v1 不允许批量放弃恢复。" });
+            }
+
+            var record = pending[0];
+            var disposition = record.GetDisposition();
+            if (!disposition.RequiresManualRecovery)
+            {
+                return new DesktopLayoutRecoveryProductResult(
+                    DesktopLayoutRecoveryProductOutcome.Failed,
+                    1,
+                    record.SessionId,
+                    null,
+                    new[] { "当前会话仍属于自动对账范围，不能直接接受当前状态。请先执行恢复协调。" });
+            }
+
+            var accepted = record.WithProjectedLifecycle(RecoverySessionLifecycle.AcceptedCurrentState);
+            var updated = await _recoveryStore.UpdateAsync(accepted, cancellationToken);
+            if (updated.GetDisposition().IsUnresolved)
+            {
+                return new DesktopLayoutRecoveryProductResult(
+                    DesktopLayoutRecoveryProductOutcome.Failed,
+                    1,
+                    record.SessionId,
+                    null,
+                    new[] { "接受当前桌面后会话仍被投影为 unresolved，已停止后续操作。" });
+            }
+
+            var remaining = await _recoveryStore.ListUnresolvedAsync(limit: 2, cancellationToken);
+            return new DesktopLayoutRecoveryProductResult(
+                DesktopLayoutRecoveryProductOutcome.AcceptedCurrentState,
+                remaining.Count,
+                updated.SessionId,
+                null,
+                new[] { "用户已显式接受当前真实桌面；未执行任何恢复 Writer，历史恢复证据继续保留。" });
         }
         finally
         {
