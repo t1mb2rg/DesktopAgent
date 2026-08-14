@@ -16,76 +16,38 @@
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="5">
                 <TextBlock Text="AI 助手" FontSize="30" FontWeight="SemiBold" />
-                <TextBlock Text="让 Tessel 理解当前桌面，再用你的修正逐轮校准。"
-                           Opacity="0.62" />
+                <TextBlock Text="让 Tessel 理解当前桌面，再用你的修正逐轮校准。" Opacity="0.62" />
             </StackPanel>
-            <ProgressRing x:Name="AiProgressRing"
-                          Grid.Column="1"
-                          Width="24"
-                          Height="24"
-                          IsActive="False"
-                          Visibility="Collapsed"
-                          VerticalAlignment="Center" />
+            <ProgressRing x:Name="AiProgressRing" Grid.Column="1" Width="24" Height="24" IsActive="False" Visibility="Collapsed" VerticalAlignment="Center" />
         </Grid>
 
-        <ScrollViewer Grid.Row="1"
-                      Margin="0,20,0,16"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer Grid.Row="1" Margin="0,20,0,16" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
-                <Border Padding="18"
-                        CornerRadius="12"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Border Padding="18" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                     <Grid ColumnSpacing="16">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="✦"
-                                   FontSize="34"
-                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                                   VerticalAlignment="Top" />
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="✦" FontSize="34" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Top" />
                         <StackPanel Grid.Column="1" Spacing="5">
-                            <TextBlock Text="理解当前桌面"
-                                       FontSize="20"
-                                       FontWeight="SemiBold" />
-                            <TextBlock Text="Tessel 会 fresh 读取桌面项目名称、类型等受控语义事实，并将本次观察到的全部项目交给你在设置中配置的 OpenAI-compatible Provider。完整理解在桌面项目较多时可能需要几分钟，你可以随时取消。"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.62" />
-                            <TextBlock Text="这一页只生成语义草案，不生成物理坐标，不调用 Writer，也不会移动任何桌面图标。"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.48" />
+                            <TextBlock Text="理解当前桌面" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock Text="Tessel 会 fresh 读取桌面项目名称、类型等受控语义事实，并将本次观察到的全部项目交给你在设置中配置的 OpenAI-compatible Provider。完整理解在桌面项目较多时可能需要几分钟，你可以随时取消。" TextWrapping="Wrap" Opacity="0.62" />
+                            <TextBlock Text="这一页只生成语义草案，不生成物理坐标，不调用 Writer，也不会移动任何桌面图标。显示器归属只在返回后由本地 fresh Observation 编排，不发送给 AI。" TextWrapping="Wrap" Opacity="0.48" />
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <InfoBar x:Name="AiStatusBar"
-                         IsOpen="False"
-                         IsClosable="False" />
+                <InfoBar x:Name="AiStatusBar" IsOpen="False" IsClosable="False" />
 
-                <Border x:Name="AiResultCard"
-                        Visibility="Collapsed"
-                        Padding="18"
-                        CornerRadius="12"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <Border x:Name="AiResultCard" Visibility="Collapsed" Padding="18" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                     <StackPanel Spacing="14">
                         <StackPanel Spacing="5">
-                            <TextBlock Text="Tessel 对当前桌面的理解"
-                                       FontSize="20"
-                                       FontWeight="SemiBold" />
-                            <TextBlock x:Name="AiResultMetaText"
-                                       Opacity="0.48"
-                                       TextWrapping="Wrap" />
-                            <TextBlock x:Name="AiDesktopSummaryText"
-                                       FontSize="16"
-                                       TextWrapping="Wrap" />
+                            <TextBlock Text="Tessel 对当前桌面的理解" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock x:Name="AiResultMetaText" Opacity="0.48" TextWrapping="Wrap" />
+                            <TextBlock x:Name="AiDesktopSummaryText" FontSize="16" TextWrapping="Wrap" />
                         </StackPanel>
 
                         <StackPanel Spacing="5">
                             <TextBlock Text="当前意图摘要" FontWeight="SemiBold" />
-                            <TextBlock x:Name="AiIntentSummaryText"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.68" />
+                            <TextBlock x:Name="AiIntentSummaryText" TextWrapping="Wrap" Opacity="0.68" />
                         </StackPanel>
 
                         <StackPanel Spacing="7">
@@ -104,19 +66,9 @@
                         </StackPanel>
 
                         <Grid Margin="0,4,0,0" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="导入只会创建一个未保存、未应用的布局草案；你仍可在布局工作台检查和编辑。"
-                                       VerticalAlignment="Center"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.52" />
-                            <Button x:Name="AiImportLayoutButton"
-                                    Grid.Column="1"
-                                    Content="导入到布局工作台"
-                                    IsEnabled="False"
-                                    Click="ImportLayoutDraft_Click" />
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="导入会按本次 fresh Observation 的显示器归属，在本地生成一组未保存、未应用的单屏布局草案；每块屏仍独立预览和安全应用。" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.52" />
+                            <Button x:Name="AiImportLayoutButton" Grid.Column="1" Content="导入到布局工作台" IsEnabled="False" Click="ImportMultiDisplayLayoutDraft_Click" />
                         </Grid>
                     </StackPanel>
                 </Border>
@@ -124,29 +76,11 @@
         </ScrollViewer>
 
         <Grid Grid.Row="2" ColumnSpacing="8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBox x:Name="AiGuidanceTextBox"
-                     MaxLength="4096"
-                     PlaceholderText="例如：项目文件尽量放右边，课程资料放左上"
-                     VerticalAlignment="Center" />
-            <Button x:Name="AiProbeButton"
-                    Grid.Column="1"
-                    Content="测试 AI 连接"
-                    Click="TestAiConnection_Click" />
-            <Button x:Name="AiAnalyzeButton"
-                    Grid.Column="2"
-                    Content="分析当前桌面"
-                    Click="AnalyzeDesktop_Click" />
-            <Button x:Name="AiCancelButton"
-                    Grid.Column="3"
-                    Content="取消"
-                    Visibility="Collapsed"
-                    Click="CancelAnalysis_Click" />
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <TextBox x:Name="AiGuidanceTextBox" MaxLength="4096" PlaceholderText="例如：项目文件尽量放右边，课程资料放左上" VerticalAlignment="Center" />
+            <Button x:Name="AiProbeButton" Grid.Column="1" Content="测试 AI 连接" Click="TestAiConnection_Click" />
+            <Button x:Name="AiAnalyzeButton" Grid.Column="2" Content="分析当前桌面" Click="AnalyzeDesktop_Click" />
+            <Button x:Name="AiCancelButton" Grid.Column="3" Content="取消" Visibility="Collapsed" Click="CancelAnalysis_Click" />
         </Grid>
     </Grid>
 </UserControl>
