@@ -14,6 +14,7 @@ public sealed partial class MainWindow
 
         _aiAssistantView = new AiAssistantView();
         _aiAssistantView.LayoutDraftImportRequested += AiAssistantView_LayoutDraftImportRequested;
+        _aiAssistantView.LayoutWorkspaceImportRequested += AiAssistantView_LayoutWorkspaceImportRequested;
         AiView.Children.Clear();
         Grid.SetRow(_aiAssistantView, 0);
         Grid.SetRowSpan(_aiAssistantView, 3);
@@ -22,6 +23,19 @@ public sealed partial class MainWindow
 
     private void AiAssistantView_LayoutDraftImportRequested(
         DesktopUnderstandingLayoutDraftCompiler.CompilationResult compilation)
+    {
+        NavigateToLayouts();
+        _layoutManagementView!.TryLoadAiImportedDraft(compilation);
+    }
+
+    private void AiAssistantView_LayoutWorkspaceImportRequested(
+        DesktopUnderstandingMultiDisplayWorkspaceCompiler.WorkspaceCompilationResult workspace)
+    {
+        NavigateToLayouts();
+        _layoutManagementView!.TryLoadAiImportedWorkspace(workspace);
+    }
+
+    private void NavigateToLayouts()
     {
         EnsureLayoutManagementView();
 
@@ -36,7 +50,6 @@ public sealed partial class MainWindow
             ShellNavigation.SelectedItem = layoutNavigationItem;
 
         ShowSection("layouts");
-        _layoutManagementView!.TryLoadAiImportedDraft(compilation);
     }
 
     private void CancelAiAssistantRequest()
@@ -49,6 +62,7 @@ public sealed partial class MainWindow
 
         _aiAssistantView.CancelActiveRequest();
         _aiAssistantView.LayoutDraftImportRequested -= AiAssistantView_LayoutDraftImportRequested;
+        _aiAssistantView.LayoutWorkspaceImportRequested -= AiAssistantView_LayoutWorkspaceImportRequested;
         AiView.Children.Remove(_aiAssistantView);
         _aiAssistantView = null;
     }
