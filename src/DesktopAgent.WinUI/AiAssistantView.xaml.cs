@@ -1,3 +1,4 @@
+using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.Intelligence;
 using Microsoft.UI.Xaml;
@@ -11,6 +12,10 @@ public sealed partial class AiAssistantView : UserControl
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _probeCts;
     private string? _currentIntentSummary;
+    private AiDesktopUnderstandingProductResult? _latestSuccessfulUnderstanding;
+
+    internal event Action<DesktopUnderstandingLayoutDraftCompiler.CompilationResult>?
+        LayoutDraftImportRequested;
 
     internal bool IsRequestActive => _analysisCts is not null || _probeCts is not null;
 
@@ -114,6 +119,7 @@ public sealed partial class AiAssistantView : UserControl
 
             if (result.Succeeded && result.Draft is not null)
             {
+                _latestSuccessfulUnderstanding = result;
                 RenderDraft(result);
                 _currentIntentSummary = result.Draft.IntentSummary;
                 AiGuidanceTextBox.Text = string.Empty;
@@ -147,6 +153,38 @@ public sealed partial class AiAssistantView : UserControl
         }
     }
 
+    private void ImportLayoutDraft_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsRequestActive)
+            return;
+
+        var understanding = _latestSuccessfulUnderstanding?.Draft;
+        if (understanding is null)
+        {
+            AiStatusBar.Severity = InfoBarSeverity.Warning;
+            AiStatusBar.Title = "还没有可导入的 AI 草案";
+            AiStatusBar.Message = "先完成一次桌面理解，再导入布局工作台。";
+            AiStatusBar.IsOpen = true;
+            return;
+        }
+
+        try
+        {
+            var compiled = DesktopUnderstandingLayoutDraftCompiler.Compile(understanding);
+            if (LayoutDraftImportRequested is null)
+                throw new InvalidOperationException("布局工作台当前没有挂载 AI 草案导入入口。");
+
+            LayoutDraftImportRequested.Invoke(compiled);
+        }
+        catch (Exception ex)
+        {
+            AiStatusBar.Severity = InfoBarSeverity.Error;
+            AiStatusBar.Title = "无法导入布局草案";
+            AiStatusBar.Message = ex.Message;
+            AiStatusBar.IsOpen = true;
+        }
+    }
+
     private void CancelAnalysis_Click(object sender, RoutedEventArgs e)
         => CancelActiveRequest();
 
@@ -157,6 +195,7 @@ public sealed partial class AiAssistantView : UserControl
     {
         AiProbeButton.IsEnabled = !busy;
         AiAnalyzeButton.IsEnabled = !busy;
+        AiImportLayoutButton.IsEnabled = !busy && _latestSuccessfulUnderstanding?.Draft is not null;
         AiGuidanceTextBox.IsEnabled = !busy;
         AiCancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         AiProgressRing.IsActive = busy;
