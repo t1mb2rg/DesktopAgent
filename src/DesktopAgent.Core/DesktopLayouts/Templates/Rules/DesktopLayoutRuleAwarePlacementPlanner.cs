@@ -35,6 +35,21 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
                 $"与 ResolvedTemplate.Template.TemplateId ({resolvedTemplate.Template.TemplateId}) 不一致。",
                 nameof(resolutionPlan));
 
+        // GetSpacing 只告诉我们网格步长，不告诉全局相位。若目标屏当前图标的位置余数
+        // 对 X/Y 都形成强多数，则用这次 fresh 事实重新解析 PlacementOrigin；
+        // 余数分散时不猜，保持调用方提供的 legacy Zone-local resolvedTemplate。
+        var gridInference = DesktopExplorerGridPhaseResolver.TryInfer(
+            resolutionPlan.TargetDisplayIcons,
+            iconSpacing);
+        if (gridInference is not null)
+        {
+            resolvedTemplate = DesktopLayoutTemplateResolver.Resolve(
+                resolvedTemplate.Template,
+                resolvedTemplate.WorkArea,
+                iconSpacing,
+                gridInference.Phase);
+        }
+
         var excludedItems = new List<DesktopLayoutRuleAwareFixedItem>();
         var pinnedItems = new List<DesktopLayoutRuleAwareFixedItem>();
         var fixedObstacleRects = new List<PixelRect>();
@@ -220,7 +235,6 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
                 continue;
             }
 
-            // PlacementOrigin 对齐后容量已经按剩余空间重算，这里继续做完整包含检查作为纵深防御。
             if (!DesktopIconLayoutGeometry.IsFullyContained(targetRect, zone.PixelBounds))
                 continue;
 
