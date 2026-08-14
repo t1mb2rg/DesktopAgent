@@ -31,8 +31,12 @@ public sealed partial class LayoutManagementView
     }
 
     private readonly List<AiWorkspaceDraftState> _aiWorkspaceDrafts = [];
+    private readonly List<DesktopCrossDisplayMigrationIntent> _aiWorkspaceMigrations = [];
     private bool _suppressAiWorkspaceSelectionChanged;
     private int _activeAiWorkspaceIndex = -1;
+
+    private bool IsAiMultiDisplayWorkspaceActive =>
+        _activeAiWorkspaceIndex >= 0 && _activeAiWorkspaceIndex < _aiWorkspaceDrafts.Count;
 
     internal bool TryLoadAiImportedWorkspace(
         DesktopUnderstandingMultiDisplayWorkspaceCompiler.WorkspaceCompilationResult workspace)
@@ -69,6 +73,7 @@ public sealed partial class LayoutManagementView
         _aiWorkspaceDrafts.Clear();
         _aiWorkspaceDrafts.AddRange(workspace.Displays.Select(static compilation =>
             new AiWorkspaceDraftState(compilation)));
+        _aiWorkspaceMigrations.Clear();
 
         _suppressAiWorkspaceSelectionChanged = true;
         try
@@ -98,7 +103,7 @@ public sealed partial class LayoutManagementView
         ShowInfo(
             "AI 多显示器草案已导入",
             $"{workspace.Displays.Count} 块显示器 · {workspace.MappedAssignmentCount}/{workspace.SourceAssignmentCount} 个 Assignment 已映射。" +
-            $" {displaySummary}。所有草稿仍未保存、未应用，切换显示器不会移动桌面图标。",
+            $" {displaySummary}。AI 默认保持当前屏幕归属；只有用户显式迁移的项目才允许跨屏。所有草稿仍未保存、未应用。",
             InfoBarSeverity.Success);
         return true;
     }
@@ -149,19 +154,18 @@ public sealed partial class LayoutManagementView
         LayoutTargetBindingCombo.IsEnabled = false;
         LayoutDeviceNameTextBox.IsReadOnly = true;
 
+        var inboundCount = GetExplicitInboundStableIds(state.DeviceName).Count;
         LayoutCanvasStatusText.Text =
             $"AI 多屏草案 · {ShortDeviceName(state.DeviceName)} · {_draft.Zones.Count} 个分区 · " +
-            $"{state.MappedAssignmentCount}/{state.SourceAssignmentCount} 个项目已映射 · 尚未预览";
+            $"{state.MappedAssignmentCount}/{state.SourceAssignmentCount} 个初始项目已映射" +
+            (inboundCount > 0 ? $" · {inboundCount} 个显式跨屏迁入" : string.Empty) +
+            " · 尚未预览";
     }
 
     private void PersistCurrentAiWorkspaceDraftFromEditor()
     {
-        if (_activeAiWorkspaceIndex < 0
-            || _activeAiWorkspaceIndex >= _aiWorkspaceDrafts.Count
-            || _draft is null)
-        {
+        if (!IsAiMultiDisplayWorkspaceActive || _draft is null)
             return;
-        }
 
         var edited = BuildDraftFromEditor();
         var expectedDevice = _aiWorkspaceDrafts[_activeAiWorkspaceIndex].DeviceName;
@@ -172,10 +176,67 @@ public sealed partial class LayoutManagementView
                 StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "AI 多屏工作区中的单屏草稿必须保持固定设备绑定。若要改到其他显示器，请切换工作区显示器，而不是修改 TargetDisplayBinding。");
+                "AI 多屏工作区中的单屏草稿必须保持固定设备绑定。若要改到其他显示器，请使用显式跨屏迁移，而不是修改 TargetDisplayBinding。");
         }
 
         _aiWorkspaceDrafts[_activeAiWorkspaceIndex].Draft = edited;
+    }
+
+    /// <summary>
+    /// 当前目标屏的显式迁入白名单。普通布局或没有迁移时为空。
+    /// </summary>
+    private IReadOnlyList<string> GetCurrentExplicitInboundStableIds()
+    {
+        if (!IsAiMultiDisplayWorkspaceActive)
+            return Array.Empty<string>();
+
+        return GetExplicitInboundStableIds(_aiWorkspaceDrafts[_activeAiWorkspaceIndex].DeviceName);
+    }
+
+    private IReadOnlyList<string> GetExplicitInboundStableIds(string targetDeviceName)
+        => _aiWorkspaceMigrations
+            .Where(item => string.Equals(item.TargetDeviceName, targetDeviceName, StringComparison.Ordinal))
+            .Select(static item => item.StableId)
+            .OrderBy(static stableId => stableId, StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>
+    /// 产品层显式跨屏迁移入口。这里只编辑 workspace Draft/RuleSet 与迁移意图，
+    /// 不执行 Preview、Candidate 或 Writer。
+    /// </summary>
+    private void ReassignAiWorkspaceItem(
+        string stableId,
+        string sourceDeviceName,
+        string targetDeviceName,
+        Guid targetZoneId)
+    {
+        PersistCurrentAiWorkspaceDraftFromEditor();
+
+        var edit = DesktopCrossDisplayWorkspaceEditor.Reassign(
+            _aiWorkspaceDrafts.Select(static state => state.Draft).ToArray(),
+            _aiWorkspaceMigrations,
+            stableId,
+            sourceDeviceName,
+            targetDeviceName,
+            targetZoneId);
+
+        var draftByDevice = edit.Drafts.ToDictionary(
+            static draft => draft.TargetDisplayBinding.DeviceName!,
+            StringComparer.Ordinal);
+        foreach (var state in _aiWorkspaceDrafts)
+        {
+            if (!draftByDevice.TryGetValue(state.DeviceName, out var draft))
+                throw new InvalidOperationException($"跨屏编辑结果缺少显示器 {state.DeviceName} 的 Draft。");
+            state.Draft = draft;
+        }
+
+        _aiWorkspaceMigrations.Clear();
+        _aiWorkspaceMigrations.AddRange(edit.Migrations);
+
+        // 任意迁移意图变化都会使现有 Preview / Apply 授权失效。
+        InvalidateDirectApplyEvidence("跨屏迁移已修改 · 请重新预览");
+        if (IsAiMultiDisplayWorkspaceActive)
+            LoadAiWorkspaceDraft(_activeAiWorkspaceIndex);
     }
 
     private void RestoreAiWorkspaceSelection()
@@ -194,6 +255,7 @@ public sealed partial class LayoutManagementView
     internal void ClearAiMultiDisplayWorkspace()
     {
         _aiWorkspaceDrafts.Clear();
+        _aiWorkspaceMigrations.Clear();
         _activeAiWorkspaceIndex = -1;
         _suppressAiWorkspaceSelectionChanged = true;
         try
