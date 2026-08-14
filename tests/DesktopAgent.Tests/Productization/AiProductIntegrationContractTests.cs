@@ -76,6 +76,24 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
+    public void ProductAiService_SamplesLargeDesktopBeforeCallingFrozenM4UnderstandingProvider()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiDesktopUnderstandingService.cs"));
+
+        Assert.Contains("ProductUnderstandingSampleLimit = 32", service, StringComparison.Ordinal);
+        Assert.Contains("var observedFacts = icons.Select(ToFacts).ToArray();", service, StringComparison.Ordinal);
+        Assert.Contains("var facts = BuildRepresentativeSample(observedFacts);", service, StringComparison.Ordinal);
+        Assert.Contains("GroupBy", service, StringComparison.Ordinal);
+        Assert.Contains("new Queue<DesktopItemFacts>", service, StringComparison.Ordinal);
+        Assert.Contains("AnalyzedItemCount", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ProductAiProbe_UsesExistingM4ClassificationProviderWithoutDesktopObservation()
     {
         var root = FindRepositoryRoot();
@@ -124,7 +142,7 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
-    public void AiSurface_ExposesProviderProbeAndStatesSemanticDraftSafetyBoundary()
+    public void AiSurface_ExposesProviderProbeSamplingAndSemanticDraftSafetyBoundary()
     {
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(
@@ -135,6 +153,7 @@ public sealed class AiProductIntegrationContractTests
 
         Assert.Contains("测试 AI 连接", xaml, StringComparison.Ordinal);
         Assert.Contains("TestAiConnection_Click", xaml, StringComparison.Ordinal);
+        Assert.Contains("代表性样本", xaml, StringComparison.Ordinal);
         Assert.Contains("只生成语义草案", xaml, StringComparison.Ordinal);
         Assert.Contains("不调用 Writer", xaml, StringComparison.Ordinal);
         Assert.Contains("不会移动任何桌面图标", xaml, StringComparison.Ordinal);
