@@ -86,7 +86,17 @@ public sealed class AiProductIntegrationContractTests
             "AiDesktopUnderstandingService.cs"));
 
         Assert.Contains("var facts = icons.Select(ToFacts).ToArray();", service, StringComparison.Ordinal);
-        Assert.Contains("new DesktopFirstRunUnderstandingRequest(\n            facts,", service, StringComparison.Ordinal);
+
+        var requestStart = service.IndexOf(
+            "var request = new DesktopFirstRunUnderstandingRequest(",
+            StringComparison.Ordinal);
+        Assert.True(requestStart >= 0);
+
+        var requestEnd = service.IndexOf(");", requestStart, StringComparison.Ordinal);
+        Assert.True(requestEnd > requestStart);
+
+        var requestConstruction = service[requestStart..(requestEnd + 2)];
+        Assert.Contains("facts", requestConstruction, StringComparison.Ordinal);
         Assert.DoesNotContain("ProductUnderstandingSampleLimit", service, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildRepresentativeSample", service, StringComparison.Ordinal);
         Assert.DoesNotContain("AnalyzedItemCount", service, StringComparison.Ordinal);
