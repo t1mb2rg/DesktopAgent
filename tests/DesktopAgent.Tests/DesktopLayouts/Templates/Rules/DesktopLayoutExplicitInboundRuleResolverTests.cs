@@ -45,6 +45,7 @@ public sealed class DesktopLayoutExplicitInboundRuleResolverTests
             rules,
             new HashSet<string>(StringComparer.Ordinal) { icon.StableId });
 
+        Assert.Equal(new[] { "cross" }, plan.ExplicitInboundStableIds);
         Assert.Equal(0, plan.TargetDisplayIconCount);
         Assert.Equal(1, plan.InboundMigrationIconCount);
         Assert.Equal(1, plan.ManagedTargetIconCount);
@@ -57,6 +58,32 @@ public sealed class DesktopLayoutExplicitInboundRuleResolverTests
         Assert.False(match.IsOnTargetDisplay);
         Assert.Same(icon, match.Icon);
         Assert.Same(zone, match.TargetZone);
+    }
+
+    [Fact]
+    public void Resolve_AuthorizedIconAlreadyOnTarget_RemainsValidButNoLongerCountsAsInboundMigration()
+    {
+        var (template, zone, display) = CreateTemplate();
+        var icon = Icon("cross", @"\\.\DISPLAY1", 80, 80);
+        var rules = new DesktopLayoutIconRuleSet(
+            template.TemplateId,
+            new[] { DesktopLayoutIconRule.ForZoneOverride(icon.StableId, zone.ZoneId) });
+
+        var plan = DesktopLayoutIconRuleResolver.Resolve(
+            template,
+            display,
+            new[] { icon },
+            rules,
+            new HashSet<string>(StringComparer.Ordinal) { icon.StableId });
+
+        Assert.Equal(new[] { "cross" }, plan.ExplicitInboundStableIds);
+        Assert.Equal(1, plan.ExplicitInboundAuthorizationCount);
+        Assert.Equal(1, plan.TargetDisplayIconCount);
+        Assert.Equal(0, plan.InboundMigrationIconCount);
+        Assert.False(plan.HasInboundMigrations);
+        Assert.Equal(1, plan.ZoneOverrideCount);
+        Assert.Equal(0, plan.InboundZoneOverrideCount);
+        Assert.True(Assert.Single(plan.ZoneOverrideMatches).IsOnTargetDisplay);
     }
 
     [Fact]
