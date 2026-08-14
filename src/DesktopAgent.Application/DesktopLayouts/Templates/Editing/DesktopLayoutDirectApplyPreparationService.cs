@@ -16,6 +16,7 @@ public sealed record DesktopLayoutDirectApplyPreparation
     public string? SelectedTargetDeviceName { get; }
     public DesktopLayoutImpactPreview Preview { get; }
     public DesktopLayoutRuleAwareExecutionCandidateBuildResult CandidateBuildResult { get; }
+    public IReadOnlyList<string> ExplicitInboundStableIds => Preview.ExplicitInboundStableIds;
 
     public bool IsReady => CandidateBuildResult.IsSuccess && CandidateBuildResult.Candidate is not null;
     public DesktopLayoutRuleAwareExecutionCandidate? Candidate => CandidateBuildResult.Candidate;
@@ -44,7 +45,8 @@ public static class DesktopLayoutDirectApplyPreparationService
         DesktopLayoutEditDraft draft,
         DesktopObservation observation,
         string? selectedTargetDeviceName = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IReadOnlyCollection<string>? explicitInboundStableIds = null)
     {
         ArgumentNullException.ThrowIfNull(draft);
         ArgumentNullException.ThrowIfNull(observation);
@@ -52,7 +54,8 @@ public static class DesktopLayoutDirectApplyPreparationService
         var preview = DesktopLayoutImpactPreviewService.Create(
             draft,
             observation,
-            selectedTargetDeviceName);
+            selectedTargetDeviceName,
+            explicitInboundStableIds);
 
         return CreateFromPreview(preview, timeProvider);
     }
@@ -92,6 +95,7 @@ public static class DesktopLayoutDirectApplyPreparationService
     /// <summary>
     /// 判断当前编辑器状态是否仍与用户看过的冻结 Draft 具有同一物理执行语义。
     /// 名称变化不影响坐标，因此有意忽略 Name；几何、排序、流向、容量、显示器绑定和 RuleSet 必须完全一致。
+    /// 显式跨屏入站集合不存放在 Draft 中，由 Preview 黑匣子单独冻结和比较。
     /// </summary>
     public static bool HasSameExecutionSemantics(
         DesktopLayoutEditDraft current,
@@ -132,6 +136,15 @@ public static class DesktopLayoutDirectApplyPreparationService
         }
 
         return RuleSetsEquivalent(current.RuleSet, frozen.RuleSet);
+    }
+
+    public static bool HasSameExplicitInboundSemantics(
+        IReadOnlyCollection<string>? current,
+        IReadOnlyCollection<string>? frozen)
+    {
+        var a = (current ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
+        var b = (frozen ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
+        return a.SetEquals(b);
     }
 
     private static bool RuleSetsEquivalent(
