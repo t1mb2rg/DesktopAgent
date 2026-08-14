@@ -38,11 +38,13 @@ public sealed class DesktopCrossDisplayWorkspaceEditorTests
         Assert.Equal(DesktopLayoutIconRuleKind.Exclude, sourceRule.Kind);
         Assert.Null(sourceRule.TargetZoneId);
         Assert.Contains(updatedSource.RuleSet.Rules, rule => rule.StableId == "keep-source");
+        Assert.Empty(updatedSource.ExplicitInboundStableIds);
 
         var targetRule = Assert.Single(updatedTarget.RuleSet.Rules, rule => rule.StableId == "icon-a");
         Assert.Equal(DesktopLayoutIconRuleKind.ZoneOverride, targetRule.Kind);
         Assert.Equal(targetZone.ZoneId, targetRule.TargetZoneId);
         Assert.Contains(updatedTarget.RuleSet.Rules, rule => rule.StableId == "keep-target");
+        Assert.Equal(new[] { "icon-a" }, updatedTarget.ExplicitInboundStableIds);
 
         var migration = Assert.Single(result.Migrations);
         Assert.Equal("icon-a", migration.StableId);
@@ -56,7 +58,7 @@ public sealed class DesktopCrossDisplayWorkspaceEditorTests
     }
 
     [Fact]
-    public void Reassign_ReplacesPriorMigrationForSameStableId_InsteadOfDuplicatingIntent()
+    public void Reassign_RejectsSecondPendingMigrationForSameStableId()
     {
         var z1 = Zone("D1", 0);
         var z2 = Zone("D2", 0);
@@ -70,26 +72,15 @@ public sealed class DesktopCrossDisplayWorkspaceEditorTests
             new[] { d1, d2, d3 }, null,
             "icon-a", @"\\.\DISPLAY1", @"\\.\DISPLAY2", z2.ZoneId);
 
-        var second = DesktopCrossDisplayWorkspaceEditor.Reassign(
-            first.Drafts,
-            first.Migrations,
-            "icon-a", @"\\.\DISPLAY2", @"\\.\DISPLAY3", z3.ZoneId);
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            DesktopCrossDisplayWorkspaceEditor.Reassign(
+                first.Drafts,
+                first.Migrations,
+                "icon-a", @"\\.\DISPLAY2", @"\\.\DISPLAY3", z3.ZoneId));
 
-        var migration = Assert.Single(second.Migrations);
-        Assert.Equal(@"\\.\DISPLAY2", migration.SourceDeviceName);
-        Assert.Equal(@"\\.\DISPLAY3", migration.TargetDeviceName);
-
-        var d2After = Assert.Single(second.Drafts, draft =>
-            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY2");
-        Assert.Equal(
-            DesktopLayoutIconRuleKind.Exclude,
-            Assert.Single(d2After.RuleSet.Rules, rule => rule.StableId == "icon-a").Kind);
-
-        var d3After = Assert.Single(second.Drafts, draft =>
-            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY3");
-        Assert.Equal(
-            DesktopLayoutIconRuleKind.ZoneOverride,
-            Assert.Single(d3After.RuleSet.Rules, rule => rule.StableId == "icon-a").Kind);
+        Assert.Contains("待执行跨屏迁移", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(@"\\.\DISPLAY1", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(@"\\.\DISPLAY2", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
