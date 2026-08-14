@@ -13,7 +13,8 @@ public static class DesktopLayoutIconRuleResolver
         DesktopLayoutTemplate template,
         DisplayDescriptor targetDisplay,
         IReadOnlyList<DesktopIconSnapshotItem> icons,
-        DesktopLayoutIconRuleSet ruleSet)
+        DesktopLayoutIconRuleSet ruleSet,
+        IReadOnlySet<string>? explicitInboundStableIds = null)
     {
         // ═══ 输入验证 ═══
         if (template is null) throw new ArgumentNullException(nameof(template));
@@ -27,6 +28,17 @@ public static class DesktopLayoutIconRuleResolver
 
         // 验证 icons：无 null 元素、Ordinal 非负且唯一、StableId 唯一
         ValidateInputIcons(icons);
+
+        var explicitInbound = explicitInboundStableIds is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : explicitInboundStableIds.ToHashSet(StringComparer.Ordinal);
+        foreach (var stableId in explicitInbound)
+        {
+            if (string.IsNullOrWhiteSpace(stableId))
+                throw new ArgumentException(
+                    "explicitInboundStableIds 不能包含 null、空或纯空白 StableId。",
+                    nameof(explicitInboundStableIds));
+        }
 
         // ═══ ZoneOverride Zone 验证 ═══
         // 即使没有图标匹配，只要 RuleSet 中有指向不存在 Zone 的 Override，也必须 fail
@@ -42,23 +54,69 @@ public static class DesktopLayoutIconRuleResolver
             }
         }
 
-        // ═══ 图标分区：TargetDisplay vs OutOfScope ═══
-        var targetIcons = new List<DesktopIconSnapshotItem>();
-        var oosIcons = new List<DesktopIconSnapshotItem>();
-        foreach (var icon in icons)
-        {
-            if (string.Equals(icon.MonitorDeviceName, targetDisplay.DeviceName, StringComparison.Ordinal))
-                targetIcons.Add(icon);
-            else
-                oosIcons.Add(icon);
-        }
-
         // ═══ 规则索引：StableId → Rule ═══
         var ruleByStableId = new Dictionary<string, DesktopLayoutIconRule>(StringComparer.Ordinal);
         foreach (var rule in ruleSet.Rules)
             ruleByStableId[rule.StableId] = rule;
 
-        // ═══ Target 图标规则匹配 ═══
+        // ═══ 图标分区：物理 Target / 显式 Inbound / 真正 OutOfScope ═══
+        var targetIcons = new List<DesktopIconSnapshotItem>();
+        var inboundIcons = new List<DesktopIconSnapshotItem>();
+        var oosIcons = new List<DesktopIconSnapshotItem>();
+        var matchedExplicitInbound = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var icon in icons)
+        {
+            var isOnTargetDisplay = string.Equals(
+                icon.MonitorDeviceName,
+                targetDisplay.DeviceName,
+                StringComparison.Ordinal);
+
+            if (isOnTargetDisplay)
+            {
+                targetIcons.Add(icon);
+                continue;
+            }
+
+            if (explicitInbound.Contains(icon.StableId))
+            {
+                if (icon.MonitorDeviceName is null)
+                {
+                    throw new ArgumentException(
+                        $"显式跨屏迁入 StableId \"{icon.StableId}\" 没有当前 MonitorDeviceName，" +
+                        "无法证明跨屏来源。",
+                        nameof(explicitInboundStableIds));
+                }
+
+                if (!ruleByStableId.TryGetValue(icon.StableId, out var inboundRule)
+                    || inboundRule.Kind != DesktopLayoutIconRuleKind.ZoneOverride)
+                {
+                    throw new ArgumentException(
+                        $"显式跨屏迁入 StableId \"{icon.StableId}\" 必须在目标布局中存在 ZoneOverride 规则。",
+                        nameof(explicitInboundStableIds));
+                }
+
+                inboundIcons.Add(icon);
+                matchedExplicitInbound.Add(icon.StableId);
+                continue;
+            }
+
+            oosIcons.Add(icon);
+        }
+
+        if (matchedExplicitInbound.Count != explicitInbound.Count)
+        {
+            var missing = explicitInbound
+                .Where(stableId => !matchedExplicitInbound.Contains(stableId))
+                .OrderBy(static stableId => stableId, StringComparer.Ordinal)
+                .ToArray();
+            throw new ArgumentException(
+                $"explicitInboundStableIds 中有 {missing.Length} 个 StableId 未能匹配到屏外真实图标：" +
+                string.Join(", ", missing.Select(static stableId => $"\"{stableId}\"")) + "。",
+                nameof(explicitInboundStableIds));
+        }
+
+        // ═══ 目标管理范围规则匹配 ═══
         var defaultManaged = new List<DesktopIconSnapshotItem>();
         var pinnedMatches = new List<DesktopLayoutResolvedIconRule>();
         var excludedMatches = new List<DesktopLayoutResolvedIconRule>();
@@ -66,6 +124,7 @@ public static class DesktopLayoutIconRuleResolver
 
         var matchedRules = new HashSet<DesktopLayoutIconRule>(ReferenceEqualityComparer.Instance);
 
+        // 物理位于目标屏：保持旧规则语义。
         foreach (var icon in targetIcons)
         {
             if (ruleByStableId.TryGetValue(icon.StableId, out var rule))
@@ -100,7 +159,21 @@ public static class DesktopLayoutIconRuleResolver
             }
         }
 
-        // ═══ OutOfScope 图标规则匹配 ═══
+        // 显式迁入：必须是 ZoneOverride，并明确保留 IsOnTargetDisplay=false 作为来源证据。
+        foreach (var icon in inboundIcons)
+        {
+            var rule = ruleByStableId[icon.StableId];
+            matchedRules.Add(rule);
+            var zone = zoneById[rule.TargetZoneId!.Value];
+            zoneOverrideMatches.Add(new DesktopLayoutResolvedIconRule(
+                rule,
+                icon,
+                zone,
+                isOnTargetDisplay: false));
+        }
+
+        // ═══ 真正 OutOfScope 图标规则匹配 ═══
+        // 未被产品显式授权迁入的屏外 ZoneOverride 继续保持历史语义：记录但不生效。
         var oosRuleMatches = new List<DesktopLayoutResolvedIconRule>();
         foreach (var icon in oosIcons)
         {
@@ -129,6 +202,7 @@ public static class DesktopLayoutIconRuleResolver
         // ═══ 输出排序 ═══
         // 图标集合按 Ordinal ASC
         targetIcons.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
+        inboundIcons.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
         oosIcons.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
         defaultManaged.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
         // 规则匹配集合按 Icon.Ordinal ASC
@@ -139,8 +213,9 @@ public static class DesktopLayoutIconRuleResolver
 
         return new DesktopLayoutIconRuleResolutionPlan(
             template, targetDisplay, ruleSet,
-            icons.ToList().AsReadOnly(),
+            icons.OrderBy(static icon => icon.Ordinal).ToList().AsReadOnly(),
             targetIcons.AsReadOnly(),
+            inboundIcons.AsReadOnly(),
             oosIcons.AsReadOnly(),
             defaultManaged.AsReadOnly(),
             pinnedMatches.AsReadOnly(),
