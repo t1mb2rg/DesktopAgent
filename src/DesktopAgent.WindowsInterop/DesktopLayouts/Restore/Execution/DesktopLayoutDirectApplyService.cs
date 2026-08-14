@@ -224,12 +224,14 @@ public sealed class DesktopLayoutDirectApplyService
                     issues);
             }
 
-            // 4. 必须使用用户实际确认过的 frozen Draft 重建，不从 SQLite 重读旧模板替代它。
+            // 4. 必须使用用户实际确认过的 frozen Draft + explicit-inbound 白名单重建，
+            // 不从 SQLite 重读旧模板，也不允许 fresh replan 偷偷增删跨屏授权。
             var freshPreparation = DesktopLayoutDirectApplyPreparationService.Create(
                 confirmedPreparation.FrozenDraft,
                 freshCapture.Observation,
                 confirmedPreparation.SelectedTargetDeviceName,
-                _timeProvider);
+                _timeProvider,
+                confirmedPreparation.ExplicitInboundStableIds);
 
             if (!freshPreparation.IsReady || freshPreparation.Candidate is null)
             {
