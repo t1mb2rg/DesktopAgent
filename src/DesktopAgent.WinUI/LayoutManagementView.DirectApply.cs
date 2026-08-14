@@ -28,6 +28,7 @@ public sealed partial class LayoutManagementView
 
         if (_latestPreview is null)
         {
+            ApplyToDesktopButton.IsEnabled = false;
             ShowInfo(
                 "请先预览",
                 "“应用到桌面”只执行你刚刚看过并确认的预览。先点击“预览”读取当前桌面。",
@@ -46,7 +47,6 @@ public sealed partial class LayoutManagementView
             return;
         }
 
-        // 不依赖 TextChanged 等 UI 事件猜测 stale 状态，直接比较当前编辑语义和 Preview 黑匣子。
         if (!DesktopLayoutDirectApplyPreparationService.HasSameExecutionSemantics(
                 currentDraft,
                 _latestPreview.FrozenDraft))
@@ -84,12 +84,14 @@ public sealed partial class LayoutManagementView
         var candidate = preparation.Candidate;
         if (candidate.IsNoOp || candidate.MoveRequiredCount == 0)
         {
+            ApplyToDesktopButton.IsEnabled = false;
             ShowInfo("已经在目标位置", "当前预览没有需要移动的桌面图标。", InfoBarSeverity.Success);
             return;
         }
 
         if (!candidate.IsExecutable)
         {
+            ApplyToDesktopButton.IsEnabled = false;
             ShowInfo("当前计划不可执行", "安全执行候选未通过 Core 校验。请重新预览。", InfoBarSeverity.Warning);
             return;
         }
@@ -137,8 +139,6 @@ public sealed partial class LayoutManagementView
         try
         {
             var result = await DirectApplyService.ApplyAsync(preparation);
-
-            // 一旦用户真正发起过 Apply，旧 Preview 不再可复用。
             InvalidateDirectApplyEvidence("应用流程已结束 · 请重新预览当前桌面");
             PresentDirectApplyResult(result, candidate.MoveRequiredCount);
         }
@@ -149,7 +149,6 @@ public sealed partial class LayoutManagementView
         }
         catch (Exception ex)
         {
-            // 受控服务原则上把 Coordinator 结果包装回来；若仍有逃逸异常，UI 不猜 Writer 是否启动。
             InvalidateDirectApplyEvidence("执行状态未知 · 已暂停继续应用");
             ShowError(
                 "应用流程发生未预期异常",
@@ -158,7 +157,10 @@ public sealed partial class LayoutManagementView
         finally
         {
             _directApplyInProgress = false;
-            ApplyToDesktopButton.IsEnabled = true;
+            ApplyToDesktopButton.IsEnabled =
+                _latestPreview is not null &&
+                _latestPreview.Plan.IsComplete &&
+                _latestPreview.Plan.MoveRequiredCount > 0;
         }
     }
 
@@ -246,6 +248,7 @@ public sealed partial class LayoutManagementView
     {
         _latestPreview = null;
         _previewItems.Clear();
+        ApplyToDesktopButton.IsEnabled = false;
         LayoutPreviewDetails.Visibility = Visibility.Collapsed;
         ResetPreviewSummary();
         LayoutCanvasStatusText.Text = status;
