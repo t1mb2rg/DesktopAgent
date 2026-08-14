@@ -27,4 +27,10 @@ public enum RecoverySessionLifecycle
 
     /// <summary>上一次恢复无法证明位置事实，因此以位置不确定安全分类停止。</summary>
     PositionUncertain = 5,
+
+    /// <summary>
+    /// 用户在明确看到当前真实桌面后，主动接受当前状态并放弃继续恢复到 Original / Desired。
+    /// 该终态本身不执行 Writer；历史 Snapshot、Attempts、Verification 与失败证据继续保留。
+    /// </summary>
+    AcceptedCurrentState = 6,
 }
