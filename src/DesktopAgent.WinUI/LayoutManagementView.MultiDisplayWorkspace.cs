@@ -143,6 +143,12 @@ public sealed partial class LayoutManagementView
         _draft = state.Draft;
         LoadDraftIntoEditor(_draft);
         SetLayoutInteractionMode(isEditing: true);
+
+        // workspace 内每份 Draft 的物理屏幕身份由本地分桶确定。
+        // 用户通过上方 selector 切屏，而不是直接改 TargetDisplayBinding。
+        LayoutTargetBindingCombo.IsEnabled = false;
+        LayoutDeviceNameTextBox.IsReadOnly = true;
+
         LayoutCanvasStatusText.Text =
             $"AI 多屏草案 · {ShortDeviceName(state.DeviceName)} · {_draft.Zones.Count} 个分区 · " +
             $"{state.MappedAssignmentCount}/{state.SourceAssignmentCount} 个项目已映射 · 尚未预览";
@@ -198,6 +204,12 @@ public sealed partial class LayoutManagementView
         finally
         {
             _suppressAiWorkspaceSelectionChanged = false;
+        }
+
+        if (_isLayoutEditing)
+        {
+            LayoutTargetBindingCombo.IsEnabled = true;
+            LayoutDeviceNameTextBox.IsReadOnly = false;
         }
     }
 
