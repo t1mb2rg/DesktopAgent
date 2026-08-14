@@ -102,6 +102,22 @@
                             <TextBlock Text="需要你确认" FontWeight="SemiBold" />
                             <StackPanel x:Name="AiQuestionsPanel" Spacing="7" />
                         </StackPanel>
+
+                        <Grid Margin="0,4,0,0" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="导入只会创建一个未保存、未应用的布局草案；你仍可在布局工作台检查和编辑。"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap"
+                                       Opacity="0.52" />
+                            <Button x:Name="AiImportLayoutButton"
+                                    Grid.Column="1"
+                                    Content="导入到布局工作台"
+                                    IsEnabled="False"
+                                    Click="ImportLayoutDraft_Click" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>
