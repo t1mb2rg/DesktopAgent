@@ -35,14 +35,58 @@ public sealed class AiProductIntegrationContractTests
             "AiDesktopUnderstandingService.cs"));
 
         var optionsFactory = service.IndexOf(
-            "DesktopProductIntelligenceOptionsFactory.Create",
+            "var configuredOptions = DesktopProductIntelligenceOptionsFactory.Create(settings);",
             StringComparison.Ordinal);
-        var disabledGate = service.IndexOf("if (options is null)", StringComparison.Ordinal);
+        var disabledGate = service.IndexOf("if (configuredOptions is null)", StringComparison.Ordinal);
         var capture = service.IndexOf("observationSource.CaptureAsync", StringComparison.Ordinal);
 
         Assert.True(optionsFactory >= 0);
         Assert.True(disabledGate > optionsFactory);
         Assert.True(capture > disabledGate);
+    }
+
+    [Fact]
+    public void ProductAiService_UsesNinetySecondBudgetOnlyForWholeDesktopUnderstanding()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiDesktopUnderstandingService.cs"));
+
+        Assert.Contains(
+            "ProductUnderstandingTimeout = TimeSpan.FromSeconds(90)",
+            service,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "configuredOptions.SecretReference,\n            ProductUnderstandingTimeout",
+            service,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ProductAiProbe_UsesExistingM4ClassificationProviderWithoutDesktopObservation()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiDesktopUnderstandingService.cs"));
+
+        var probeStart = service.IndexOf("internal async Task<AiProviderProbeProductResult> ProbeAsync", StringComparison.Ordinal);
+        var analyzeStart = service.IndexOf("internal async Task<AiDesktopUnderstandingProductResult> AnalyzeAsync", StringComparison.Ordinal);
+
+        Assert.True(probeStart >= 0);
+        Assert.True(analyzeStart > probeStart);
+
+        var probeSection = service[probeStart..analyzeStart];
+        Assert.Contains("OpenAiCompatibleDesktopIntelligenceProvider", probeSection, StringComparison.Ordinal);
+        Assert.Contains("Tessel Provider Probe.txt", probeSection, StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsDesktopObservationSource", probeSection, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", probeSection, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriterCommand", probeSection, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -70,7 +114,7 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
-    public void AiSurface_StatesSemanticDraftSafetyBoundaryInUserFacingCopy()
+    public void AiSurface_ExposesProviderProbeAndStatesSemanticDraftSafetyBoundary()
     {
         var root = FindRepositoryRoot();
         var xaml = File.ReadAllText(Path.Combine(
@@ -79,6 +123,8 @@ public sealed class AiProductIntegrationContractTests
             "DesktopAgent.WinUI",
             "AiAssistantView.xaml"));
 
+        Assert.Contains("测试 AI 连接", xaml, StringComparison.Ordinal);
+        Assert.Contains("TestAiConnection_Click", xaml, StringComparison.Ordinal);
         Assert.Contains("只生成语义草案", xaml, StringComparison.Ordinal);
         Assert.Contains("不调用 Writer", xaml, StringComparison.Ordinal);
         Assert.Contains("不会移动任何桌面图标", xaml, StringComparison.Ordinal);
