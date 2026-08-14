@@ -1,3 +1,4 @@
+using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -25,7 +26,10 @@ public sealed partial class LayoutManagementView
             ApplyToDesktopButton.IsEnabled =
                 preview.Plan.IsComplete && preview.Plan.MoveRequiredCount > 0;
 
-            ShowInfo("预览已刷新", "画布展示的是刚刚观察到的桌面影响。", InfoBarSeverity.Success);
+            ShowInfo(
+                "预览已刷新",
+                $"画布展示的是刚刚观察到的桌面影响。{DescribeTargetGridPhase(preview.Plan)}",
+                InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
@@ -33,5 +37,31 @@ public sealed partial class LayoutManagementView
             LayoutCanvasStatusText.Text = "当前无法生成预览";
             ShowError("无法预览", ex.Message);
         }
+    }
+
+    private static string DescribeTargetGridPhase(DesktopLayoutRuleAwarePreviewPlan plan)
+    {
+        var spacing = plan.IconSpacing;
+        var phases = plan.Items
+            .Where(static item => item.TargetPosition.HasValue)
+            .Select(item => (
+                X: PositiveModulo(item.TargetPosition!.Value.X, spacing.X),
+                Y: PositiveModulo(item.TargetPosition!.Value.Y, spacing.Y)))
+            .Distinct()
+            .Take(2)
+            .ToArray();
+
+        return phases.Length switch
+        {
+            0 => " 当前没有目标坐标。",
+            1 => $" 目标坐标网格相位：({phases[0].X}, {phases[0].Y})，间距：({spacing.X}, {spacing.Y})。",
+            _ => " 当前目标坐标存在多组网格相位；若 Windows 开启了“将图标与网格对齐”，请先谨慎核对后再应用。",
+        };
+    }
+
+    private static int PositiveModulo(int value, int modulus)
+    {
+        var remainder = value % modulus;
+        return remainder < 0 ? remainder + modulus : remainder;
     }
 }
