@@ -112,17 +112,22 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBox x:Name="AiGuidanceTextBox"
                      MaxLength="4096"
                      PlaceholderText="例如：项目文件尽量放右边，课程资料放左上"
                      VerticalAlignment="Center" />
-            <Button x:Name="AiAnalyzeButton"
+            <Button x:Name="AiProbeButton"
                     Grid.Column="1"
+                    Content="测试 AI 连接"
+                    Click="TestAiConnection_Click" />
+            <Button x:Name="AiAnalyzeButton"
+                    Grid.Column="2"
                     Content="分析当前桌面"
                     Click="AnalyzeDesktop_Click" />
             <Button x:Name="AiCancelButton"
-                    Grid.Column="2"
+                    Grid.Column="3"
                     Content="取消"
                     Visibility="Collapsed"
                     Click="CancelAnalysis_Click" />
