@@ -9,9 +9,10 @@ public sealed partial class AiAssistantView : UserControl
 {
     private readonly AiDesktopUnderstandingService _understandingService = new();
     private CancellationTokenSource? _analysisCts;
+    private CancellationTokenSource? _probeCts;
     private string? _currentIntentSummary;
 
-    internal bool IsRequestActive => _analysisCts is not null;
+    internal bool IsRequestActive => _analysisCts is not null || _probeCts is not null;
 
     public AiAssistantView()
     {
@@ -20,11 +21,71 @@ public sealed partial class AiAssistantView : UserControl
     }
 
     internal void CancelActiveRequest()
-        => _analysisCts?.Cancel();
+    {
+        _analysisCts?.Cancel();
+        _probeCts?.Cancel();
+    }
+
+    private async void TestAiConnection_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsRequestActive)
+            return;
+
+        AiStatusBar.IsOpen = false;
+        var cts = new CancellationTokenSource();
+        _probeCts = cts;
+        SetBusy(true);
+
+        try
+        {
+            var result = await _understandingService.ProbeAsync(cts.Token);
+            if (cts.IsCancellationRequested)
+            {
+                ShowCancelled();
+                return;
+            }
+
+            if (result.Succeeded)
+            {
+                AiStatusBar.Severity = InfoBarSeverity.Success;
+                AiStatusBar.Title = "AI 连接正常";
+                AiStatusBar.Message = string.IsNullOrWhiteSpace(result.Category)
+                    ? "Provider 已返回有效结构化结果。连接测试不会读取真实桌面，也不会调用 Writer。"
+                    : $"Provider 已返回有效结构化结果（探针分类：{result.Category}）。连接测试不会读取真实桌面，也不会调用 Writer。";
+                AiStatusBar.IsOpen = true;
+                return;
+            }
+
+            AiStatusBar.Severity = result.Status == IntelligenceProviderStatus.Cancelled
+                ? InfoBarSeverity.Informational
+                : InfoBarSeverity.Error;
+            AiStatusBar.Title = "AI 连接测试失败";
+            AiStatusBar.Message = FormatProviderFailure(result.Status, result.HttpStatusCode);
+            AiStatusBar.IsOpen = true;
+        }
+        catch (OperationCanceledException)
+        {
+            ShowCancelled();
+        }
+        catch (Exception ex)
+        {
+            AiStatusBar.Severity = InfoBarSeverity.Error;
+            AiStatusBar.Title = "AI 连接测试没有完成";
+            AiStatusBar.Message = ex.Message;
+            AiStatusBar.IsOpen = true;
+        }
+        finally
+        {
+            if (ReferenceEquals(_probeCts, cts))
+                _probeCts = null;
+            cts.Dispose();
+            SetBusy(false);
+        }
+    }
 
     private async void AnalyzeDesktop_Click(object sender, RoutedEventArgs e)
     {
-        if (_analysisCts is not null)
+        if (IsRequestActive)
             return;
 
         AiStatusBar.IsOpen = false;
@@ -90,6 +151,7 @@ public sealed partial class AiAssistantView : UserControl
 
     private void SetBusy(bool busy)
     {
+        AiProbeButton.IsEnabled = !busy;
         AiAnalyzeButton.IsEnabled = !busy;
         AiGuidanceTextBox.IsEnabled = !busy;
         AiCancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
@@ -184,7 +246,7 @@ public sealed partial class AiAssistantView : UserControl
     private void ShowCancelled()
     {
         AiStatusBar.Severity = InfoBarSeverity.Informational;
-        AiStatusBar.Title = "已取消 AI 分析";
+        AiStatusBar.Title = "已取消 AI 请求";
         AiStatusBar.Message = "当前请求已停止，没有产生桌面副作用。";
         AiStatusBar.IsOpen = true;
     }
