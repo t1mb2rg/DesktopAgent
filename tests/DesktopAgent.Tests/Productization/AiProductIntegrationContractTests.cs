@@ -59,10 +59,20 @@ public sealed class AiProductIntegrationContractTests
             "ProductUnderstandingTimeout = TimeSpan.FromSeconds(90)",
             service,
             StringComparison.Ordinal);
-        Assert.Contains(
-            "configuredOptions.SecretReference,\n            ProductUnderstandingTimeout",
-            service,
+
+        var optionsStart = service.IndexOf(
+            "var options = new OpenAiCompatibleProviderOptions(",
             StringComparison.Ordinal);
+        Assert.True(optionsStart >= 0);
+
+        var optionsEnd = service.IndexOf(");", optionsStart, StringComparison.Ordinal);
+        Assert.True(optionsEnd > optionsStart);
+
+        var optionsConstruction = service[optionsStart..(optionsEnd + 2)];
+        Assert.Contains("configuredOptions.BaseUri", optionsConstruction, StringComparison.Ordinal);
+        Assert.Contains("configuredOptions.Model", optionsConstruction, StringComparison.Ordinal);
+        Assert.Contains("configuredOptions.SecretReference", optionsConstruction, StringComparison.Ordinal);
+        Assert.Contains("ProductUnderstandingTimeout", optionsConstruction, StringComparison.Ordinal);
     }
 
     [Fact]
