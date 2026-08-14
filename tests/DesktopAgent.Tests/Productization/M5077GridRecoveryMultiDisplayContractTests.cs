@@ -1,3 +1,5 @@
+using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+
 namespace DesktopAgent.Tests.Productization;
 
 public sealed class M5077GridRecoveryMultiDisplayContractTests
@@ -25,6 +27,35 @@ public sealed class M5077GridRecoveryMultiDisplayContractTests
         Assert.Contains("pending.Count != 1", source, StringComparison.Ordinal);
         Assert.Contains("MultiplePendingRecoveries", source, StringComparison.Ordinal);
         Assert.Contains("RecoverAsync(record", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AcceptedCurrentState_IsAnExplicitResolvedLifecycle()
+    {
+        var disposition = RecoverySessionDisposition.FromLifecycle(
+            RecoverySessionLifecycle.AcceptedCurrentState);
+
+        Assert.False(disposition.IsUnresolved);
+        Assert.False(disposition.RequiresManualRecovery);
+        Assert.False(disposition.IsPositionUncertain);
+        Assert.Equal(RecoverySessionHandling.None, disposition.Handling);
+        Assert.Equal(RecoverySessionSafetyClass.None, disposition.SafetyClass);
+    }
+
+    [Fact]
+    public void AcceptCurrentDesktop_IsExplicitAndDoesNotGiveWinUiWriterAuthority()
+    {
+        var ui = Read("src/DesktopAgent.WinUI/LayoutManagementView.Recovery.cs");
+        var facade = Read("src/DesktopAgent.WindowsInterop/DesktopLayouts/Restore/Execution/DesktopLayoutRecoveryProductService.cs");
+
+        Assert.Contains("SecondaryButtonText = \"接受当前桌面\"", ui, StringComparison.Ordinal);
+        Assert.Contains("AcceptCurrentStateSingleAsync", ui, StringComparison.Ordinal);
+        Assert.Contains("RecoverySessionLifecycle.AcceptedCurrentState", facade, StringComparison.Ordinal);
+        Assert.Contains("_recoveryStore.UpdateAsync", facade, StringComparison.Ordinal);
+        Assert.Contains("RequiresManualRecovery", facade, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", ui, StringComparison.Ordinal);
+        Assert.DoesNotContain("IDesktopIconPositionWriter", ui, StringComparison.Ordinal);
+        Assert.DoesNotContain("MoveDesktopIcon", ui, StringComparison.Ordinal);
     }
 
     [Fact]
