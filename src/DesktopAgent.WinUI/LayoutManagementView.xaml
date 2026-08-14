@@ -84,8 +84,12 @@
                         <Border Grid.Column="2" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}"><StackPanel Spacing="1"><TextBlock Text="目标屏" FontSize="11" Opacity="0.52" /><TextBlock x:Name="TargetDisplayText" Text="—" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /></StackPanel></Border>
                     </Grid>
                     <Grid Grid.Row="3" ColumnSpacing="8">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <Button Content="↻ 预览" Click="PreviewLayout_Click" /><Button Grid.Column="1" x:Name="OverlayToggleButton" Content="▣ 桌面线框" Click="ToggleOverlay_Click" /><TextBlock Grid.Column="2" x:Name="OverlayStateText" Text="线框关闭" FontSize="12" Opacity="0.55" VerticalAlignment="Center" /><Button Grid.Column="3" x:Name="SaveLayoutButton" Content="保存" Click="SaveLayout_Click" />
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Button Content="↻ 预览" Click="PreviewLayout_Click" />
+                        <Button Grid.Column="1" x:Name="OverlayToggleButton" Content="▣ 桌面线框" Click="ToggleOverlay_Click" />
+                        <TextBlock Grid.Column="2" x:Name="OverlayStateText" Text="线框关闭" FontSize="12" Opacity="0.55" VerticalAlignment="Center" />
+                        <Button Grid.Column="3" x:Name="ApplyToDesktopButton" Content="应用到桌面" Click="ApplyToDesktop_Click" />
+                        <Button Grid.Column="4" x:Name="SaveLayoutButton" Content="保存" Click="SaveLayout_Click" />
                     </Grid>
                 </Grid>
             </Border>
