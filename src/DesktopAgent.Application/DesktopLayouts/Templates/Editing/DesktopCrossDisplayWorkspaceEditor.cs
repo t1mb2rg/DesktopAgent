@@ -5,9 +5,7 @@ namespace DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 
 /// <summary>
 /// 用户显式发起的一次跨显示器迁移意图。
-///
 /// AI 初始编译不会创建该对象；它只由产品层的明确用户操作产生。
-/// SourceRuleBeforeMigration 用于保留迁移前的规则证据，后续可以支持撤销/回迁。
 /// </summary>
 public sealed record DesktopCrossDisplayMigrationIntent
 {
@@ -46,10 +44,6 @@ public sealed record DesktopCrossDisplayMigrationIntent
     }
 }
 
-/// <summary>
-/// 一次跨屏编辑后的不可变结果。
-/// 每块显示器仍然是一份既有 DesktopLayoutEditDraft；跨屏只存在于产品/Application 编排层。
-/// </summary>
 public sealed record DesktopCrossDisplayWorkspaceEditResult
 {
     public IReadOnlyList<DesktopLayoutEditDraft> Drafts { get; }
@@ -79,10 +73,10 @@ public sealed record DesktopCrossDisplayWorkspaceEditResult
 
 /// <summary>
 /// 多显示器工作区中的显式跨屏规则编辑器。
-///
 /// 只编辑内存 Draft/RuleSet，不包含 Preview、Candidate、Writer 或持久化 authority。
-/// 源屏将迁出项目改成 Exclude，防止源屏布局继续把它作为默认项目重新放回；
-/// 目标屏建立 ZoneOverride，明确指定落入哪个 Zone。
+///
+/// v1 规定：一个 StableId 同时最多一笔 pending migration。迁移尚未 Apply 前不能再次改投第三块屏，
+/// 避免“逻辑来源屏”与真实物理来源屏分叉后丢失源屏 Exclude 保护。
 /// </summary>
 public static class DesktopCrossDisplayWorkspaceEditor
 {
@@ -107,6 +101,17 @@ public static class DesktopCrossDisplayWorkspaceEditor
             throw new ArgumentException("跨屏迁移的源显示器与目标显示器不能相同。", nameof(targetDeviceName));
         if (targetZoneId == Guid.Empty)
             throw new ArgumentException("TargetZoneId 不能为 Guid.Empty。", nameof(targetZoneId));
+
+        var migrations = (existingMigrations ?? Array.Empty<DesktopCrossDisplayMigrationIntent>()).ToList();
+        var pending = migrations.SingleOrDefault(item =>
+            string.Equals(item.StableId, stableId, StringComparison.Ordinal));
+        if (pending is not null)
+        {
+            throw new InvalidOperationException(
+                $"StableId \"{stableId}\" 已有一笔待执行跨屏迁移：" +
+                $"{pending.SourceDeviceName} → {pending.TargetDeviceName}。" +
+                "请先应用或取消当前迁移，再重新选择目标屏。");
+        }
 
         var byDevice = new Dictionary<string, DesktopLayoutEditDraft>(StringComparer.Ordinal);
         foreach (var draft in drafts)
@@ -150,9 +155,6 @@ public static class DesktopCrossDisplayWorkspaceEditor
                 "请先解除 Pin/Exclude，再执行跨屏迁移。");
         }
 
-        var migrations = (existingMigrations ?? Array.Empty<DesktopCrossDisplayMigrationIntent>())
-            .Where(item => !string.Equals(item.StableId, stableId, StringComparison.Ordinal))
-            .ToList();
         migrations.Add(new DesktopCrossDisplayMigrationIntent(
             stableId,
             sourceDeviceName,
@@ -170,14 +172,9 @@ public static class DesktopCrossDisplayWorkspaceEditor
                 .ToList();
 
             if (string.Equals(deviceName, sourceDeviceName, StringComparison.Ordinal))
-            {
-                // 显式迁出后，源布局不得再次把该图标当默认项目塞回源屏。
                 rules.Add(DesktopLayoutIconRule.ForExclude(stableId));
-            }
             else if (string.Equals(deviceName, targetDeviceName, StringComparison.Ordinal))
-            {
                 rules.Add(DesktopLayoutIconRule.ForZoneOverride(stableId, targetZoneId));
-            }
 
             var inbound = migrations
                 .Where(item => string.Equals(item.TargetDeviceName, deviceName, StringComparison.Ordinal))
