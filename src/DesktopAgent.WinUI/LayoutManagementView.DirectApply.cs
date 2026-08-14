@@ -99,11 +99,15 @@ public sealed partial class LayoutManagementView
         var stagingText = candidate.UsesTemporaryStaging
             ? "是。计划包含循环，一个或多个图标会先进入临时中转位置。"
             : "否。";
+        var crossDisplayText = preparation.Preview.Plan.InboundMoveRequiredCount > 0
+            ? $"{preparation.Preview.Plan.InboundMoveRequiredCount} 个。它们会从其他显示器迁入当前目标屏。"
+            : "0 个。";
 
         var confirmContent =
             $"布局：{currentDraft.Name}\n" +
             $"目标显示器：{candidate.TargetDeviceName}\n" +
             $"预计移动：{candidate.MoveRequiredCount} 个图标\n" +
+            $"其中跨屏迁入：{crossDisplayText}\n" +
             $"执行步骤：{candidate.ExecutionStepCount}\n" +
             $"使用临时中转：{stagingText}\n\n" +
             "确认后 Tessel 会再次读取当前桌面并重新规划。" +
@@ -139,8 +143,18 @@ public sealed partial class LayoutManagementView
         try
         {
             var result = await DirectApplyService.ApplyAsync(preparation);
+            if (result.IsSuccess && preparation.ExplicitInboundStableIds.Count > 0)
+            {
+                CommitSuccessfulCrossDisplayMigrations(
+                    candidate.TargetDeviceName,
+                    preparation.ExplicitInboundStableIds);
+            }
+
             InvalidateDirectApplyEvidence("应用流程已结束 · 请重新预览当前桌面");
-            PresentDirectApplyResult(result, candidate.MoveRequiredCount);
+            PresentDirectApplyResult(
+                result,
+                candidate.MoveRequiredCount,
+                preparation.Preview.Plan.InboundMoveRequiredCount);
         }
         catch (OperationCanceledException)
         {
@@ -166,21 +180,26 @@ public sealed partial class LayoutManagementView
 
     private void PresentDirectApplyResult(
         DesktopLayoutDirectApplyResult result,
-        int confirmedMoveCount)
+        int confirmedMoveCount,
+        int confirmedCrossDisplayMoveCount)
     {
+        var crossDisplaySuffix = confirmedCrossDisplayMoveCount > 0
+            ? $" 其中 {confirmedCrossDisplayMoveCount} 个完成跨屏迁入。"
+            : string.Empty;
+
         switch (result.Outcome)
         {
             case DesktopLayoutDirectApplyOutcome.Completed:
                 ShowInfo(
                     "布局已应用到桌面",
-                    $"本次确认计划预计移动 {confirmedMoveCount} 个图标；安全执行与独立验证已完成。",
+                    $"本次确认计划预计移动 {confirmedMoveCount} 个图标；安全执行与独立验证已完成。{crossDisplaySuffix}",
                     InfoBarSeverity.Success);
                 return;
 
             case DesktopLayoutDirectApplyOutcome.CompletedNoOp:
                 ShowInfo(
                     "桌面已经就位",
-                    "进入最终执行层时已无需移动，Writer 没有产生额外位移。",
+                    $"进入最终执行层时已无需移动，Writer 没有产生额外位移。{crossDisplaySuffix}",
                     InfoBarSeverity.Success);
                 return;
 
