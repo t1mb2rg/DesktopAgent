@@ -41,7 +41,6 @@ public sealed record DesktopIconTargetPlacement
             throw new ArgumentOutOfRangeException(nameof(slotIndex),
                 $"SlotIndex 不能为负数，实际 {slotIndex}。");
 
-        // EffectiveCapacity 为 0 时拒绝任何 Placement
         if (zone.EffectiveCapacity == 0)
             throw new ArgumentException(
                 $"Zone EffectiveCapacity 为 0，不允许创建 Placement。ZoneId=\"{zone.Zone.ZoneId:D}\"。",
@@ -57,7 +56,6 @@ public sealed record DesktopIconTargetPlacement
                 $"SlotIndex ({slotIndex}) 超过 Zone TheoreticalCapacity ({zone.TheoreticalCapacity})。" +
                 $"ZoneId=\"{zone.Zone.ZoneId:D}\"。");
 
-        // PlacementFlow 必须是已定义值
         if (zone.Zone.PlacementFlow != ZonePlacementFlow.ColumnMajor
             && zone.Zone.PlacementFlow != ZonePlacementFlow.RowMajor)
             throw new ArgumentException(
@@ -68,8 +66,6 @@ public sealed record DesktopIconTargetPlacement
 
         if (zone.Zone.PlacementFlow == ZonePlacementFlow.ColumnMajor)
         {
-            // ColumnMajor：纵向优先
-            // slotIndex / RowCount = 列索引，slotIndex % RowCount = 行索引
             if (zone.RowCount <= 0)
                 throw new InvalidOperationException(
                     $"ColumnMajor 要求 RowCount > 0，实际 RowCount={zone.RowCount}。" +
@@ -78,10 +74,8 @@ public sealed record DesktopIconTargetPlacement
             columnIndex = slotIndex / zone.RowCount;
             rowIndex = slotIndex % zone.RowCount;
         }
-        else // RowMajor
+        else
         {
-            // RowMajor：横向优先
-            // slotIndex / ColumnCount = 行索引，slotIndex % ColumnCount = 列索引
             if (zone.ColumnCount <= 0)
                 throw new InvalidOperationException(
                     $"RowMajor 要求 ColumnCount > 0，实际 ColumnCount={zone.ColumnCount}。" +
@@ -91,7 +85,6 @@ public sealed record DesktopIconTargetPlacement
             columnIndex = slotIndex % zone.ColumnCount;
         }
 
-        // ColumnIndex / RowIndex 范围验证
         if (columnIndex < 0 || columnIndex >= zone.ColumnCount)
             throw new InvalidOperationException(
                 $"ColumnIndex ({columnIndex}) 不在 [0, {zone.ColumnCount}) 范围内。" +
@@ -102,9 +95,11 @@ public sealed record DesktopIconTargetPlacement
                 $"RowIndex ({rowIndex}) 不在 [0, {zone.RowCount}) 范围内。" +
                 $"ZoneId=\"{zone.Zone.ZoneId:D}\", SlotIndex={slotIndex}。");
 
-        // 坐标计算：Zone 左上角为锚点，long 中间运算
-        long targetX = (long)zone.PixelBounds.Left + (long)columnIndex * iconSpacing.X;
-        long targetY = (long)zone.PixelBounds.Top + (long)rowIndex * iconSpacing.Y;
+        // 坐标从解析阶段给出的 PlacementOrigin 开始。
+        // 默认 PlacementOrigin == PixelBounds.Left/Top；若 fresh 桌面推断出 Explorer 全局网格相位，
+        // PlacementOrigin 会向 Zone 内部对齐，从而避免 Writer 后被 Explorer 二次吸附。
+        long targetX = (long)zone.PlacementOrigin.X + (long)columnIndex * iconSpacing.X;
+        long targetY = (long)zone.PlacementOrigin.Y + (long)rowIndex * iconSpacing.Y;
 
         PixelPoint targetPosition;
         try
@@ -131,7 +126,6 @@ public sealed record DesktopIconTargetPlacement
                 $"ZoneId=\"{zone.Zone.ZoneId:D}\", SlotIndex={slotIndex}。", ex);
         }
 
-        // TargetCellBounds 必须完整位于 Zone.PixelBounds 内
         if (!DesktopIconLayoutGeometry.IsFullyContained(targetCellBounds, zone.PixelBounds))
             throw new InvalidOperationException(
                 $"TargetCellBounds ({targetCellBounds.Left},{targetCellBounds.Top})-({targetCellBounds.Right},{targetCellBounds.Bottom}) " +
