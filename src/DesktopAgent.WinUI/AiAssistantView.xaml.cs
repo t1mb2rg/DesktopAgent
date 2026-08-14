@@ -88,7 +88,11 @@ public sealed partial class AiAssistantView : UserControl
         if (IsRequestActive)
             return;
 
-        AiStatusBar.IsOpen = false;
+        AiStatusBar.Severity = InfoBarSeverity.Informational;
+        AiStatusBar.Title = "正在完整理解当前桌面";
+        AiStatusBar.Message = "Tessel 会分析本次 fresh 观察到的全部桌面项目。项目较多时可能需要几分钟，你可以随时取消；期间不会调用 Writer。";
+        AiStatusBar.IsOpen = true;
+
         var guidanceText = AiGuidanceTextBox.Text.Trim();
         var guidance = guidanceText.Length == 0 ? null : guidanceText;
         var cts = new CancellationTokenSource();
@@ -166,8 +170,8 @@ public sealed partial class AiAssistantView : UserControl
         AiDesktopSummaryText.Text = draft.DesktopSummary;
         AiIntentSummaryText.Text = draft.IntentSummary;
         AiResultMetaText.Text = result.ActiveLayoutName is null
-            ? $"Fresh 观察了 {result.ObservedItemCount} 个桌面项目 · 当前未使用布局作为 Zone 上下文"
-            : $"Fresh 观察了 {result.ObservedItemCount} 个桌面项目 · Zone 上下文来自“{result.ActiveLayoutName}”";
+            ? $"Fresh 观察并分析了 {result.ObservedItemCount} 个桌面项目 · 当前未使用布局作为 Zone 上下文"
+            : $"Fresh 观察并分析了 {result.ObservedItemCount} 个桌面项目 · Zone 上下文来自“{result.ActiveLayoutName}”";
 
         AiCategoriesPanel.Children.Clear();
         foreach (var category in draft.Categories)
@@ -230,7 +234,9 @@ public sealed partial class AiAssistantView : UserControl
                     ? InfoBarSeverity.Informational
                     : InfoBarSeverity.Error;
                 AiStatusBar.Title = "AI Provider 没有返回可用结果";
-                AiStatusBar.Message = FormatProviderFailure(result.ProviderStatus, result.HttpStatusCode);
+                AiStatusBar.Message = result.ProviderStatus == IntelligenceProviderStatus.Timeout
+                    ? "完整桌面理解超过 5 分钟仍未完成，已安全停止。可以稍后重试或检查 Provider 服务状态。"
+                    : FormatProviderFailure(result.ProviderStatus, result.HttpStatusCode);
                 break;
 
             default:
