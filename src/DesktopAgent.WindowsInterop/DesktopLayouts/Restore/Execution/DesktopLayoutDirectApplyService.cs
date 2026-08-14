@@ -182,10 +182,14 @@ public sealed class DesktopLayoutDirectApplyService
             await _snapshotStore.InitializeAsync(cancellationToken);
             await _recoveryStore.InitializeAsync(cancellationToken);
 
-            // 1. 旧恢复会话未解决时 fail-closed。Coordinator 会写 recovery checkpoint，
-            // 但不会替产品入口决定是否允许覆盖上一笔未解决恢复。
-            var unresolved = await _recoveryStore.ListUnresolvedAsync(1, cancellationToken);
-            if (unresolved.Count != 0)
+            // 1. 旧恢复会话未解决时 fail-closed。Persistence 只提供候选，业务层仍按 Core
+            // RecoverySessionDisposition 重新投影，避免持久化查询获得最终行为解释权。
+            var unresolvedCandidates = await _recoveryStore.ListUnresolvedAsync(50, cancellationToken);
+            var unresolved = unresolvedCandidates
+                .Where(record => record.GetDisposition().IsUnresolved)
+                .Take(1)
+                .ToArray();
+            if (unresolved.Length != 0)
             {
                 return DesktopLayoutDirectApplyResult.Rejected(
                     DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked,
