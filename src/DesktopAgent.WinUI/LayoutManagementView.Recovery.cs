@@ -53,20 +53,28 @@ public sealed partial class LayoutManagementView
             Content = new TextBlock
             {
                 Text =
-                    "Tessel 会重新读取当前真实桌面，并把它与持久化恢复会话中的 Original / Desired 意图进行协调。\n\n" +
-                    "只有当前事实足够明确时，恢复协调器才可能执行补偿写；如果桌面处于第三种或不确定状态，它会停止并继续要求人工处理，不会猜测。",
+                    "“处理恢复状态”会重新读取当前真实桌面，并让 Recovery 根据 Original / Desired 意图安全协调；当前事实不足时仍会停止，不猜测。\n\n" +
+                    "“接受当前桌面”不会移动任何图标。它表示你明确放弃这笔会话继续恢复到 Original / Desired，把现在看到的真实桌面作为新的现实基线。" +
+                    "Safety Snapshot、Writer Attempts 和失败证据仍会保留，只解除这笔 unresolved 锁。",
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 520,
+                MaxWidth = 560,
             },
             PrimaryButtonText = "处理恢复状态",
+            SecondaryButtonText = "接受当前桌面",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,
         };
 
         var choice = await dialog.ShowAsync();
-        if (choice != ContentDialogResult.Primary)
+        if (choice == ContentDialogResult.None)
         {
-            ShowInfo("已取消", "没有执行恢复写入。", InfoBarSeverity.Informational);
+            ShowInfo("已取消", "没有执行恢复写入，恢复锁保持不变。", InfoBarSeverity.Informational);
+            return;
+        }
+
+        if (choice == ContentDialogResult.Secondary)
+        {
+            await AcceptCurrentDesktopAsync();
             return;
         }
 
@@ -94,63 +102,8 @@ public sealed partial class LayoutManagementView
         }
     }
 
-    private async void AcceptCurrentDesktop_Click(object sender, RoutedEventArgs e)
+    private async Task AcceptCurrentDesktopAsync()
     {
-        if (_directApplyInProgress)
-            return;
-
-        int pendingCount;
-        try
-        {
-            pendingCount = await RecoveryProductService.GetPendingCountAsync();
-        }
-        catch (Exception ex)
-        {
-            ShowError("无法读取恢复状态", $"{ex.GetType().Name}: {ex.Message}");
-            return;
-        }
-
-        if (pendingCount == 0)
-        {
-            ShowInfo("没有待处理恢复", "当前没有需要放弃的 unresolved 会话。", InfoBarSeverity.Success);
-            return;
-        }
-
-        if (pendingCount != 1)
-        {
-            ShowInfo(
-                "不能批量接受当前桌面",
-                $"检测到 {pendingCount} 笔 unresolved 会话。v1 不会批量放弃恢复证据。",
-                InfoBarSeverity.Error);
-            return;
-        }
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = "接受当前桌面并结束恢复？",
-            Content = new TextBlock
-            {
-                Text =
-                    "这个操作不会移动任何桌面图标。\n\n" +
-                    "你是在明确告诉 Tessel：当前真实桌面可以作为新的现实基线，不再尝试把这笔会话恢复到 Original 或 Desired。" +
-                    "恢复会话、Safety Snapshot、Writer Attempts 和失败证据仍会保留，只把这笔会话标记为“用户已接受当前状态”，从而解除新的布局应用锁。\n\n" +
-                    "仅当你确认当前桌面布局可以放弃时使用。",
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 540,
-            },
-            PrimaryButtonText = "接受当前桌面",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Close,
-        };
-
-        var choice = await dialog.ShowAsync();
-        if (choice != ContentDialogResult.Primary)
-        {
-            ShowInfo("已取消", "恢复锁保持不变，没有执行 Writer。", InfoBarSeverity.Informational);
-            return;
-        }
-
         SetRecoveryUiBusy(true, "正在记录用户对当前桌面的明确裁决…");
 
         try
@@ -179,7 +132,6 @@ public sealed partial class LayoutManagementView
     {
         _directApplyInProgress = busy;
         ReconcileRecoveryButton.IsEnabled = !busy;
-        AcceptCurrentDesktopButton.IsEnabled = !busy;
         ApplyToDesktopButton.IsEnabled = !busy
             && _latestPreview is not null
             && _latestPreview.Plan.IsComplete
@@ -225,7 +177,7 @@ public sealed partial class LayoutManagementView
             case DesktopLayoutRecoveryProductOutcome.StillNeedsAttention:
                 ShowInfo(
                     "当前桌面仍需要人工确认",
-                    $"恢复协调器已 fresh 检查，但当前事实不足以安全自动收敛。Tessel 不会猜测写入。若你愿意放弃这笔恢复，可使用“接受当前桌面”。{issueText}",
+                    $"恢复协调器已 fresh 检查，但当前事实不足以安全自动收敛。Tessel 不会猜测写入。若你愿意放弃这笔恢复，再点击“处理恢复状态”并选择“接受当前桌面”。{issueText}",
                     InfoBarSeverity.Error);
                 return;
 
