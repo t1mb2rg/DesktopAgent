@@ -58,6 +58,74 @@ public sealed class DesktopCrossDisplayWorkspaceEditorTests
     }
 
     [Fact]
+    public void CompleteTargetMigrations_ClearsPendingAuthorization_ButKeepsStableRules()
+    {
+        var sourceZone = Zone("源区", 0);
+        var targetZone = Zone("目标区", 0);
+        var source = Draft(
+            @"\\.\DISPLAY1",
+            sourceZone,
+            DesktopLayoutIconRule.ForZoneOverride("icon-a", sourceZone.ZoneId));
+        var target = Draft(@"\\.\DISPLAY2", targetZone);
+
+        var pending = DesktopCrossDisplayWorkspaceEditor.Reassign(
+            new[] { source, target },
+            null,
+            "icon-a",
+            @"\\.\DISPLAY1",
+            @"\\.\DISPLAY2",
+            targetZone.ZoneId);
+
+        var committed = DesktopCrossDisplayWorkspaceEditor.CompleteTargetMigrations(
+            pending.Drafts,
+            pending.Migrations,
+            @"\\.\DISPLAY2",
+            new[] { "icon-a" });
+
+        Assert.Empty(committed.Migrations);
+
+        var committedSource = Assert.Single(committed.Drafts, draft =>
+            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY1");
+        var committedTarget = Assert.Single(committed.Drafts, draft =>
+            draft.TargetDisplayBinding.DeviceName == @"\\.\DISPLAY2");
+
+        Assert.Empty(committedSource.ExplicitInboundStableIds);
+        Assert.Empty(committedTarget.ExplicitInboundStableIds);
+        Assert.Equal(
+            DesktopLayoutIconRuleKind.Exclude,
+            Assert.Single(committedSource.RuleSet.Rules, rule => rule.StableId == "icon-a").Kind);
+        var targetRule = Assert.Single(committedTarget.RuleSet.Rules, rule => rule.StableId == "icon-a");
+        Assert.Equal(DesktopLayoutIconRuleKind.ZoneOverride, targetRule.Kind);
+        Assert.Equal(targetZone.ZoneId, targetRule.TargetZoneId);
+    }
+
+    [Fact]
+    public void CompleteTargetMigrations_RejectsWrongTargetDisplay()
+    {
+        var sourceZone = Zone("源区", 0);
+        var targetZone = Zone("目标区", 0);
+        var pending = DesktopCrossDisplayWorkspaceEditor.Reassign(
+            new[]
+            {
+                Draft(@"\\.\DISPLAY1", sourceZone,
+                    DesktopLayoutIconRule.ForZoneOverride("icon-a", sourceZone.ZoneId)),
+                Draft(@"\\.\DISPLAY2", targetZone),
+            },
+            null,
+            "icon-a",
+            @"\\.\DISPLAY1",
+            @"\\.\DISPLAY2",
+            targetZone.ZoneId);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            DesktopCrossDisplayWorkspaceEditor.CompleteTargetMigrations(
+                pending.Drafts,
+                pending.Migrations,
+                @"\\.\DISPLAY1",
+                new[] { "icon-a" }));
+    }
+
+    [Fact]
     public void Reassign_RejectsSecondPendingMigrationForSameStableId()
     {
         var z1 = Zone("D1", 0);
