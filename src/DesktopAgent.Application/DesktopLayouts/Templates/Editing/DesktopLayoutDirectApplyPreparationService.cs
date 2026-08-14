@@ -94,8 +94,8 @@ public static class DesktopLayoutDirectApplyPreparationService
 
     /// <summary>
     /// 判断当前编辑器状态是否仍与用户看过的冻结 Draft 具有同一物理执行语义。
-    /// 名称变化不影响坐标，因此有意忽略 Name；几何、排序、流向、容量、显示器绑定和 RuleSet 必须完全一致。
-    /// 显式跨屏入站集合不存放在 Draft 中，由 Preview 黑匣子单独冻结和比较。
+    /// 名称变化不影响坐标，因此有意忽略 Name；几何、排序、流向、容量、显示器绑定、
+    /// RuleSet 与显式跨屏授权都必须完全一致。
     /// </summary>
     public static bool HasSameExecutionSemantics(
         DesktopLayoutEditDraft current,
@@ -112,6 +112,13 @@ public static class DesktopLayoutDirectApplyPreparationService
                 current.TargetDisplayBinding.DeviceName ?? string.Empty,
                 frozen.TargetDisplayBinding.DeviceName ?? string.Empty,
                 StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!HasSameExplicitInboundSemantics(
+                current.ExplicitInboundStableIds,
+                frozen.ExplicitInboundStableIds))
         {
             return false;
         }
