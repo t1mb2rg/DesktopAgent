@@ -31,6 +31,15 @@ internal sealed record AiDesktopUnderstandingProductResult(
         Status == AiDesktopUnderstandingProductStatus.Success && Draft is not null;
 }
 
+internal sealed record AiProviderProbeProductResult(
+    IntelligenceProviderStatus Status,
+    string? Category,
+    int? HttpStatusCode,
+    string? Message)
+{
+    internal bool Succeeded => Status == IntelligenceProviderStatus.Success;
+}
+
 /// <summary>
 /// M5-07.6 产品接入层：把 fresh read-only DesktopObservation 转换为 M4-02
 /// DesktopFirstRunUnderstandingRequest，并调用既有 OpenAI-compatible Provider。
@@ -39,6 +48,53 @@ internal sealed record AiDesktopUnderstandingProductResult(
 internal sealed class AiDesktopUnderstandingService
 {
     internal static readonly TimeSpan ProductUnderstandingTimeout = TimeSpan.FromSeconds(90);
+
+    /// <summary>
+    /// 轻量 Provider 探针。只复用现有 M4 分类 Provider 验证 BaseUri / Model / Secret /
+    /// OpenAI-compatible JSON transport，不读取真实桌面，也不触碰 Writer。
+    /// </summary>
+    internal async Task<AiProviderProbeProductResult> ProbeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var settingsStore = new JsonDesktopProductSettingsStore(
+            DesktopAgentDataPaths.DefaultSettingsPath);
+        await settingsStore.InitializeAsync(cancellationToken);
+        var settings = await settingsStore.GetAsync(cancellationToken);
+
+        var options = DesktopProductIntelligenceOptionsFactory.Create(settings);
+        if (options is null)
+        {
+            return new AiProviderProbeProductResult(
+                IntelligenceProviderStatus.NotConfigured,
+                Category: null,
+                HttpStatusCode: null,
+                Message: "AI 当前已关闭，请先在设置中配置并启用 Provider。");
+        }
+
+        using var httpClient = new HttpClient();
+        var secretStore = new DpapiIntelligenceSecretStore(
+            DesktopAgentDataPaths.DefaultSecretsDirectory);
+        var provider = new OpenAiCompatibleDesktopIntelligenceProvider(
+            httpClient,
+            options,
+            secretStore);
+
+        var request = new DesktopItemClassificationRequest(
+            new DesktopItemFacts(
+                "tessel-provider-probe",
+                "Tessel Provider Probe.txt",
+                ItemKind.File,
+                ".txt",
+                isSystemItem: false,
+                isFileSystemItem: true));
+
+        var result = await provider.ClassifyAsync(request, cancellationToken);
+        return new AiProviderProbeProductResult(
+            result.Status,
+            result.Suggestion?.Category,
+            result.HttpStatusCode,
+            result.DiagnosticMessage);
+    }
 
     internal async Task<AiDesktopUnderstandingProductResult> AnalyzeAsync(
         string? previousIntentSummary,
