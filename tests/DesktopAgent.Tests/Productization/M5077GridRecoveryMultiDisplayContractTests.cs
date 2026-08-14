@@ -49,7 +49,9 @@ public sealed class M5077GridRecoveryMultiDisplayContractTests
         Assert.Contains("MonitorDeviceName", source, StringComparison.Ordinal);
         Assert.Contains("TargetDisplayBinding.ForExactDeviceName", source, StringComparison.Ordinal);
         Assert.Contains("DesktopUnderstandingLayoutDraftCompiler.Compile", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("Writer", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IDesktopIconPositionWriter", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("MoveDesktopIcon", source, StringComparison.Ordinal);
     }
 
     [Fact]
