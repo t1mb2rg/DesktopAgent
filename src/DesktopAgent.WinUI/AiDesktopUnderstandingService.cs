@@ -1,5 +1,6 @@
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Intelligence;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.Productization;
@@ -25,7 +26,8 @@ internal sealed record AiDesktopUnderstandingProductResult(
     string? ActiveLayoutName,
     IntelligenceProviderStatus? ProviderStatus,
     int? HttpStatusCode,
-    string? Message)
+    string? Message,
+    DesktopObservation? Observation = null)
 {
     internal bool Succeeded =>
         Status == AiDesktopUnderstandingProductStatus.Success && Draft is not null;
@@ -44,17 +46,12 @@ internal sealed record AiProviderProbeProductResult(
 /// M5-07.6 产品接入层：把 fresh read-only DesktopObservation 转换为 M4-02
 /// DesktopFirstRunUnderstandingRequest，并调用既有 OpenAI-compatible Provider。
 /// 这里只形成语义 Draft，不构造 Planner / Coordinator / Writer，也不产生物理坐标副作用。
+/// 成功结果保留同一次本地 Observation，仅供后续本地多显示器分桶；它从不发送给 Provider。
 /// </summary>
 internal sealed class AiDesktopUnderstandingService
 {
-    // 首次/完整桌面理解优先保证信息完整性。M4 Provider 默认 30 秒保持冻结；
-    // 产品层仅为这一条天然重请求使用既有 v1.0 契约允许的最大 5 分钟有界预算。
     internal static readonly TimeSpan ProductUnderstandingTimeout = TimeSpan.FromMinutes(5);
 
-    /// <summary>
-    /// 轻量 Provider 探针。只复用现有 M4 分类 Provider 验证 BaseUri / Model / Secret /
-    /// OpenAI-compatible JSON transport，不读取真实桌面，也不触碰 Writer。
-    /// </summary>
     internal async Task<AiProviderProbeProductResult> ProbeAsync(
         CancellationToken cancellationToken = default)
     {
@@ -147,7 +144,8 @@ internal sealed class AiDesktopUnderstandingService
                 Message: capture.Issues.FirstOrDefault()?.Message ?? "当前桌面暂时不可读取。");
         }
 
-        var icons = capture.Observation.Icons;
+        var observation = capture.Observation;
+        var icons = observation.Icons;
         if (icons.Count == 0)
         {
             return new AiDesktopUnderstandingProductResult(
@@ -172,7 +170,6 @@ internal sealed class AiDesktopUnderstandingService
                 Message: $"当前桌面有 {icons.Count} 个项目，超过单轮 AI 理解上限 {DesktopFirstRunUnderstandingRequest.MaxItems}。请先减少桌面项目后重试。");
         }
 
-        // 首次完整理解不抽样：fresh 观察到的全部项目都进入既有 M4-02 语义合同。
         var facts = icons.Select(ToFacts).ToArray();
         var (activeLayoutName, existingZones) = await LoadExistingZonesAsync(
             settings.ActiveLayoutTemplateId,
@@ -213,7 +210,8 @@ internal sealed class AiDesktopUnderstandingService
             activeLayoutName,
             IntelligenceProviderStatus.Success,
             HttpStatusCode: null,
-            Message: null);
+            Message: null,
+            Observation: observation);
     }
 
     private static DesktopItemFacts ToFacts(DesktopIconDescriptor icon)
