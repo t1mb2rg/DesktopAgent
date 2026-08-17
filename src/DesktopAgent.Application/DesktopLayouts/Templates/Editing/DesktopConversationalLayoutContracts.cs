@@ -145,6 +145,8 @@ public sealed record DesktopLayoutConversationState
             static pair => pair.Key,
             static pair => pair.Value,
             StringComparer.Ordinal);
+        foreach (var key in delta.RemoveCategoryDisplayTargetKeys)
+            categoryTargets.Remove(key);
         foreach (var pair in delta.CategoryDisplayTargets)
             categoryTargets[pair.Key] = pair.Value;
 
@@ -152,6 +154,8 @@ public sealed record DesktopLayoutConversationState
             static pair => pair.Key,
             static pair => pair.Value,
             StringComparer.Ordinal);
+        foreach (var key in delta.RemoveItemDisplayTargetStableIds)
+            itemTargets.Remove(key);
         foreach (var pair in delta.ItemDisplayTargets)
             itemTargets[pair.Key] = pair.Value;
 
@@ -159,6 +163,8 @@ public sealed record DesktopLayoutConversationState
             static pair => pair.Key,
             static pair => pair.Value,
             StringComparer.Ordinal);
+        foreach (var key in delta.RemoveDisplayLoadPreferenceRefs)
+            loads.Remove(key);
         foreach (var pair in delta.DisplayLoadPreferences)
             loads[pair.Key] = pair.Value;
 
@@ -229,22 +235,28 @@ public sealed record DesktopLayoutConversationState
 }
 
 /// <summary>
-/// 一轮轻量 AI 对话只返回变化，不重新生成全部 123 个 Assignment。
+/// 一轮轻量 AI 对话只返回变化，不重新生成全部 Assignment。
 /// </summary>
 public sealed record DesktopLayoutConversationDelta
 {
     public string IntentSummary { get; }
     public IReadOnlyDictionary<string, string> CategoryDisplayTargets { get; }
+    public IReadOnlyList<string> RemoveCategoryDisplayTargetKeys { get; }
     public IReadOnlyDictionary<string, string> ItemDisplayTargets { get; }
+    public IReadOnlyList<string> RemoveItemDisplayTargetStableIds { get; }
     public IReadOnlyDictionary<string, DesktopDisplayLoadPreference> DisplayLoadPreferences { get; }
+    public IReadOnlyList<string> RemoveDisplayLoadPreferenceRefs { get; }
     public IReadOnlyList<DesktopReservedRegionConstraint> UpsertReservedRegions { get; }
     public IReadOnlyList<string> RemoveReservedRegionKeys { get; }
 
     public DesktopLayoutConversationDelta(
         string intentSummary,
         IReadOnlyDictionary<string, string>? categoryDisplayTargets = null,
+        IReadOnlyList<string>? removeCategoryDisplayTargetKeys = null,
         IReadOnlyDictionary<string, string>? itemDisplayTargets = null,
+        IReadOnlyList<string>? removeItemDisplayTargetStableIds = null,
         IReadOnlyDictionary<string, DesktopDisplayLoadPreference>? displayLoadPreferences = null,
+        IReadOnlyList<string>? removeDisplayLoadPreferenceRefs = null,
         IReadOnlyList<DesktopReservedRegionConstraint>? upsertReservedRegions = null,
         IReadOnlyList<string>? removeReservedRegionKeys = null)
     {
@@ -253,10 +265,13 @@ public sealed record DesktopLayoutConversationDelta
 
         IntentSummary = intentSummary.Trim();
         CategoryDisplayTargets = CopyStringMap(categoryDisplayTargets);
+        RemoveCategoryDisplayTargetKeys = CopyStringList(removeCategoryDisplayTargetKeys);
         ItemDisplayTargets = CopyStringMap(itemDisplayTargets);
+        RemoveItemDisplayTargetStableIds = CopyStringList(removeItemDisplayTargetStableIds);
         DisplayLoadPreferences = CopyLoadMap(displayLoadPreferences);
+        RemoveDisplayLoadPreferenceRefs = CopyStringList(removeDisplayLoadPreferenceRefs);
         UpsertReservedRegions = Array.AsReadOnly((upsertReservedRegions ?? []).ToArray());
-        RemoveReservedRegionKeys = Array.AsReadOnly((removeReservedRegionKeys ?? []).ToArray());
+        RemoveReservedRegionKeys = CopyStringList(removeReservedRegionKeys);
     }
 
     private static IReadOnlyDictionary<string, string> CopyStringMap(
@@ -270,6 +285,9 @@ public sealed record DesktopLayoutConversationDelta
         => source is null
             ? new Dictionary<string, DesktopDisplayLoadPreference>(StringComparer.Ordinal)
             : source.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+
+    private static IReadOnlyList<string> CopyStringList(IReadOnlyList<string>? source)
+        => source is null ? Array.Empty<string>() : Array.AsReadOnly(source.ToArray());
 }
 
 public sealed record DesktopLayoutConversationRequest
