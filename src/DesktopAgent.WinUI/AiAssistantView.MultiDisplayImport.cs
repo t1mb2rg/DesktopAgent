@@ -28,17 +28,24 @@ public sealed partial class AiAssistantView
         {
             var workspace = DesktopUnderstandingMultiDisplayWorkspaceCompiler.Compile(
                 latest.Draft,
-                latest.Observation);
+                latest.Observation,
+                _conversationState);
 
             if (workspace.Displays.Count == 0)
                 throw new InvalidOperationException("当前 AI Assignment 没有任何项目能够安全归属到已观察的显示器。");
             if (workspace.UnscopedAssignmentCount != 0)
                 throw new InvalidOperationException(
-                    $"有 {workspace.UnscopedAssignmentCount} 个 AI Assignment 无法从本次 fresh 观察确定显示器归属。为避免猜测，已拒绝导入。" );
+                    $"有 {workspace.UnscopedAssignmentCount} 个 AI Assignment 无法从基础 Observation 确定显示器归属。为避免猜测，已拒绝导入；请重新理解桌面。" );
             if (LayoutWorkspaceImportRequested is null)
                 throw new InvalidOperationException("布局工作台当前没有挂载多显示器 AI 草案导入入口。");
 
             LayoutWorkspaceImportRequested.Invoke(workspace);
+            AiStatusBar.Severity = InfoBarSeverity.Success;
+            AiStatusBar.Title = "当前布局意图已送入工作台";
+            AiStatusBar.Message = workspace.CrossDisplayAssignmentCount == 0
+                ? "本次没有显式跨屏目标；保留区域和各屏 Zone 已由本地编译器确定。"
+                : $"本地编译出 {workspace.CrossDisplayAssignmentCount} 个显式跨屏目标。它们仍需在布局工作台 Preview / Confirm 后才能启动 Writer。";
+            AiStatusBar.IsOpen = true;
         }
         catch (Exception ex)
         {
