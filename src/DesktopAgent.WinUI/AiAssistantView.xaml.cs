@@ -9,10 +9,11 @@ namespace DesktopAgent.WinUI;
 public sealed partial class AiAssistantView : UserControl
 {
     private readonly AiDesktopUnderstandingService _understandingService = new();
+    private readonly AiDesktopLayoutConversationService _layoutConversationService = new();
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _probeCts;
-    private string? _currentIntentSummary;
     private AiDesktopUnderstandingProductResult? _latestSuccessfulUnderstanding;
+    private DesktopLayoutConversationState _conversationState = DesktopLayoutConversationState.Empty;
 
     internal event Action<DesktopUnderstandingLayoutDraftCompiler.CompilationResult>?
         LayoutDraftImportRequested;
@@ -96,13 +97,46 @@ public sealed partial class AiAssistantView : UserControl
         if (IsRequestActive)
             return;
 
-        AiStatusBar.Severity = InfoBarSeverity.Informational;
-        AiStatusBar.Title = "正在完整理解当前桌面";
-        AiStatusBar.Message = "Tessel 会分析本次 fresh 观察到的全部桌面项目。项目较多时可能需要几分钟，你可以随时取消；期间不会调用 Writer。";
-        AiStatusBar.IsOpen = true;
+        var guidanceText = AiGuidanceTextBox.Text.Trim();
+        if (_latestSuccessfulUnderstanding?.Draft is null)
+        {
+            await RunFullUnderstandingAsync(guidanceText.Length == 0 ? null : guidanceText);
+            return;
+        }
+
+        if (guidanceText.Length == 0)
+        {
+            AiStatusBar.Severity = InfoBarSeverity.Informational;
+            AiStatusBar.Title = "写一句你想怎么调整";
+            AiStatusBar.Message = "桌面语义模型已经建立。现在只需要描述布局修正，例如“大多数放副屏，主屏中间留空看壁纸”。";
+            AiStatusBar.IsOpen = true;
+            return;
+        }
+
+        await RunLayoutConversationAsync(guidanceText);
+    }
+
+    private async void RefreshUnderstanding_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsRequestActive)
+            return;
 
         var guidanceText = AiGuidanceTextBox.Text.Trim();
-        var guidance = guidanceText.Length == 0 ? null : guidanceText;
+        await RunFullUnderstandingAsync(guidanceText.Length == 0 ? null : guidanceText);
+    }
+
+    private async Task RunFullUnderstandingAsync(string? guidance)
+    {
+        AiStatusBar.Severity = InfoBarSeverity.Informational;
+        AiStatusBar.Title = _latestSuccessfulUnderstanding is null
+            ? "正在建立桌面语义模型"
+            : "正在重新理解当前桌面";
+        AiStatusBar.Message = "这一步会 fresh 读取并分析全部桌面项目，可能需要几分钟；不会调用 Writer。完成后，后续布局修正会恢复为轻量 Delta 对话。";
+        AiStatusBar.IsOpen = true;
+
+        var previousSummary = _conversationState.IntentSummary.Length > 0
+            ? _conversationState.IntentSummary
+            : _latestSuccessfulUnderstanding?.Draft?.IntentSummary;
         var cts = new CancellationTokenSource();
         _analysisCts = cts;
         SetBusy(true);
@@ -110,7 +144,7 @@ public sealed partial class AiAssistantView : UserControl
         try
         {
             var result = await _understandingService.AnalyzeAsync(
-                _currentIntentSummary,
+                previousSummary,
                 guidance,
                 cts.Token);
 
@@ -120,16 +154,17 @@ public sealed partial class AiAssistantView : UserControl
                 return;
             }
 
-            if (result.Succeeded && result.Draft is not null)
+            if (result.Succeeded && result.Draft is not null && result.Observation is not null)
             {
                 _latestSuccessfulUnderstanding = result;
+                _conversationState = DesktopLayoutConversationState.Empty;
                 RenderDraft(result);
-                _currentIntentSummary = result.Draft.IntentSummary;
                 AiGuidanceTextBox.Text = string.Empty;
-                AiAnalyzeButton.Content = "根据修正重新分析";
+                AiAnalyzeButton.Content = "应用这条修正";
+                AiRefreshUnderstandingButton.Visibility = Visibility.Visible;
                 AiStatusBar.Severity = InfoBarSeverity.Success;
-                AiStatusBar.Title = "AI 已完成桌面理解";
-                AiStatusBar.Message = "结果仍是语义草案，没有调用 Writer，也没有移动任何图标。";
+                AiStatusBar.Title = "桌面语义模型已建立";
+                AiStatusBar.Message = $"已完整理解 {result.ObservedItemCount} 个项目。之后的对话不会重新跑这批项目，除非你明确点击“重新理解桌面”。";
                 AiStatusBar.IsOpen = true;
                 return;
             }
@@ -143,7 +178,79 @@ public sealed partial class AiAssistantView : UserControl
         catch (Exception ex)
         {
             AiStatusBar.Severity = InfoBarSeverity.Error;
-            AiStatusBar.Title = "AI 分析没有完成";
+            AiStatusBar.Title = "AI 完整理解没有完成";
+            AiStatusBar.Message = ex.Message;
+            AiStatusBar.IsOpen = true;
+        }
+        finally
+        {
+            if (ReferenceEquals(_analysisCts, cts))
+                _analysisCts = null;
+            cts.Dispose();
+            SetBusy(false);
+        }
+    }
+
+    private async Task RunLayoutConversationAsync(string guidance)
+    {
+        var latest = _latestSuccessfulUnderstanding;
+        if (latest?.Draft is null || latest.Observation is null)
+            throw new InvalidOperationException("轻量布局对话需要先建立完整桌面语义模型。");
+
+        AiStatusBar.Severity = InfoBarSeverity.Informational;
+        AiStatusBar.Title = "正在应用布局修正";
+        AiStatusBar.Message = "这轮不会重新读取或重新分类全部桌面，只让 AI 对已有语义模型返回一个 Layout Delta。";
+        AiStatusBar.IsOpen = true;
+
+        var cts = new CancellationTokenSource();
+        _analysisCts = cts;
+        SetBusy(true);
+
+        try
+        {
+            var request = DesktopLayoutConversationContextBuilder.Build(
+                latest.Draft,
+                latest.Observation,
+                _conversationState,
+                guidance);
+            var result = await _layoutConversationService.PlanAsync(request, cts.Token);
+
+            if (cts.IsCancellationRequested)
+            {
+                ShowCancelled();
+                return;
+            }
+
+            if (!result.Succeeded || result.Delta is null)
+            {
+                AiStatusBar.Severity = result.Status == IntelligenceProviderStatus.Cancelled
+                    ? InfoBarSeverity.Informational
+                    : InfoBarSeverity.Error;
+                AiStatusBar.Title = "这条布局修正没有完成";
+                AiStatusBar.Message = FormatProviderFailure(
+                    result.Status,
+                    result.HttpStatusCode,
+                    result.Message);
+                AiStatusBar.IsOpen = true;
+                return;
+            }
+
+            _conversationState = _conversationState.Apply(result.Delta);
+            RenderConversationState();
+            AiGuidanceTextBox.Text = string.Empty;
+            AiStatusBar.Severity = InfoBarSeverity.Success;
+            AiStatusBar.Title = "布局修正已记住";
+            AiStatusBar.Message = BuildDeltaSummary(result.Delta);
+            AiStatusBar.IsOpen = true;
+        }
+        catch (OperationCanceledException)
+        {
+            ShowCancelled();
+        }
+        catch (Exception ex)
+        {
+            AiStatusBar.Severity = InfoBarSeverity.Error;
+            AiStatusBar.Title = "无法应用这条布局修正";
             AiStatusBar.Message = ex.Message;
             AiStatusBar.IsOpen = true;
         }
@@ -197,6 +304,7 @@ public sealed partial class AiAssistantView : UserControl
     private void SetBusy(bool busy)
     {
         AiProbeButton.IsEnabled = !busy;
+        AiRefreshUnderstandingButton.IsEnabled = !busy;
         AiAnalyzeButton.IsEnabled = !busy;
         AiImportLayoutButton.IsEnabled = !busy && _latestSuccessfulUnderstanding?.Draft is not null;
         AiGuidanceTextBox.IsEnabled = !busy;
@@ -210,19 +318,54 @@ public sealed partial class AiAssistantView : UserControl
         var draft = result.Draft!;
         AiResultCard.Visibility = Visibility.Visible;
         AiDesktopSummaryText.Text = draft.DesktopSummary;
-        AiIntentSummaryText.Text = draft.IntentSummary;
         AiResultMetaText.Text = result.ActiveLayoutName is null
-            ? $"Fresh 观察并分析了 {result.ObservedItemCount} 个桌面项目 · 当前未使用布局作为 Zone 上下文"
-            : $"Fresh 观察并分析了 {result.ObservedItemCount} 个桌面项目 · Zone 上下文来自“{result.ActiveLayoutName}”";
+            ? $"桌面模型 · {result.ObservedItemCount} 个项目 · 当前未使用布局作为 Zone 上下文"
+            : $"桌面模型 · {result.ObservedItemCount} 个项目 · Zone 上下文来自“{result.ActiveLayoutName}”";
+        RenderConversationState();
+
+        AiQuestionsPanel.Children.Clear();
+        if (draft.Questions.Count == 0)
+        {
+            AiQuestionsPanel.Children.Add(CreateSecondaryText("暂时没有需要你确认的问题。"));
+        }
+        else
+        {
+            foreach (var question in draft.Questions)
+                AiQuestionsPanel.Children.Add(CreateSecondaryText($"• {question.Text}"));
+        }
+    }
+
+    private void RenderConversationState()
+    {
+        var draft = _latestSuccessfulUnderstanding?.Draft;
+        if (draft is null)
+            return;
+
+        AiIntentSummaryText.Text = _conversationState.IntentSummary.Length == 0
+            ? draft.IntentSummary
+            : _conversationState.IntentSummary;
 
         AiCategoriesPanel.Children.Clear();
         foreach (var category in draft.Categories)
         {
             var assignmentCount = draft.Assignments.Count(assignment =>
                 string.Equals(assignment.CategoryKey, category.Key, StringComparison.Ordinal));
+            var targetText = _conversationState.CategoryDisplayTargets.TryGetValue(category.Key, out var displayRef)
+                ? $" → {FormatDisplayRef(displayRef)}"
+                : string.Empty;
             AiCategoriesPanel.Children.Add(CreateResultItem(
-                $"{category.Name} · {assignmentCount} 项",
+                $"{category.Name} · {assignmentCount} 项{targetText}",
                 category.Description));
+        }
+
+        if (_conversationState.DisplayLoadPreferences.Count > 0)
+        {
+            var densityText = string.Join(
+                " · ",
+                _conversationState.DisplayLoadPreferences
+                    .OrderBy(static pair => pair.Key, StringComparer.Ordinal)
+                    .Select(pair => $"{FormatDisplayRef(pair.Key)} {FormatLoad(pair.Value)}"));
+            AiCategoriesPanel.Children.Add(CreateSecondaryText($"屏幕负载偏好：{densityText}"));
         }
 
         AiZonesPanel.Children.Clear();
@@ -243,16 +386,27 @@ public sealed partial class AiAssistantView : UserControl
             }
         }
 
-        AiQuestionsPanel.Children.Clear();
-        if (draft.Questions.Count == 0)
+        foreach (var reserved in _conversationState.ReservedRegions)
         {
-            AiQuestionsPanel.Children.Add(CreateSecondaryText("暂时没有需要你确认的问题。"));
+            AiZonesPanel.Children.Add(CreateResultItem(
+                $"保留空白 · {FormatDisplayRef(reserved.DisplayRef)} · {FormatPlacement(reserved.PlacementHint)} / {FormatSize(reserved.SizeHint)}",
+                reserved.Purpose));
         }
-        else
-        {
-            foreach (var question in draft.Questions)
-                AiQuestionsPanel.Children.Add(CreateSecondaryText($"• {question.Text}"));
-        }
+    }
+
+    private static string BuildDeltaSummary(DesktopLayoutConversationDelta delta)
+    {
+        var changes = delta.CategoryDisplayTargets.Count
+            + delta.ItemDisplayTargets.Count
+            + delta.DisplayLoadPreferences.Count
+            + delta.UpsertReservedRegions.Count
+            + delta.RemoveCategoryDisplayTargetKeys.Count
+            + delta.RemoveItemDisplayTargetStableIds.Count
+            + delta.RemoveDisplayLoadPreferenceRefs.Count
+            + delta.RemoveReservedRegionKeys.Count;
+        return changes == 0
+            ? "AI 更新了当前布局意图摘要，但没有要求改变屏幕分配或空间约束。没有读取桌面，也没有调用 Writer。"
+            : $"已记录 {changes} 项布局变化。没有重新扫描全部桌面，也没有调用 Writer；导入工作台后仍需预览和确认。";
     }
 
     private void ShowFailure(AiDesktopUnderstandingProductResult result)
@@ -386,5 +540,23 @@ public sealed partial class AiAssistantView : UserControl
             DesktopZoneSizeHint.Medium => "中等",
             DesktopZoneSizeHint.Large => "较大",
             _ => "弹性",
+        };
+
+    private static string FormatDisplayRef(string displayRef)
+        => displayRef switch
+        {
+            "primary" => "主屏",
+            _ when displayRef.StartsWith("secondary_", StringComparison.Ordinal) =>
+                $"副屏 {displayRef["secondary_".Length..]}",
+            _ => displayRef,
+        };
+
+    private static string FormatLoad(DesktopDisplayLoadPreference load)
+        => load switch
+        {
+            DesktopDisplayLoadPreference.Low => "低负载",
+            DesktopDisplayLoadPreference.Medium => "中负载",
+            DesktopDisplayLoadPreference.High => "高负载",
+            _ => "未指定",
         };
 }
