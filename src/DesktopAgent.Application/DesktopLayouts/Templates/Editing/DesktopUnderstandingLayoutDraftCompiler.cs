@@ -20,14 +20,32 @@ public static class DesktopUnderstandingLayoutDraftCompiler
         DesktopUnderstandingDraft understanding,
         string name = "AI 建议布局",
         TargetDisplayBinding? targetDisplayBinding = null)
+        => Compile(
+            understanding,
+            name,
+            targetDisplayBinding,
+            Array.Empty<DesktopReservedRegionConstraint>());
+
+    /// <summary>
+    /// 带负空间约束的确定性本地编译。ReservedRegion 只提供语义位置/大小，
+    /// 这里才把它变成 NormalizedRect，并从可分配空间中扣除。
+    /// </summary>
+    public static CompilationResult Compile(
+        DesktopUnderstandingDraft understanding,
+        string name,
+        TargetDisplayBinding? targetDisplayBinding,
+        IReadOnlyList<DesktopReservedRegionConstraint> reservedRegions)
     {
         ArgumentNullException.ThrowIfNull(understanding);
+        ArgumentNullException.ThrowIfNull(reservedRegions);
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Name 不能为空。", nameof(name));
         if (understanding.Zones.Count == 0)
             throw new InvalidOperationException("AI 没有建议可导入的逻辑 Zone。请先修正 AI 建议后再导入布局工作台。");
 
-        var compiledZones = CompileZones(understanding.Zones);
+        var compiledZones = reservedRegions.Count == 0
+            ? CompileZonesLegacy(understanding.Zones)
+            : CompileZonesWithReservedSpace(understanding.Zones, reservedRegions);
         var zoneIdsByKey = understanding.Zones
             .Select((zone, index) => (zone.Key, compiledZones[index].ZoneId))
             .ToDictionary(static pair => pair.Key, static pair => pair.ZoneId, StringComparer.Ordinal);
@@ -66,7 +84,7 @@ public static class DesktopUnderstandingLayoutDraftCompiler
             unmapped);
     }
 
-    private static IReadOnlyList<DesktopLayoutZone> CompileZones(
+    private static IReadOnlyList<DesktopLayoutZone> CompileZonesLegacy(
         IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones)
     {
         var count = semanticZones.Count;
@@ -104,8 +122,6 @@ public static class DesktopUnderstandingLayoutDraftCompiler
             cellByZoneKey.Add(candidate.Zone.Key, selected);
         }
 
-        // SizeHint 仍由本地确定性编译器解释。它不会让单个 Zone 任意扩张并产生重叠，
-        // 而是影响所在行/列在完整 0..10000 画布中的权重。
         var columnWeights = Enumerable.Repeat(1d, columns).ToArray();
         var rowWeights = Enumerable.Repeat(1d, rows).ToArray();
         foreach (var zone in semanticZones)
@@ -129,27 +145,197 @@ public static class DesktopUnderstandingLayoutDraftCompiler
                 yBounds[cell.Row],
                 xBounds[cell.Column + 1],
                 yBounds[cell.Row + 1]);
-
-            result[i] = new DesktopLayoutZone(
-                semanticZone.ExistingZoneId ?? Guid.NewGuid(),
-                semanticZone.Name,
-                bounds,
-                i,
-                bounds.Width >= bounds.Height
-                    ? ZonePlacementFlow.RowMajor
-                    : ZonePlacementFlow.ColumnMajor,
-                maxItemCount: null);
+            result[i] = CreateZone(semanticZone, bounds, i);
         }
 
-        // 这里故意借领域构造函数再做一次“不重叠 / ID / SortOrder”完整验证。
+        ValidateZones(result);
+        return Array.AsReadOnly(result);
+    }
+
+    private static IReadOnlyList<DesktopLayoutZone> CompileZonesWithReservedSpace(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyList<DesktopReservedRegionConstraint> reservedRegions)
+    {
+        var freeRects = new List<FreeRect>
+        {
+            new(0, 0, NormalizedRect.Scale, NormalizedRect.Scale),
+        };
+
+        foreach (var reserved in reservedRegions.OrderBy(static item => item.Key, StringComparer.Ordinal))
+        {
+            var cut = ResolveReservedRect(reserved);
+            var next = new List<FreeRect>();
+            foreach (var free in freeRects)
+                next.AddRange(Subtract(free, cut));
+            freeRects = next
+                .Where(static rect => rect.Width > 0 && rect.Height > 0)
+                .ToList();
+        }
+
+        while (freeRects.Count < semanticZones.Count)
+        {
+            var splitIndex = freeRects
+                .Select((rect, index) => (rect, index))
+                .Where(static item => item.rect.Width >= 2 || item.rect.Height >= 2)
+                .OrderByDescending(static item => item.rect.Area)
+                .ThenBy(static item => item.index)
+                .Select(static item => item.index)
+                .DefaultIfEmpty(-1)
+                .First();
+            if (splitIndex < 0)
+                throw new InvalidOperationException("保留区域占用过多空间，剩余画布无法容纳全部 Zone。");
+
+            var source = freeRects[splitIndex];
+            var (first, second) = Split(source);
+            freeRects.RemoveAt(splitIndex);
+            freeRects.Add(first);
+            freeRects.Add(second);
+        }
+
+        if (freeRects.Count == 0)
+            throw new InvalidOperationException("保留区域已经占满整个桌面，无法生成布局 Zone。");
+
+        var selectedByKey = new Dictionary<string, FreeRect>(StringComparer.Ordinal);
+        var available = freeRects.ToList();
+        foreach (var candidate in semanticZones
+                     .Select((zone, index) => new IndexedZone(zone, index))
+                     .OrderBy(static item => item.Zone.PlacementHint == DesktopZonePlacementHint.Unspecified ? 1 : 0)
+                     .ThenByDescending(static item => SizeWeight(item.Zone.SizeHint))
+                     .ThenBy(static item => item.Index))
+        {
+            var (targetX, targetY) = PlacementAnchor(candidate.Zone.PlacementHint);
+            var sizeWeight = SizeWeight(candidate.Zone.SizeHint);
+            var selected = available
+                .OrderBy(rect => SlotScore(rect, targetX, targetY, sizeWeight))
+                .ThenByDescending(static rect => rect.Area)
+                .ThenBy(static rect => rect.Top)
+                .ThenBy(static rect => rect.Left)
+                .First();
+            available.Remove(selected);
+            selectedByKey.Add(candidate.Zone.Key, selected);
+        }
+
+        var result = new DesktopLayoutZone[semanticZones.Count];
+        for (var i = 0; i < semanticZones.Count; i++)
+        {
+            var semanticZone = semanticZones[i];
+            var selected = selectedByKey[semanticZone.Key];
+            result[i] = CreateZone(
+                semanticZone,
+                new NormalizedRect(
+                    selected.Left,
+                    selected.Top,
+                    selected.Right,
+                    selected.Bottom),
+                i);
+        }
+
+        ValidateZones(result);
+        return Array.AsReadOnly(result);
+    }
+
+    private static FreeRect ResolveReservedRect(DesktopReservedRegionConstraint reserved)
+    {
+        var fraction = reserved.SizeHint switch
+        {
+            DesktopZoneSizeHint.Compact => 0.18d,
+            DesktopZoneSizeHint.Medium => 0.28d,
+            DesktopZoneSizeHint.Large => 0.40d,
+            _ => 0.24d,
+        };
+        var width = Math.Max(1, (int)Math.Round(NormalizedRect.Scale * fraction));
+        var height = width;
+        var (anchorX, anchorY) = PlacementAnchor(reserved.PlacementHint);
+
+        var left = anchorX switch
+        {
+            <= 0.01d => 0,
+            >= 0.99d => NormalizedRect.Scale - width,
+            _ => (NormalizedRect.Scale - width) / 2,
+        };
+        var top = anchorY switch
+        {
+            <= 0.01d => 0,
+            >= 0.99d => NormalizedRect.Scale - height,
+            _ => (NormalizedRect.Scale - height) / 2,
+        };
+
+        return new FreeRect(left, top, left + width, top + height);
+    }
+
+    private static IReadOnlyList<FreeRect> Subtract(FreeRect source, FreeRect cut)
+    {
+        var left = Math.Max(source.Left, cut.Left);
+        var top = Math.Max(source.Top, cut.Top);
+        var right = Math.Min(source.Right, cut.Right);
+        var bottom = Math.Min(source.Bottom, cut.Bottom);
+        if (left >= right || top >= bottom)
+            return new[] { source };
+
+        var result = new List<FreeRect>(4);
+        if (source.Top < top)
+            result.Add(new FreeRect(source.Left, source.Top, source.Right, top));
+        if (bottom < source.Bottom)
+            result.Add(new FreeRect(source.Left, bottom, source.Right, source.Bottom));
+        if (source.Left < left)
+            result.Add(new FreeRect(source.Left, top, left, bottom));
+        if (right < source.Right)
+            result.Add(new FreeRect(right, top, source.Right, bottom));
+        return result;
+    }
+
+    private static (FreeRect First, FreeRect Second) Split(FreeRect source)
+    {
+        if (source.Width >= source.Height && source.Width >= 2)
+        {
+            var split = source.Left + (source.Width / 2);
+            return (
+                new FreeRect(source.Left, source.Top, split, source.Bottom),
+                new FreeRect(split, source.Top, source.Right, source.Bottom));
+        }
+
+        if (source.Height >= 2)
+        {
+            var split = source.Top + (source.Height / 2);
+            return (
+                new FreeRect(source.Left, source.Top, source.Right, split),
+                new FreeRect(source.Left, split, source.Right, source.Bottom));
+        }
+
+        throw new InvalidOperationException("FreeRect 无法继续拆分。");
+    }
+
+    private static double SlotScore(FreeRect rect, double targetX, double targetY, double sizeWeight)
+    {
+        var centerX = ((rect.Left + rect.Right) / 2d) / NormalizedRect.Scale;
+        var centerY = ((rect.Top + rect.Bottom) / 2d) / NormalizedRect.Scale;
+        var distance = DistanceSquared(centerX, centerY, targetX, targetY);
+        var areaRatio = rect.Area / (double)(NormalizedRect.Scale * NormalizedRect.Scale);
+        return distance - (areaRatio * sizeWeight * 0.35d);
+    }
+
+    private static DesktopLayoutZone CreateZone(
+        DesktopUnderstandingZoneDraft semanticZone,
+        NormalizedRect bounds,
+        int sortOrder)
+        => new(
+            semanticZone.ExistingZoneId ?? Guid.NewGuid(),
+            semanticZone.Name,
+            bounds,
+            sortOrder,
+            bounds.Width >= bounds.Height
+                ? ZonePlacementFlow.RowMajor
+                : ZonePlacementFlow.ColumnMajor,
+            maxItemCount: null);
+
+    private static void ValidateZones(IReadOnlyList<DesktopLayoutZone> zones)
+    {
         _ = new DesktopLayoutTemplate(
             Guid.NewGuid(),
             "AI layout validation",
             version: 1,
             TargetDisplayBinding.ForPrimaryDisplay(),
-            result);
-
-        return Array.AsReadOnly(result);
+            zones);
     }
 
     private static int[] BuildBoundaries(IReadOnlyList<double> weights)
@@ -207,4 +393,10 @@ public static class DesktopUnderstandingLayoutDraftCompiler
 
     private sealed record IndexedZone(DesktopUnderstandingZoneDraft Zone, int Index);
     private sealed record GridCell(int Row, int Column, double CenterX, double CenterY);
+    private sealed record FreeRect(int Left, int Top, int Right, int Bottom)
+    {
+        public int Width => Right - Left;
+        public int Height => Bottom - Top;
+        public long Area => (long)Width * Height;
+    }
 }
