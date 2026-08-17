@@ -16,7 +16,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel Spacing="5">
                 <TextBlock Text="AI 助手" FontSize="30" FontWeight="SemiBold" />
-                <TextBlock Text="让 Tessel 理解当前桌面，再用你的修正逐轮校准。" Opacity="0.62" />
+                <TextBlock Text="完整理解一次，之后用轻量对话逐步调整布局。" Opacity="0.62" />
             </StackPanel>
             <ProgressRing x:Name="AiProgressRing" Grid.Column="1" Width="24" Height="24" IsActive="False" Visibility="Collapsed" VerticalAlignment="Center" />
         </Grid>
@@ -28,9 +28,9 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <TextBlock Text="✦" FontSize="34" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Top" />
                         <StackPanel Grid.Column="1" Spacing="5">
-                            <TextBlock Text="理解当前桌面" FontSize="20" FontWeight="SemiBold" />
-                            <TextBlock Text="Tessel 会 fresh 读取桌面项目名称、类型等受控语义事实，并将本次观察到的全部项目交给你在设置中配置的 OpenAI-compatible Provider。完整理解在桌面项目较多时可能需要几分钟，你可以随时取消。" TextWrapping="Wrap" Opacity="0.62" />
-                            <TextBlock Text="这一页只生成语义草案，不生成物理坐标，不调用 Writer，也不会移动任何桌面图标。显示器归属只在返回后由本地 fresh Observation 编排，不发送给 AI。" TextWrapping="Wrap" Opacity="0.48" />
+                            <TextBlock Text="桌面语义模型" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock Text="第一次“分析当前桌面”会 fresh 读取并完整理解全部桌面项目，这一步项目较多时可能需要几分钟。建立模型后，下面的每条修正只发送已有分类、语义屏幕和当前布局状态，不再重新分析所有项目。" TextWrapping="Wrap" Opacity="0.62" />
+                            <TextBlock Text="AI 仍然看不到 Windows DeviceName、物理坐标或 Writer。主屏 / 副屏只是语义引用；真正显示器映射、留白几何和跨屏执行全部由本地安全链处理。" TextWrapping="Wrap" Opacity="0.48" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -46,17 +46,17 @@
                         </StackPanel>
 
                         <StackPanel Spacing="5">
-                            <TextBlock Text="当前意图摘要" FontWeight="SemiBold" />
+                            <TextBlock Text="当前布局意图" FontWeight="SemiBold" />
                             <TextBlock x:Name="AiIntentSummaryText" TextWrapping="Wrap" Opacity="0.68" />
                         </StackPanel>
 
                         <StackPanel Spacing="7">
-                            <TextBlock Text="建议分类" FontWeight="SemiBold" />
+                            <TextBlock Text="语义分类与目标屏" FontWeight="SemiBold" />
                             <StackPanel x:Name="AiCategoriesPanel" Spacing="7" />
                         </StackPanel>
 
                         <StackPanel Spacing="7">
-                            <TextBlock Text="建议区域" FontWeight="SemiBold" />
+                            <TextBlock Text="建议区域与保留空间" FontWeight="SemiBold" />
                             <StackPanel x:Name="AiZonesPanel" Spacing="7" />
                         </StackPanel>
 
@@ -67,7 +67,7 @@
 
                         <Grid Margin="0,4,0,0" ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="导入会按本次 fresh Observation 的显示器归属，在本地生成一组未保存、未应用的单屏布局草案；每块屏仍独立预览和安全应用。" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.52" />
+                            <TextBlock Text="导入会把当前累计布局意图交给本地多屏编译器。跨屏目标变成显式迁入授权，保留区域会从可放置空间中真正扣除；所有草稿仍需预览和确认后才能写桌面。" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.52" />
                             <Button x:Name="AiImportLayoutButton" Grid.Column="1" Content="导入到布局工作台" IsEnabled="False" Click="ImportMultiDisplayLayoutDraft_Click" />
                         </Grid>
                     </StackPanel>
@@ -76,11 +76,18 @@
         </ScrollViewer>
 
         <Grid Grid.Row="2" ColumnSpacing="8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <TextBox x:Name="AiGuidanceTextBox" MaxLength="4096" PlaceholderText="例如：项目文件尽量放右边，课程资料放左上" VerticalAlignment="Center" />
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="AiGuidanceTextBox" MaxLength="4096" PlaceholderText="例如：大多数图标放副屏，主屏中间留空看壁纸" VerticalAlignment="Center" />
             <Button x:Name="AiProbeButton" Grid.Column="1" Content="测试 AI 连接" Click="TestAiConnection_Click" />
-            <Button x:Name="AiAnalyzeButton" Grid.Column="2" Content="分析当前桌面" Click="AnalyzeDesktop_Click" />
-            <Button x:Name="AiCancelButton" Grid.Column="3" Content="取消" Visibility="Collapsed" Click="CancelAnalysis_Click" />
+            <Button x:Name="AiRefreshUnderstandingButton" Grid.Column="2" Content="重新理解桌面" Visibility="Collapsed" Click="RefreshUnderstanding_Click" />
+            <Button x:Name="AiAnalyzeButton" Grid.Column="3" Content="分析当前桌面" Click="AnalyzeDesktop_Click" />
+            <Button x:Name="AiCancelButton" Grid.Column="4" Content="取消" Visibility="Collapsed" Click="CancelAnalysis_Click" />
         </Grid>
     </Grid>
 </UserControl>
