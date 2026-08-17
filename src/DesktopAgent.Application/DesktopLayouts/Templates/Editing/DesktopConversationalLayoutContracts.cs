@@ -141,15 +141,24 @@ public sealed record DesktopLayoutConversationState
     {
         ArgumentNullException.ThrowIfNull(delta);
 
-        var categoryTargets = new Dictionary<string, string>(CategoryDisplayTargets, StringComparer.Ordinal);
+        var categoryTargets = CategoryDisplayTargets.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
         foreach (var pair in delta.CategoryDisplayTargets)
             categoryTargets[pair.Key] = pair.Value;
 
-        var itemTargets = new Dictionary<string, string>(ItemDisplayTargets, StringComparer.Ordinal);
+        var itemTargets = ItemDisplayTargets.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
         foreach (var pair in delta.ItemDisplayTargets)
             itemTargets[pair.Key] = pair.Value;
 
-        var loads = new Dictionary<string, DesktopDisplayLoadPreference>(DisplayLoadPreferences, StringComparer.Ordinal);
+        var loads = DisplayLoadPreferences.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value,
+            StringComparer.Ordinal);
         foreach (var pair in delta.DisplayLoadPreferences)
             loads[pair.Key] = pair.Value;
 
@@ -243,18 +252,24 @@ public sealed record DesktopLayoutConversationDelta
             throw new ArgumentException("IntentSummary 不能为空。", nameof(intentSummary));
 
         IntentSummary = intentSummary.Trim();
-        CategoryDisplayTargets = new Dictionary<string, string>(
-            categoryDisplayTargets ?? new Dictionary<string, string>(),
-            StringComparer.Ordinal);
-        ItemDisplayTargets = new Dictionary<string, string>(
-            itemDisplayTargets ?? new Dictionary<string, string>(),
-            StringComparer.Ordinal);
-        DisplayLoadPreferences = new Dictionary<string, DesktopDisplayLoadPreference>(
-            displayLoadPreferences ?? new Dictionary<string, DesktopDisplayLoadPreference>(),
-            StringComparer.Ordinal);
+        CategoryDisplayTargets = CopyStringMap(categoryDisplayTargets);
+        ItemDisplayTargets = CopyStringMap(itemDisplayTargets);
+        DisplayLoadPreferences = CopyLoadMap(displayLoadPreferences);
         UpsertReservedRegions = Array.AsReadOnly((upsertReservedRegions ?? []).ToArray());
         RemoveReservedRegionKeys = Array.AsReadOnly((removeReservedRegionKeys ?? []).ToArray());
     }
+
+    private static IReadOnlyDictionary<string, string> CopyStringMap(
+        IReadOnlyDictionary<string, string>? source)
+        => source is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : source.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+
+    private static IReadOnlyDictionary<string, DesktopDisplayLoadPreference> CopyLoadMap(
+        IReadOnlyDictionary<string, DesktopDisplayLoadPreference>? source)
+        => source is null
+            ? new Dictionary<string, DesktopDisplayLoadPreference>(StringComparer.Ordinal)
+            : source.ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
 }
 
 public sealed record DesktopLayoutConversationRequest
