@@ -175,9 +175,10 @@ public sealed class AiProductIntegrationContractTests
         Assert.Contains("不会移动任何桌面图标", xaml, StringComparison.Ordinal);
         Assert.Contains("正在建立桌面语义模型", codeBehind, StringComparison.Ordinal);
         Assert.Contains("正在重新理解当前桌面", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("随时取消", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("CancelAnalysis_Click", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("AiCancelButton.Visibility", codeBehind, StringComparison.Ordinal);
         Assert.Contains("完整桌面理解超过 5 分钟", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("Fresh 观察并分析了", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("已完整理解", codeBehind, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
