@@ -1,4 +1,5 @@
 using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Displays;
