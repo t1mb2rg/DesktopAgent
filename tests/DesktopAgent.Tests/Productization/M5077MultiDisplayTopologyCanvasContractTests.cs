@@ -11,7 +11,11 @@ public sealed class M5077MultiDisplayTopologyCanvasContractTests
 
         Assert.Contains("virtualLeft", source, StringComparison.Ordinal);
         Assert.Contains("virtualTop", source, StringComparison.Ordinal);
-        Assert.Contains("display.Bounds.Left", source, StringComparison.Ordinal);
+        Assert.Contains("item.Display.Bounds.Left", source, StringComparison.Ordinal);
+        Assert.Contains("item.Display.Bounds.Top", source, StringComparison.Ordinal);
+        Assert.Contains("var bounds = display.Bounds;", source, StringComparison.Ordinal);
+        Assert.Contains("X(bounds.Left)", source, StringComparison.Ordinal);
+        Assert.Contains("Y(bounds.Top)", source, StringComparison.Ordinal);
         Assert.Contains("state.Draft.Zones", source, StringComparison.Ordinal);
         Assert.Contains("AiWorkspaceDisplayCombo.SelectedIndex", source, StringComparison.Ordinal);
         Assert.Contains("RenderActivePreviewAcrossTopology", source, StringComparison.Ordinal);
