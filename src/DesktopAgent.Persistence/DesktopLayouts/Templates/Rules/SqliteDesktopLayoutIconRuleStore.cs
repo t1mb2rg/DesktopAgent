@@ -199,12 +199,12 @@ public sealed class SqliteDesktopLayoutIconRuleStore : IDesktopLayoutIconRuleSto
 
     private static bool ZoneExists(
         SqliteConnection connection,
-        SqliteTransaction tx,
+        SqliteTransaction? tx,
         string templateIdStr,
         string zoneIdStr)
     {
         using var cmd = connection.CreateCommand();
-        cmd.Transaction = tx;
+        if (tx is not null) cmd.Transaction = tx;
         cmd.CommandText = @"
             SELECT COUNT(*) FROM desktop_layout_template_zones
             WHERE template_id = @tid AND zone_id = @zid;
