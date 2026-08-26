@@ -212,6 +212,39 @@ public sealed class AiProductIntegrationContractTests
         Assert.DoesNotContain("DesktopLayoutExecution", planningSource, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LogicalWorkspaceProductService_UsesFreshSafeSessionWithoutLegacyCompilerOrUiWiring()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiDesktopLogicalWorkspacePlanningService.cs"));
+        var aiSurface = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiAssistantView.xaml.cs"));
+
+        Assert.Contains("DesktopProductIntelligenceOptionsFactory.Create", service, StringComparison.Ordinal);
+        Assert.Contains("WindowsDesktopObservationSource", service, StringComparison.Ordinal);
+        Assert.Contains("OpenAiCompatibleDesktopLogicalWorkspacePlanner", service, StringComparison.Ordinal);
+        Assert.Contains("DesktopLogicalWorkspacePlanningSessionCoordinator", service, StringComparison.Ordinal);
+
+        var optionsGate = service.IndexOf("if (configuredOptions is null)", StringComparison.Ordinal);
+        var capture = service.IndexOf("observationSource.CaptureAsync", StringComparison.Ordinal);
+        Assert.True(optionsGate >= 0);
+        Assert.True(capture > optionsGate);
+
+        Assert.DoesNotContain("DesktopUnderstandingMultiDisplayWorkspaceCompiler", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("OpenAiCompatibleDesktopLayoutConversationProvider", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriterCommand", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopLayoutExecution", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("AiDesktopLogicalWorkspacePlanningService", aiSurface, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         for (var current = new DirectoryInfo(AppContext.BaseDirectory); current is not null; current = current.Parent)
