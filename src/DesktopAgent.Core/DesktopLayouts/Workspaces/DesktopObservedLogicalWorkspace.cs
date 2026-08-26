@@ -144,7 +144,7 @@ public sealed record DesktopObservedLogicalItem
         ItemKind = itemKind;
         CurrentDisplayRef = currentDisplayRef.Trim();
         CurrentCell = currentCell;
-        IsMovable = isMovable;
+        IsMovable = isMovable && itemKind != ItemKind.SystemItem;
         IsGridAligned = isGridAligned;
         _occupiedCells = Array.AsReadOnly(occupiedCellArray);
         CategoryKey = categoryKey?.Trim();
