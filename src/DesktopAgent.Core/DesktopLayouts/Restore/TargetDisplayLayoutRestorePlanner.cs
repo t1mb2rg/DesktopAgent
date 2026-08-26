@@ -317,7 +317,20 @@ public static class TargetDisplayLayoutRestorePlanner
             {
                 if (ci == selfCurrentIdx) continue; // 排除自身
 
-                if (!DesktopIconLayoutGeometry.TryCreateRect(currentReadResult.Icons[ci].PixelPosition, capabilities.Spacing, out var currentRect))
+                var currentIcon = currentReadResult.Icons[ci];
+                // PixelPosition is only an occupancy fact within its resolved monitor.
+                // A known icon on another display cannot occupy this target display's
+                // restore rectangle.  Unknown monitor ownership remains fail-closed.
+                if (currentIcon.MonitorDeviceName is not null
+                    && !string.Equals(
+                        currentIcon.MonitorDeviceName,
+                        targetDeviceName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!DesktopIconLayoutGeometry.TryCreateRect(currentIcon.PixelPosition, capabilities.Spacing, out var currentRect))
                     continue;
 
                 if (DesktopIconLayoutGeometry.Overlaps(targetRect, currentRect))

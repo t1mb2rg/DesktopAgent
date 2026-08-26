@@ -11,4 +11,5 @@ internal static class DesktopAgentDataPaths
     internal static string DefaultSettingsPath => TesselProductDataPaths.SettingsPath;
     internal static string DefaultSecretsDirectory => TesselProductDataPaths.SecretStoreDirectory;
     internal static string DefaultRadarCachePath => TesselProductDataPaths.RadarCachePath;
+    internal static string DefaultAiWorkspaceRecoveryPath => TesselProductDataPaths.AiWorkspaceRecoveryPath;
 }

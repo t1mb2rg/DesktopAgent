@@ -154,6 +154,77 @@ public sealed class DesktopUnderstandingMultiDisplayWorkspaceCompilerTests
         Assert.Equal(new[] { "p-game", "p-work" }, secondary.Draft.ExplicitInboundStableIds);
     }
 
+    [Fact]
+    public void Compile_SystemShellItemOnTargetDisplay_BecomesFixedObstacle()
+    {
+        var understanding = AppendAssignment(
+            CreateUnderstanding(),
+            new DesktopUnderstandingAssignment(
+                "recycle", "work", "work-zone", 1d, "系统 Shell 图标"));
+        var observation = AppendIcon(
+            CreateObservation(),
+            new DesktopIconDescriptor(
+                "recycle",
+                "回收站",
+                null,
+                ItemKind.SystemItem,
+                new PixelPoint(-870, 240),
+                @"\\.\DISPLAY2",
+                true,
+                false));
+        var state = MoveAllCategoriesToSecondary();
+
+        var result = DesktopUnderstandingMultiDisplayWorkspaceCompiler.Compile(
+            understanding,
+            observation,
+            state);
+
+        Assert.Equal(2, result.CrossDisplayAssignmentCount);
+        var secondary = Assert.Single(result.Displays,
+            item => item.Display.DeviceName == @"\\.\DISPLAY2");
+        var recycleRule = Assert.Single(secondary.Draft.RuleSet.Rules,
+            rule => rule.StableId == "recycle");
+        Assert.Equal(DesktopLayoutIconRuleKind.Exclude, recycleRule.Kind);
+        Assert.DoesNotContain("recycle", secondary.Draft.ExplicitInboundStableIds);
+    }
+
+    [Fact]
+    public void Compile_ExplicitTargetCannotMigrateSystemShellItemFromSourceDisplay()
+    {
+        var understanding = AppendAssignment(
+            CreateUnderstanding(),
+            new DesktopUnderstandingAssignment(
+                "recycle", "work", "work-zone", 1d, "系统 Shell 图标"));
+        var observation = AppendIcon(
+            CreateObservation(),
+            new DesktopIconDescriptor(
+                "recycle",
+                "回收站",
+                null,
+                ItemKind.SystemItem,
+                new PixelPoint(270, 240),
+                @"\\.\DISPLAY1",
+                true,
+                false));
+
+        var result = DesktopUnderstandingMultiDisplayWorkspaceCompiler.Compile(
+            understanding,
+            observation,
+            MoveAllCategoriesToSecondary());
+
+        Assert.Equal(2, result.CrossDisplayAssignmentCount);
+        var primary = Assert.Single(result.Displays,
+            item => item.Display.DeviceName == @"\\.\DISPLAY1");
+        Assert.Equal(1, primary.SourceAssignmentCount);
+        var recycleRule = Assert.Single(primary.Draft.RuleSet.Rules,
+            rule => rule.StableId == "recycle");
+        Assert.Equal(DesktopLayoutIconRuleKind.Exclude, recycleRule.Kind);
+
+        var secondary = Assert.Single(result.Displays,
+            item => item.Display.DeviceName == @"\\.\DISPLAY2");
+        Assert.DoesNotContain("recycle", secondary.Draft.ExplicitInboundStableIds);
+    }
+
     private static DesktopUnderstandingDraft CreateUnderstanding(Guid? workExistingZoneId = null)
     {
         var categories = new[]
@@ -190,6 +261,29 @@ public sealed class DesktopUnderstandingMultiDisplayWorkspaceCompilerTests
             assignments,
             Array.Empty<DesktopUnderstandingQuestion>());
     }
+
+    private static DesktopUnderstandingDraft AppendAssignment(
+        DesktopUnderstandingDraft understanding,
+        DesktopUnderstandingAssignment assignment)
+        => new(
+            understanding.IntentSummary,
+            understanding.DesktopSummary,
+            understanding.Categories,
+            understanding.Zones,
+            understanding.Assignments.Concat(new[] { assignment }),
+            understanding.Questions);
+
+    private static DesktopLayoutConversationState MoveAllCategoriesToSecondary()
+        => new(
+            "Move all movable items to the secondary display.",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["work"] = "secondary_1",
+                ["game"] = "secondary_1",
+            },
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            new Dictionary<string, DesktopDisplayLoadPreference>(StringComparer.Ordinal),
+            Array.Empty<DesktopReservedRegionConstraint>());
 
     private static DesktopObservation CreateObservation()
     {
@@ -229,6 +323,18 @@ public sealed class DesktopUnderstandingMultiDisplayWorkspaceCompilerTests
             ConnectionMethod.FindWindowSW,
             TimeSpan.FromMilliseconds(10));
     }
+
+    private static DesktopObservation AppendIcon(
+        DesktopObservation observation,
+        DesktopIconDescriptor icon)
+        => new(
+            observation.ObservationId,
+            observation.ObservedAtUtc,
+            observation.Displays,
+            observation.PositioningCapabilities,
+            observation.Icons.Concat(new[] { icon }).ToArray(),
+            observation.IconReadConnectionMethod,
+            observation.IconReadTime);
 
     private static DesktopIconDescriptor Icon(
         string stableId,

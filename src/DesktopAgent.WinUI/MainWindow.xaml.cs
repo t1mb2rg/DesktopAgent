@@ -402,6 +402,7 @@ public sealed partial class MainWindow : Window
     {
         CancelAiAssistantRequest();
         ReleaseAiAssistantView();
+        _layoutManagementView?.PersistRecoverableStateBeforeHide();
         _appWindow.Hide();
         ScheduleResidentRelease();
     }
@@ -461,6 +462,7 @@ public sealed partial class MainWindow : Window
         _exitRequested = true;
         CancelAiAssistantRequest();
         ReleaseAiAssistantView();
+        _layoutManagementView?.PersistRecoverableStateBeforeHide();
         _residentReleaseTimer.Stop();
         _residentReleaseTimer.Tick -= ResidentReleaseTimer_Tick;
         _trayIcon.Dispose();

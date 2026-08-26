@@ -54,5 +54,9 @@ public sealed partial class LayoutManagementView
 
         if (IsAiMultiDisplayWorkspaceActive)
             _draft = _aiWorkspaceDrafts[_activeAiWorkspaceIndex].Draft;
+
+        var recoveryError = TryPersistAiMultiDisplayWorkspace();
+        if (recoveryError is not null)
+            LayoutCanvasStatusText.Text = $"跨屏迁移已完成，但多屏草稿恢复状态未保存：{recoveryError}";
     }
 }

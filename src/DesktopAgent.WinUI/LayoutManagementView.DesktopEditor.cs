@@ -112,12 +112,13 @@ public sealed partial class LayoutManagementView
                 _settings = await _settingsStore.GetAsync();
             }
 
-            _draft = DesktopLayoutEditDraft.FromPersisted(template, editedDraft.RuleSet);
+            _draft = RehydrateSavedDraft(template, editedDraft.RuleSet, editedDraft);
             LoadDraftIntoEditor(_draft);
             SetLayoutInteractionMode(isEditing: false);
             await RefreshLayoutsAsync(template.TemplateId);
+            var recoveryError = TryPersistAiMultiDisplayWorkspace();
 
-            if (colorWarning is null)
+            if (colorWarning is null && recoveryError is null)
             {
                 ShowInfo(
                     "桌面分区已保存",
@@ -126,9 +127,14 @@ public sealed partial class LayoutManagementView
             }
             else
             {
+                var warnings = new[]
+                {
+                    colorWarning is null ? null : $"颜色偏好：{colorWarning}",
+                    recoveryError is null ? null : $"多屏草稿恢复状态：{recoveryError}",
+                }.Where(static warning => warning is not null);
                 ShowInfo(
-                    "布局已保存，颜色偏好未完全更新",
-                    colorWarning,
+                    "布局已保存，但附加状态未完全更新",
+                    string.Join("；", warnings),
                     InfoBarSeverity.Warning);
             }
         }

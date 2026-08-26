@@ -321,6 +321,23 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
         Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.MoveRequired && i.StableId == "a");
     }
 
+    [Fact] public void Occupancy_IconOnOtherDisplay_DoesNotBlockTargetRectangle()
+    {
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(240, 320))]),
+            MakeReadResult([
+                LiveIcon("a", new(160, 240)),
+                LiveIcon("recycle", new(240, 320), monitor: @"\\.\DISPLAY2",
+                    isFileSys: false, isSys: true),
+            ]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
+
+        var item = Assert.Single(p.Items);
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.MoveRequired, item.State);
+        Assert.False(p.HasBlockingErrors);
+    }
+
     [Fact] public void Occupancy_MultipleOccupiers_StationaryBlocks()
     {
         var p = PlanWithIcons(

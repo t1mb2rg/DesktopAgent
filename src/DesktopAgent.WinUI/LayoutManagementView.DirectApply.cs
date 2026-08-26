@@ -92,7 +92,10 @@ public sealed partial class LayoutManagementView
         if (!candidate.IsExecutable)
         {
             ApplyToDesktopButton.IsEnabled = false;
-            ShowInfo("当前计划不可执行", "安全执行候选未通过 Core 校验。请重新预览。", InfoBarSeverity.Warning);
+            ShowInfo(
+                "当前计划不可执行",
+                BuildNonExecutableCandidateMessage(candidate),
+                InfoBarSeverity.Warning);
             return;
         }
 
@@ -176,6 +179,41 @@ public sealed partial class LayoutManagementView
                 _latestPreview.Plan.IsComplete &&
                 _latestPreview.Plan.MoveRequiredCount > 0;
         }
+    }
+
+    private static string BuildNonExecutableCandidateMessage(
+        DesktopAgent.Core.DesktopLayouts.Templates.Execution.DesktopLayoutRuleAwareExecutionCandidate candidate)
+    {
+        var reasons = new List<string>();
+
+        if (candidate.RestorePlan.HasBlockingErrors)
+        {
+            reasons.Add(
+                $"Restore 阻断 {candidate.RestorePlan.BlockedCount} 项、缺失 {candidate.RestorePlan.MissingCount} 项。");
+
+            reasons.AddRange(candidate.RestorePlan.Items
+                .Where(item => item.BlockReason is not null)
+                .Take(3)
+                .Select(item => $"{item.DisplayName}：{item.BlockReason}"));
+
+            reasons.AddRange(candidate.RestorePlan.Issues
+                .Take(3)
+                .Select(issue => $"{issue.Code}：{issue.Message}"));
+        }
+
+        if (!candidate.ExecutionPlan.IsExecutable)
+        {
+            reasons.AddRange(candidate.ExecutionPlan.Issues
+                .Take(3)
+                .Select(issue => $"{issue.Code}：{issue.Message}"));
+        }
+
+        if (reasons.Count == 0)
+            reasons.Add("候选状态不一致，但 Core 没有返回具体 issue。");
+
+        return "安全执行候选未通过 Core 校验，Writer 未启动。" +
+            string.Join(" ", reasons) +
+            " 请保留当前画面，不要重复应用。";
     }
 
     private void PresentDirectApplyResult(

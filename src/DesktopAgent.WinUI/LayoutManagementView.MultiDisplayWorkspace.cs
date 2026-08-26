@@ -1,4 +1,5 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.Displays;
 using Microsoft.UI.Xaml;
@@ -11,6 +12,7 @@ public sealed partial class LayoutManagementView
     private sealed class AiWorkspaceDraftState
     {
         public DisplayDescriptor Display { get; }
+        public string DisplayRef { get; }
         public string DeviceName { get; }
         public bool IsPrimary { get; }
         public int ObservedIconCount { get; }
@@ -22,12 +24,33 @@ public sealed partial class LayoutManagementView
             DesktopUnderstandingMultiDisplayWorkspaceCompiler.DisplayCompilation compilation)
         {
             Display = compilation.Display;
+            DisplayRef = compilation.DisplayRef;
             DeviceName = compilation.Display.DeviceName;
             IsPrimary = compilation.Display.IsPrimary;
             ObservedIconCount = compilation.ObservedIconCount;
             SourceAssignmentCount = compilation.SourceAssignmentCount;
             MappedAssignmentCount = compilation.MappedAssignmentCount;
             Draft = compilation.Draft;
+        }
+
+        public AiWorkspaceDraftState(DesktopLayoutWorkspaceDraftRecoveryState recovery)
+        {
+            Display = recovery.Display;
+            DisplayRef = recovery.DisplayRef;
+            DeviceName = recovery.Display.DeviceName;
+            IsPrimary = recovery.Display.IsPrimary;
+            ObservedIconCount = recovery.ObservedIconCount;
+            SourceAssignmentCount = recovery.SourceAssignmentCount;
+            MappedAssignmentCount = recovery.MappedAssignmentCount;
+            Draft = new DesktopLayoutEditDraft(
+                recovery.TemplateId,
+                recovery.SourceVersion,
+                recovery.Name,
+                DesktopAgent.Core.DesktopLayouts.Templates.TargetDisplayBinding.ForExactDeviceName(
+                    recovery.Display.DeviceName),
+                recovery.Zones,
+                recovery.RuleSet,
+                recovery.ExplicitInboundStableIds);
         }
 
         public string DisplayText =>
@@ -80,28 +103,14 @@ public sealed partial class LayoutManagementView
             new AiWorkspaceDraftState(compilation)));
         _aiWorkspaceMigrations.Clear();
 
-        _suppressAiWorkspaceSelectionChanged = true;
-        try
-        {
-            AiWorkspaceDisplayCombo.Items.Clear();
-            foreach (var state in _aiWorkspaceDrafts)
-                AiWorkspaceDisplayCombo.Items.Add(state.DisplayText);
-
-            AiWorkspaceDisplayCombo.SelectedIndex = 0;
-            AiWorkspaceDisplayCombo.Visibility = _aiWorkspaceDrafts.Count > 1
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
-        finally
-        {
-            _suppressAiWorkspaceSelectionChanged = false;
-        }
+        PopulateAiWorkspaceDisplaySelector(selectedIndex: 0);
 
         ConfigureCrossDisplayMigrationUi();
 
         _activeAiWorkspaceIndex = 0;
         SetSelectedTemplateWithoutNotification(null);
         LoadAiWorkspaceDraft(_activeAiWorkspaceIndex);
+        var recoveryError = TryPersistAiMultiDisplayWorkspace();
 
         var displaySummary = string.Join(
             " · ",
@@ -114,8 +123,9 @@ public sealed partial class LayoutManagementView
             "AI 多显示器草案已导入",
             $"{workspace.Displays.Count} 块显示器 · {workspace.MappedAssignmentCount}/{workspace.SourceAssignmentCount} 个 Assignment 已映射。" +
             $" {displaySummary}。AI 默认保持当前屏幕归属；只有用户显式迁移的项目才允许跨屏。" +
-            $"{migrationHint} 所有草稿仍未保存、未应用。",
-            InfoBarSeverity.Success);
+            $"{migrationHint} 所有草稿仍未保存、未应用。" +
+            (recoveryError is null ? string.Empty : $" 草稿恢复状态未能保存：{recoveryError}"),
+            recoveryError is null ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         return true;
     }
 
@@ -278,6 +288,12 @@ public sealed partial class LayoutManagementView
                 targetZoneId);
 
             FocusAiWorkspaceDisplay(destinationIndex);
+            var recoveryError = TryPersistAiMultiDisplayWorkspace();
+            if (recoveryError is not null)
+            {
+                ShowInfo("多屏草稿恢复状态未保存", recoveryError, InfoBarSeverity.Warning);
+                return;
+            }
             ShowInfo(
                 "跨屏迁移草稿已建立",
                 $"{previewItem.Icon.DisplayName}：{ShortDeviceName(sourceState.DeviceName)} → " +
@@ -317,6 +333,9 @@ public sealed partial class LayoutManagementView
             PersistCurrentAiWorkspaceDraftFromEditor();
             _activeAiWorkspaceIndex = targetIndex;
             LoadAiWorkspaceDraft(targetIndex);
+            var recoveryError = TryPersistAiMultiDisplayWorkspace();
+            if (recoveryError is not null)
+                ShowInfo("多屏草稿恢复状态未保存", recoveryError, InfoBarSeverity.Warning);
         }
         catch (Exception ex)
         {
@@ -445,6 +464,7 @@ public sealed partial class LayoutManagementView
         LayoutPreviewList.SelectionMode = ListViewSelectionMode.None;
         LayoutPreviewList.ContextFlyout = null;
         _crossDisplayMigrationFlyout = null;
+        DeleteAiMultiDisplayWorkspaceRecovery();
 
         if (_isLayoutEditing)
         {

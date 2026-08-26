@@ -31,6 +31,8 @@ public sealed partial class LayoutManagementView : UserControl
         new(DesktopAgentDataPaths.DefaultDatabasePath);
     private readonly JsonDesktopProductSettingsStore _settingsStore =
         new(DesktopAgentDataPaths.DefaultSettingsPath);
+    private readonly JsonDesktopLayoutWorkspaceRecoveryStore _aiWorkspaceRecoveryStore =
+        new(DesktopAgentDataPaths.DefaultAiWorkspaceRecoveryPath);
     private readonly StaThreadExecutor _staThreadExecutor = new();
     private readonly WindowsDesktopObservationSource _observationSource;
     private readonly DesktopZoneOverlayHost _overlayHost = new();
@@ -70,7 +72,13 @@ public sealed partial class LayoutManagementView : UserControl
         try
         {
             await EnsureStoresAsync();
+            var restoredWorkspace = await TryRestoreAiMultiDisplayWorkspaceAsync();
             await RefreshLayoutsAsync();
+            if (restoredWorkspace && IsAiMultiDisplayWorkspaceActive && _draft is not null)
+            {
+                SetSelectedTemplateWithoutNotification(
+                    _templateItems.FirstOrDefault(item => item.TemplateId == _draft.TemplateId));
+            }
             RenderLayoutCanvas();
         }
         catch (Exception ex)
@@ -125,6 +133,13 @@ public sealed partial class LayoutManagementView : UserControl
         LayoutSummaryText.Text = summaries.Count == 0
             ? "还没有保存的布局"
             : $"{summaries.Count} 个布局";
+
+        if (IsAiMultiDisplayWorkspaceActive && _draft is not null)
+        {
+            SetSelectedTemplateWithoutNotification(
+                _templateItems.FirstOrDefault(item => item.TemplateId == _draft.TemplateId));
+            return;
+        }
 
         var desiredId = selectTemplateId ?? _settings.ActiveLayoutTemplateId;
         if (desiredId.HasValue)
@@ -409,11 +424,18 @@ public sealed partial class LayoutManagementView : UserControl
             if (!result.IsSuccess)
                 throw new InvalidOperationException(result.Message ?? $"保存失败：{result.Outcome}");
 
-            _draft = DesktopLayoutEditDraft.FromPersisted(template, draft.RuleSet);
+            _draft = RehydrateSavedDraft(template, draft.RuleSet, draft);
             LoadDraftIntoEditor(_draft);
             await RefreshLayoutsAsync(template.TemplateId);
 
-            ShowInfo("布局已保存", $"V{template.Version}", InfoBarSeverity.Success);
+            var recoveryError = TryPersistAiMultiDisplayWorkspace();
+
+            ShowInfo(
+                "布局已保存",
+                recoveryError is null
+                    ? $"V{template.Version}"
+                    : $"V{template.Version}；多屏草稿恢复状态未保存：{recoveryError}",
+                recoveryError is null ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
         }
         catch (Exception ex)
         {

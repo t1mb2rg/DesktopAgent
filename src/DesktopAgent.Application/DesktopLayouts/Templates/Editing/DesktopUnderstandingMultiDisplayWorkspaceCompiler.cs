@@ -121,10 +121,16 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
                 continue;
             }
 
-            var targetDisplayRef = ResolveTargetDisplayRef(
-                assignment,
-                currentEntry.DisplayRef,
-                conversationState);
+            // Shell/system items are intentionally outside the desktop position Writer's
+            // authority.  Even an explicit conversational display target must not turn
+            // them into cross-display inbound work; keep them on their observed display
+            // and materialize them as fixed obstacles below.
+            var targetDisplayRef = IsWriterMovable(observedIcon)
+                ? ResolveTargetDisplayRef(
+                    assignment,
+                    currentEntry.DisplayRef,
+                    conversationState)
+                : currentEntry.DisplayRef;
             var targetEntry = displayMap.ResolveDisplayRef(targetDisplayRef);
             participatingDeviceNames.Add(currentEntry.Display.DeviceName);
             participatingDeviceNames.Add(targetEntry.Display.DeviceName);
@@ -285,6 +291,25 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
                 physicalLayout);
 
             var rules = layout.Draft.RuleSet.Rules.ToList();
+
+            // The semantic classifier may assign Shell icons (for example Recycle Bin)
+            // to a category/zone, but Core deliberately refuses to move them.  Convert
+            // those generated ZoneOverride rules into Exclude rules before Preview so
+            // placement treats their live rectangles as fixed obstacles instead of
+            // producing a candidate that RestorePlanner must reject later.
+            var nonMovableStableIds = assignments
+                .Select(static assignment => assignment.StableId)
+                .Where(stableId => iconByStableId.TryGetValue(stableId, out var icon)
+                    && !IsWriterMovable(icon))
+                .ToHashSet(StringComparer.Ordinal);
+            if (nonMovableStableIds.Count > 0)
+            {
+                rules.RemoveAll(rule => nonMovableStableIds.Contains(rule.StableId));
+                rules.AddRange(nonMovableStableIds
+                    .OrderBy(static stableId => stableId, StringComparer.Ordinal)
+                    .Select(DesktopLayoutIconRule.ForExclude));
+            }
+
             if (outboundBySourceDevice.TryGetValue(display.DeviceName, out var outbound))
             {
                 foreach (var stableId in outbound.OrderBy(static value => value, StringComparer.Ordinal))
@@ -338,6 +363,9 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
             return categoryTarget;
         return currentDisplayRef;
     }
+
+    private static bool IsWriterMovable(DesktopAgent.Core.DesktopIcons.DesktopIconDescriptor icon)
+        => icon.IsFileSystemItem && !icon.IsSystemItem;
 
     private static void ValidateConversationState(
         DesktopLayoutConversationState state,

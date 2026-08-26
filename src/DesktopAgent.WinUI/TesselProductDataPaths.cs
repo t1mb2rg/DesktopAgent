@@ -20,4 +20,7 @@ internal static class TesselProductDataPaths
 
     internal static string RadarCachePath =>
         Path.Combine(RootDirectory, "cache", "desktop-radar.json");
+
+    internal static string AiWorkspaceRecoveryPath =>
+        Path.Combine(RootDirectory, "recovery", "ai-multi-display-workspace.json");
 }
