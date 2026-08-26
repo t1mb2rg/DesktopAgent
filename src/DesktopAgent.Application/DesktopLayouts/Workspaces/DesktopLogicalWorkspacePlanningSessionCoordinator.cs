@@ -1,6 +1,7 @@
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.DesktopLayouts.Workspaces;
 using DesktopAgent.Core.DesktopObservations;
+using DesktopAgent.Core.Intelligence;
 
 namespace DesktopAgent.Application.DesktopLayouts.Workspaces;
 
@@ -155,6 +156,36 @@ public sealed class DesktopLogicalWorkspacePlanningSessionCoordinator
         ArgumentNullException.ThrowIfNull(freshObservation);
 
         var projection = DesktopLogicalWorkspaceProjector.Project(freshObservation);
+        return await PlanProjectedAsync(projection, userGuidance, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<DesktopLogicalWorkspacePlanningSessionResult> PlanAsync(
+        DesktopObservation freshObservation,
+        DesktopUnderstandingDraft semanticUnderstanding,
+        string userGuidance,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(freshObservation);
+        ArgumentNullException.ThrowIfNull(semanticUnderstanding);
+
+        var projection = DesktopLogicalWorkspaceProjector.Project(freshObservation);
+        if (projection.Succeeded)
+        {
+            projection = DesktopLogicalWorkspaceSemanticOverlay.Apply(
+                projection,
+                semanticUnderstanding);
+        }
+
+        return await PlanProjectedAsync(projection, userGuidance, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<DesktopLogicalWorkspacePlanningSessionResult> PlanProjectedAsync(
+        DesktopLogicalWorkspaceProjectionResult projection,
+        string userGuidance,
+        CancellationToken cancellationToken)
+    {
         if (!projection.Succeeded)
             return DesktopLogicalWorkspacePlanningSessionResult.ProjectionFailure(projection.Issues);
 

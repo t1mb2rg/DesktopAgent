@@ -14,7 +14,7 @@ public sealed class AiProductIntegrationContractTests
 
         Assert.Contains("DesktopProductIntelligenceOptionsFactory.Create", service, StringComparison.Ordinal);
         Assert.Contains("WindowsDesktopObservationSource", service, StringComparison.Ordinal);
-        Assert.Contains("DesktopFirstRunUnderstandingRequest", service, StringComparison.Ordinal);
+        Assert.Contains("DesktopObservationUnderstandingRequestFactory.Create", service, StringComparison.Ordinal);
         Assert.Contains("OpenAiCompatibleDesktopFirstRunIntelligenceProvider", service, StringComparison.Ordinal);
         Assert.Contains("DpapiIntelligenceSecretStore", service, StringComparison.Ordinal);
 
@@ -85,18 +85,8 @@ public sealed class AiProductIntegrationContractTests
             "DesktopAgent.WinUI",
             "AiDesktopUnderstandingService.cs"));
 
-        Assert.Contains("var facts = icons.Select(ToFacts).ToArray();", service, StringComparison.Ordinal);
-
-        var requestStart = service.IndexOf(
-            "var request = new DesktopFirstRunUnderstandingRequest(",
-            StringComparison.Ordinal);
-        Assert.True(requestStart >= 0);
-
-        var requestEnd = service.IndexOf(");", requestStart, StringComparison.Ordinal);
-        Assert.True(requestEnd > requestStart);
-
-        var requestConstruction = service[requestStart..(requestEnd + 2)];
-        Assert.Contains("facts", requestConstruction, StringComparison.Ordinal);
+        Assert.Contains("DesktopObservationUnderstandingRequestFactory.Create", service, StringComparison.Ordinal);
+        Assert.Contains("observation", service, StringComparison.Ordinal);
         Assert.DoesNotContain("ProductUnderstandingSampleLimit", service, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildRepresentativeSample", service, StringComparison.Ordinal);
         Assert.DoesNotContain("AnalyzedItemCount", service, StringComparison.Ordinal);
@@ -229,8 +219,11 @@ public sealed class AiProductIntegrationContractTests
 
         Assert.Contains("DesktopProductIntelligenceOptionsFactory.Create", service, StringComparison.Ordinal);
         Assert.Contains("WindowsDesktopObservationSource", service, StringComparison.Ordinal);
+        Assert.Contains("DesktopObservationUnderstandingRequestFactory.Create", service, StringComparison.Ordinal);
+        Assert.Contains("OpenAiCompatibleDesktopFirstRunIntelligenceProvider", service, StringComparison.Ordinal);
         Assert.Contains("OpenAiCompatibleDesktopLogicalWorkspacePlanner", service, StringComparison.Ordinal);
         Assert.Contains("DesktopLogicalWorkspacePlanningSessionCoordinator", service, StringComparison.Ordinal);
+        Assert.Contains("understanding.Draft", service, StringComparison.Ordinal);
 
         var optionsGate = service.IndexOf("if (configuredOptions is null)", StringComparison.Ordinal);
         var capture = service.IndexOf("observationSource.CaptureAsync", StringComparison.Ordinal);
@@ -243,6 +236,27 @@ public sealed class AiProductIntegrationContractTests
         Assert.DoesNotContain("WriterCommand", service, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopLayoutExecution", service, StringComparison.Ordinal);
         Assert.DoesNotContain("AiDesktopLogicalWorkspacePlanningService", aiSurface, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LogicalWorkspaceSemanticOverlay_BindsLocallyAndNeverFallsBackToNameMatching()
+    {
+        var root = FindRepositoryRoot();
+        var overlay = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Application",
+            "DesktopLayouts",
+            "Workspaces",
+            "DesktopLogicalWorkspaceSemanticOverlay.cs"));
+
+        Assert.Contains("TryResolveItemByStableId", overlay, StringComparison.Ordinal);
+        Assert.Contains("DesktopObservedLogicalCategory", overlay, StringComparison.Ordinal);
+        Assert.Contains("SemanticAssignmentOutsideObservation", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("DisplayName ==", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("IDesktopIconPositionWriter", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriterCommand", overlay, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

@@ -170,13 +170,12 @@ internal sealed class AiDesktopUnderstandingService
                 Message: $"当前桌面有 {icons.Count} 个项目，超过单轮 AI 理解上限 {DesktopFirstRunUnderstandingRequest.MaxItems}。请先减少桌面项目后重试。");
         }
 
-        var facts = icons.Select(ToFacts).ToArray();
         var (activeLayoutName, existingZones) = await LoadExistingZonesAsync(
             settings.ActiveLayoutTemplateId,
             cancellationToken);
 
-        var request = new DesktopFirstRunUnderstandingRequest(
-            facts,
+        var request = DesktopObservationUnderstandingRequestFactory.Create(
+            observation,
             existingZones,
             previousIntentSummary,
             latestUserGuidance);
@@ -196,7 +195,7 @@ internal sealed class AiDesktopUnderstandingService
             return new AiDesktopUnderstandingProductResult(
                 AiDesktopUnderstandingProductStatus.ProviderFailure,
                 Draft: null,
-                ObservedItemCount: facts.Length,
+                ObservedItemCount: icons.Count,
                 ActiveLayoutName: activeLayoutName,
                 ProviderStatus: providerResult.Status,
                 HttpStatusCode: providerResult.HttpStatusCode,
@@ -206,7 +205,7 @@ internal sealed class AiDesktopUnderstandingService
         return new AiDesktopUnderstandingProductResult(
             AiDesktopUnderstandingProductStatus.Success,
             providerResult.Draft,
-            facts.Length,
+            icons.Count,
             activeLayoutName,
             IntelligenceProviderStatus.Success,
             HttpStatusCode: null,
@@ -214,36 +213,7 @@ internal sealed class AiDesktopUnderstandingService
             Observation: observation);
     }
 
-    private static DesktopItemFacts ToFacts(DesktopIconDescriptor icon)
-        => new(
-            icon.StableId,
-            icon.DisplayName,
-            icon.ItemKind,
-            TryGetFileExtension(icon),
-            icon.IsSystemItem,
-            icon.IsFileSystemItem);
-
-    private static string? TryGetFileExtension(DesktopIconDescriptor icon)
-    {
-        if (!icon.IsFileSystemItem ||
-            icon.ItemKind is not (ItemKind.File or ItemKind.Shortcut) ||
-            string.IsNullOrWhiteSpace(icon.ParsingName))
-        {
-            return null;
-        }
-
-        try
-        {
-            var extension = Path.GetExtension(icon.ParsingName);
-            return string.IsNullOrEmpty(extension) ? null : extension;
-        }
-        catch (ArgumentException)
-        {
-            return null;
-        }
-    }
-
-    private static async Task<(string? LayoutName, IReadOnlyList<IntelligenceZoneOption> Zones)>
+    internal static async Task<(string? LayoutName, IReadOnlyList<IntelligenceZoneOption> Zones)>
         LoadExistingZonesAsync(
             Guid? activeLayoutTemplateId,
             CancellationToken cancellationToken)

@@ -7,6 +7,7 @@ using DesktopAgent.Core.DesktopLayouts.Workspaces;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
+using DesktopAgent.Core.Intelligence;
 
 namespace DesktopAgent.Tests.DesktopLayouts.Workspaces;
 
@@ -102,6 +103,80 @@ public sealed class DesktopLogicalWorkspacePlanningSessionCoordinatorTests
         Assert.Equal(IntelligenceProviderStatus.Unavailable, result.PlanningRun!.FinalResult.Status);
         Assert.Equal(503, result.PlanningRun.FinalResult.HttpStatusCode);
         Assert.Equal(1, result.PlanningRun.AttemptCount);
+    }
+
+    [Fact]
+    public async Task Plan_SemanticUnderstanding_EnrichesProviderWorkspaceBeforePlanning()
+    {
+        DesktopObservedLogicalWorkspace? providerWorkspace = null;
+        var planner = new DelegatePlanner(request =>
+        {
+            providerWorkspace = request.Workspace;
+            return DesktopLogicalWorkspacePlanningProviderResult.Success(
+                CreateKeepPlan(request.Workspace));
+        });
+        var coordinator = new DesktopLogicalWorkspacePlanningSessionCoordinator(planner);
+        var understanding = new DesktopUnderstandingDraft(
+            "按类别整理",
+            "工作资料与系统项目",
+            [new DesktopUnderstandingCategoryDraft("work", "工作资料", "需要集中处理的文件")],
+            assignments:
+            [
+                new DesktopUnderstandingAssignment(
+                    "secret-stable-a",
+                    "work",
+                    null,
+                    0.95d,
+                    "工作资料"),
+            ]);
+
+        var result = await coordinator.PlanAsync(
+            CreateObservation(),
+            understanding,
+            "把工作资料放到副屏。");
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(providerWorkspace);
+        Assert.Equal("工作资料", Assert.Single(providerWorkspace.Categories).Name);
+        Assert.Equal(
+            "work",
+            Assert.Single(providerWorkspace.Items, static item => item.DisplayName == "Secondary.txt").CategoryKey);
+        Assert.Null(
+            Assert.Single(providerWorkspace.Items, static item => item.DisplayName == "Primary.txt").CategoryKey);
+    }
+
+    [Fact]
+    public async Task Plan_SemanticUnderstandingReferencesUnknownItem_StopsBeforePlanner()
+    {
+        var planner = new DelegatePlanner(_ =>
+            throw new Xunit.Sdk.XunitException("Semantic overlay 失败后不应调用精确 Planner。"));
+        var coordinator = new DesktopLogicalWorkspacePlanningSessionCoordinator(planner);
+        var understanding = new DesktopUnderstandingDraft(
+            "按类别整理",
+            "包含陌生项目",
+            [new DesktopUnderstandingCategoryDraft("work", "工作资料", "需要集中处理的文件")],
+            assignments:
+            [
+                new DesktopUnderstandingAssignment(
+                    "secret-stable-outside-observation",
+                    "work",
+                    null,
+                    0.95d,
+                    "不属于当前观察"),
+            ]);
+
+        var result = await coordinator.PlanAsync(
+            CreateObservation(),
+            understanding,
+            "整理桌面。");
+
+        Assert.Equal(DesktopLogicalWorkspacePlanningSessionStatus.ProjectionFailed, result.Status);
+        Assert.False(result.Succeeded);
+        Assert.Null(result.Session);
+        Assert.Equal(0, planner.CallCount);
+        Assert.Equal(
+            DesktopLogicalWorkspaceProjectionIssueCode.SemanticAssignmentOutsideObservation,
+            Assert.Single(result.ProjectionIssues).Code);
     }
 
     private static DesktopDesiredWorkspacePlan CreateKeepPlan(

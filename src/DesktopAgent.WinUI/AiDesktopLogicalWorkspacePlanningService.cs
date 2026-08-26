@@ -13,8 +13,9 @@ internal enum AiDesktopLogicalWorkspacePlanningProductStatus
     Success = 0,
     AiDisabled = 1,
     DesktopUnavailable = 2,
-    ProjectionFailure = 3,
-    PlanningFailure = 4,
+    UnderstandingFailure = 3,
+    ProjectionFailure = 4,
+    PlanningFailure = 5,
 }
 
 internal sealed record AiDesktopLogicalWorkspacePlanningProductResult(
@@ -100,6 +101,19 @@ internal sealed class AiDesktopLogicalWorkspacePlanningService
                 Message: "当前桌面没有可供 AI 规划的项目。");
         }
 
+        if (observation.Icons.Count > DesktopFirstRunUnderstandingRequest.MaxItems)
+        {
+            return new AiDesktopLogicalWorkspacePlanningProductResult(
+                AiDesktopLogicalWorkspacePlanningProductStatus.DesktopUnavailable,
+                Session: null,
+                ObservedItemCount: observation.Icons.Count,
+                ProviderAttemptCount: 0,
+                ProviderStatus: null,
+                HttpStatusCode: null,
+                ProjectionIssues: [],
+                Message: $"当前桌面有 {observation.Icons.Count} 个项目，超过单轮语义理解上限 {DesktopFirstRunUnderstandingRequest.MaxItems}。");
+        }
+
         var options = new OpenAiCompatibleProviderOptions(
             configuredOptions.BaseUri,
             configuredOptions.Model,
@@ -108,13 +122,46 @@ internal sealed class AiDesktopLogicalWorkspacePlanningService
         using var httpClient = new HttpClient();
         var secretStore = new DpapiIntelligenceSecretStore(
             DesktopAgentDataPaths.DefaultSecretsDirectory);
+        var (_, existingZones) = await AiDesktopUnderstandingService.LoadExistingZonesAsync(
+            settings.ActiveLayoutTemplateId,
+            cancellationToken);
+        var understandingRequest = DesktopObservationUnderstandingRequestFactory.Create(
+            observation,
+            existingZones,
+            currentIntentSummary: null,
+            latestUserGuidance: userGuidance);
+        var understandingProvider = new OpenAiCompatibleDesktopFirstRunIntelligenceProvider(
+            httpClient,
+            options,
+            secretStore);
+        var understanding = await understandingProvider
+            .UnderstandAsync(understandingRequest, cancellationToken);
+        if (understanding.Status != IntelligenceProviderStatus.Success ||
+            understanding.Draft is null)
+        {
+            return new AiDesktopLogicalWorkspacePlanningProductResult(
+                AiDesktopLogicalWorkspacePlanningProductStatus.UnderstandingFailure,
+                Session: null,
+                ObservedItemCount: observation.Icons.Count,
+                ProviderAttemptCount: 0,
+                ProviderStatus: understanding.Status,
+                HttpStatusCode: understanding.HttpStatusCode,
+                ProjectionIssues: [],
+                Message: understanding.DiagnosticMessage ??
+                         "AI 未能为当前 Observation 建立可靠的语义分类。");
+        }
+
         var planner = new OpenAiCompatibleDesktopLogicalWorkspacePlanner(
             httpClient,
             options,
             secretStore);
         var coordinator = new DesktopLogicalWorkspacePlanningSessionCoordinator(planner);
 
-        var result = await coordinator.PlanAsync(observation, userGuidance, cancellationToken);
+        var result = await coordinator.PlanAsync(
+            observation,
+            understanding.Draft,
+            userGuidance,
+            cancellationToken);
         if (result.Status == DesktopLogicalWorkspacePlanningSessionStatus.ProjectionFailed)
         {
             return new AiDesktopLogicalWorkspacePlanningProductResult(

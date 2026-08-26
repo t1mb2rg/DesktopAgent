@@ -41,6 +41,8 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
         var context = ExtractUserContext(requestBody!);
         Assert.Equal("desktop-logical-workspace-plan-v1", context.GetProperty("contract").GetString());
         var observed = context.GetProperty("observed_workspace");
+        Assert.Equal(2, observed.GetProperty("categories").GetArrayLength());
+        Assert.Equal("工作资料", observed.GetProperty("categories")[0].GetProperty("name").GetString());
         Assert.Equal(2, observed.GetProperty("displays").GetArrayLength());
         Assert.Equal(3, observed.GetProperty("items").GetArrayLength());
         Assert.Equal(2, observed.GetProperty("items")[0].GetProperty("occupied_cells").GetArrayLength());
@@ -157,7 +159,8 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
             workspace.TopologyFingerprint,
             workspace.GridFingerprint,
             workspace.Displays,
-            workspace.Items);
+            workspace.Items,
+            workspace.Categories);
         Assert.Throws<ArgumentException>(() => new DesktopLogicalWorkspacePlanningRequest(
             otherWorkspace,
             "retry",
@@ -217,6 +220,10 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
                 new DesktopLogicalGridCell(3, 3),
                 isMovable: true,
                 categoryKey: "work"),
+        ],
+        [
+            new DesktopObservedLogicalCategory("work", "工作资料", "需要集中处理的文档和笔记"),
+            new DesktopObservedLogicalCategory("system", "系统项目", "不可移动的系统桌面项目"),
         ]);
 
     private static string CreateValidPlanJson() => """

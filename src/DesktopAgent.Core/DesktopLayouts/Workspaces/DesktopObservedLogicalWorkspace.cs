@@ -3,6 +3,30 @@ using DesktopAgent.Core.DesktopIcons;
 namespace DesktopAgent.Core.DesktopLayouts.Workspaces;
 
 /// <summary>
+/// 一项对 AI 可见的语义分类。只描述用户可理解的类别，不携带本地项目身份或执行权限。
+/// </summary>
+public sealed record DesktopObservedLogicalCategory
+{
+    public string Key { get; }
+    public string Name { get; }
+    public string Description { get; }
+
+    public DesktopObservedLogicalCategory(string key, string name, string description)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Key 不能为空。", nameof(key));
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("Name 不能为空。", nameof(name));
+        if (string.IsNullOrWhiteSpace(description))
+            throw new ArgumentException("Description 不能为空。", nameof(description));
+
+        Key = key.Trim();
+        Name = name.Trim();
+        Description = description.Trim();
+    }
+}
+
+/// <summary>
 /// 一块显示器对 AI 暴露的逻辑描述。DisplayRef 是请求内语义引用，不是真实设备名。
 /// </summary>
 public sealed record DesktopObservedLogicalDisplay
@@ -133,18 +157,22 @@ public sealed record DesktopObservedLogicalItem
 /// </summary>
 public sealed record DesktopObservedLogicalWorkspace
 {
+    private readonly IReadOnlyList<DesktopObservedLogicalCategory> _categories;
+
     public Guid ObservationId { get; }
     public string TopologyFingerprint { get; }
     public string GridFingerprint { get; }
     public IReadOnlyList<DesktopObservedLogicalDisplay> Displays { get; }
     public IReadOnlyList<DesktopObservedLogicalItem> Items { get; }
+    public IReadOnlyList<DesktopObservedLogicalCategory> Categories => _categories;
 
     public DesktopObservedLogicalWorkspace(
         Guid observationId,
         string topologyFingerprint,
         string gridFingerprint,
         IEnumerable<DesktopObservedLogicalDisplay> displays,
-        IEnumerable<DesktopObservedLogicalItem> items)
+        IEnumerable<DesktopObservedLogicalItem> items,
+        IEnumerable<DesktopObservedLogicalCategory>? categories = null)
     {
         if (observationId == Guid.Empty)
             throw new ArgumentException("ObservationId 不能为 Guid.Empty。", nameof(observationId));
@@ -157,12 +185,15 @@ public sealed record DesktopObservedLogicalWorkspace
 
         var displayArray = displays.ToArray();
         var itemArray = items.ToArray();
+        var categoryArray = categories?.ToArray() ?? [];
         if (displayArray.Length == 0)
             throw new ArgumentException("Displays 至少需要一块显示器。", nameof(displays));
         if (displayArray.Any(static display => display is null))
             throw new ArgumentException("Displays 不能包含 null。", nameof(displays));
         if (itemArray.Any(static item => item is null))
             throw new ArgumentException("Items 不能包含 null。", nameof(items));
+        if (categoryArray.Any(static category => category is null))
+            throw new ArgumentException("Categories 不能包含 null。", nameof(categories));
 
         var duplicateDisplayRefs = displayArray
             .GroupBy(static display => display.DisplayRef, StringComparer.Ordinal)
@@ -185,6 +216,30 @@ public sealed record DesktopObservedLogicalWorkspace
             throw new ArgumentException(
                 $"Items 存在重复 ItemRef：{string.Join(", ", duplicateItemRefs)}。",
                 nameof(items));
+
+        var duplicateCategoryKeys = categoryArray
+            .GroupBy(static category => category.Key, StringComparer.Ordinal)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .ToArray();
+        if (duplicateCategoryKeys.Length > 0)
+        {
+            throw new ArgumentException(
+                $"Categories 存在重复 Key：{string.Join(", ", duplicateCategoryKeys)}。",
+                nameof(categories));
+        }
+
+        var categoryKeys = categoryArray
+            .Select(static category => category.Key)
+            .ToHashSet(StringComparer.Ordinal);
+        var unknownCategoryItem = itemArray.FirstOrDefault(item =>
+            item.CategoryKey is not null && !categoryKeys.Contains(item.CategoryKey));
+        if (unknownCategoryItem is not null)
+        {
+            throw new ArgumentException(
+                $"ItemRef \"{unknownCategoryItem.ItemRef}\" 引用了未知 CategoryKey。",
+                nameof(items));
+        }
 
         var displaysByRef = displayArray.ToDictionary(
             static display => display.DisplayRef,
@@ -210,5 +265,6 @@ public sealed record DesktopObservedLogicalWorkspace
         GridFingerprint = gridFingerprint.Trim();
         Displays = Array.AsReadOnly(displayArray);
         Items = Array.AsReadOnly(itemArray);
+        _categories = Array.AsReadOnly(categoryArray);
     }
 }

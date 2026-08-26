@@ -88,14 +88,15 @@ public sealed class M5077GridRecoveryMultiDisplayContractTests
     [Fact]
     public void AiProviderPayload_RemainsSemanticOnly_AfterMultiDisplayProductization()
     {
-        var source = Read("src/DesktopAgent.WinUI/AiDesktopUnderstandingService.cs");
-        var factsStart = source.IndexOf("private static DesktopItemFacts ToFacts", StringComparison.Ordinal);
-        Assert.True(factsStart >= 0);
-        var factsSection = source[factsStart..];
+        var service = Read("src/DesktopAgent.WinUI/AiDesktopUnderstandingService.cs");
+        var requestFactory = Read(
+            "src/DesktopAgent.Application/Intelligence/DesktopObservationUnderstandingRequestFactory.cs");
 
-        Assert.DoesNotContain("MonitorDeviceName", factsSection, StringComparison.Ordinal);
-        Assert.DoesNotContain("PixelPosition", factsSection, StringComparison.Ordinal);
-        Assert.Contains("Observation: observation", source, StringComparison.Ordinal);
+        Assert.Contains("DesktopObservationUnderstandingRequestFactory.Create", service, StringComparison.Ordinal);
+        Assert.Contains("DesktopItemFacts", requestFactory, StringComparison.Ordinal);
+        Assert.DoesNotContain("MonitorDeviceName", requestFactory, StringComparison.Ordinal);
+        Assert.DoesNotContain("PixelPosition", requestFactory, StringComparison.Ordinal);
+        Assert.Contains("Observation: observation", service, StringComparison.Ordinal);
     }
 
     [Fact]

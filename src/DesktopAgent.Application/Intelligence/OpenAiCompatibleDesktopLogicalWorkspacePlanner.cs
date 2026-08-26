@@ -127,6 +127,12 @@ Return this exact shape:
                 observation_id = workspace.ObservationId,
                 topology_fingerprint = workspace.TopologyFingerprint,
                 grid_fingerprint = workspace.GridFingerprint,
+                categories = workspace.Categories.Select(static category => new
+                {
+                    key = category.Key,
+                    name = category.Name,
+                    description = category.Description,
+                }),
                 displays = workspace.Displays.Select(static display => new
                 {
                     display_ref = display.DisplayRef,

@@ -344,6 +344,9 @@ public sealed class DesktopDesiredWorkspacePlanValidatorTests
                 "item-c", "C.txt", ItemKind.File, "secondary_1", new DesktopLogicalGridCell(0, 0), true, "work"),
             new DesktopObservedLogicalItem(
                 "system-recycle-bin", "回收站", ItemKind.SystemItem, "primary", new DesktopLogicalGridCell(7, 5), false),
+        ],
+        [
+            new DesktopObservedLogicalCategory("work", "工作资料", "需要集中处理的工作文件"),
         ]);
 
     private static DesktopDesiredWorkspacePlan CreatePlan(

@@ -19,6 +19,8 @@ public enum DesktopLogicalWorkspaceProjectionIssueCode
     GridPhaseUnavailable = 5,
     DisplayHasNoGridCapacity = 6,
     IconOutsideDisplayGrid = 7,
+    SemanticAssignmentOutsideObservation = 8,
+    InvalidSemanticCategoryCatalog = 9,
 }
 
 public sealed record DesktopLogicalWorkspaceProjectionIssue(
@@ -86,6 +88,7 @@ internal sealed record DesktopLogicalDisplayGridCalibration(
 internal sealed class DesktopLogicalWorkspaceProjectionAuthority
 {
     private readonly IReadOnlyDictionary<string, DesktopLogicalWorkspaceItemBinding> _itemsByRef;
+    private readonly IReadOnlyDictionary<string, DesktopLogicalWorkspaceItemBinding> _itemsByStableId;
     private readonly IReadOnlyDictionary<string, DesktopLogicalDisplayGridCalibration> _displaysByRef;
 
     internal Guid ObservationId { get; }
@@ -110,6 +113,7 @@ internal sealed class DesktopLogicalWorkspaceProjectionAuthority
             throw new ArgumentException("DisplayCalibrations 不能包含 null。", nameof(displayCalibrations));
 
         _itemsByRef = itemArray.ToDictionary(static item => item.ItemRef, StringComparer.Ordinal);
+        _itemsByStableId = itemArray.ToDictionary(static item => item.StableId, StringComparer.Ordinal);
         _displaysByRef = displayArray.ToDictionary(static display => display.DisplayRef, StringComparer.Ordinal);
         ObservationId = observationId;
         ItemBindings = Array.AsReadOnly(itemArray);
@@ -120,6 +124,11 @@ internal sealed class DesktopLogicalWorkspaceProjectionAuthority
         => _itemsByRef.TryGetValue(itemRef, out var binding)
             ? binding
             : throw new KeyNotFoundException($"未知 ItemRef \"{itemRef}\"。");
+
+    internal bool TryResolveItemByStableId(
+        string stableId,
+        out DesktopLogicalWorkspaceItemBinding? binding)
+        => _itemsByStableId.TryGetValue(stableId, out binding);
 
     internal DesktopLogicalDisplayGridCalibration ResolveDisplay(string displayRef)
         => _displaysByRef.TryGetValue(displayRef, out var calibration)
