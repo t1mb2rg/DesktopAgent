@@ -284,27 +284,34 @@ public static class DesktopLogicalWorkspaceProjector
         {
             var icon = orderedIcons[index];
             var calibration = calibrationsByDeviceName[icon.MonitorDeviceName!];
+            var displayEntry = entriesByDeviceName[icon.MonitorDeviceName!];
             var deltaX = (long)icon.PixelPosition.X - calibration.GridOrigin.X;
             var deltaY = (long)icon.PixelPosition.Y - calibration.GridOrigin.Y;
-            var occupiedCells = GetOccupiedCells(icon.PixelPosition, calibration);
-            if (occupiedCells.Count == 0)
-            {
-                issues.Add(new(
-                    DesktopLogicalWorkspaceProjectionIssueCode.IconOutsideDisplayGrid,
-                    $"项目 \"{icon.DisplayName}\" 超出显示器 {calibration.DisplayRef} 的有效逻辑网格。",
-                    icon.DisplayName,
-                    calibration.DisplayRef));
-                continue;
-            }
-
-            var itemRef = $"item-{index + 1:D4}";
             var cell = new DesktopLogicalGridCell(
                 NearestCellIndex(deltaX, spacing.X, calibration.GridSize.Columns),
                 NearestCellIndex(deltaY, spacing.Y, calibration.GridSize.Rows));
+            var occupiedCells = GetOccupiedCells(icon.PixelPosition, calibration);
             var isGridAligned = deltaX % spacing.X == 0 &&
                                 deltaY % spacing.Y == 0 &&
                                 occupiedCells.Count == 1 &&
                                 occupiedCells[0] == cell;
+            if (occupiedCells.Count == 0)
+            {
+                if (!Contains(displayEntry.Display.Bounds, icon.PixelPosition))
+                {
+                    issues.Add(new(
+                        DesktopLogicalWorkspaceProjectionIssueCode.IconOutsideDisplayGrid,
+                        $"项目 \"{icon.DisplayName}\" 超出显示器 {calibration.DisplayRef} 的物理边界，无法安全投影到逻辑网格。",
+                        icon.DisplayName,
+                        calibration.DisplayRef));
+                    continue;
+                }
+
+                occupiedCells = Array.AsReadOnly(new[] { cell });
+                isGridAligned = false;
+            }
+
+            var itemRef = $"item-{index + 1:D4}";
             logicalItems.Add(new(
                 itemRef,
                 icon.DisplayName,
@@ -472,6 +479,10 @@ public static class DesktopLogicalWorkspaceProjector
     private static bool Contains(PixelRect outer, PixelRect inner)
         => inner.Left >= outer.Left && inner.Top >= outer.Top &&
            inner.Right <= outer.Right && inner.Bottom <= outer.Bottom;
+
+    private static bool Contains(PixelRect rect, PixelPoint point)
+        => point.X >= rect.Left && point.X < rect.Right &&
+           point.Y >= rect.Top && point.Y < rect.Bottom;
 
     private static int AlignUpToPhase(int value, int spacing, int phase)
     {
