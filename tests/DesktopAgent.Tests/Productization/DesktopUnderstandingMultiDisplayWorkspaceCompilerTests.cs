@@ -1,6 +1,7 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.Geometry;
@@ -90,6 +91,67 @@ public sealed class DesktopUnderstandingMultiDisplayWorkspaceCompilerTests
         Assert.Equal(4, result.ScopedAssignmentCount);
         Assert.Equal(1, result.UnscopedAssignmentCount);
         Assert.Equal(1, result.UnmappedAssignmentCount);
+    }
+
+    [Fact]
+    public void Compile_PrimaryWithZeroTargets_KeepsReservedOutboundSourceParticipation()
+    {
+        var understanding = CreateUnderstanding();
+        var observation = CreateObservation();
+        var state = new DesktopLayoutConversationState(
+            "Move most items to the secondary display and keep the primary center clear.",
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["work"] = "secondary_1",
+                ["game"] = "secondary_1",
+            },
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            new Dictionary<string, DesktopDisplayLoadPreference>(StringComparer.Ordinal)
+            {
+                ["primary"] = DesktopDisplayLoadPreference.Low,
+                ["secondary_1"] = DesktopDisplayLoadPreference.High,
+            },
+            new[]
+            {
+                new DesktopReservedRegionConstraint(
+                    "primary-wallpaper",
+                    "primary",
+                    DesktopZonePlacementHint.Center,
+                    DesktopZoneSizeHint.Large,
+                    "Show the wallpaper"),
+            });
+
+        var result = DesktopUnderstandingMultiDisplayWorkspaceCompiler.Compile(
+            understanding,
+            observation,
+            state);
+
+        Assert.Equal(2, result.Displays.Count);
+        Assert.Equal(4, result.ScopedAssignmentCount);
+        Assert.Equal(2, result.CrossDisplayAssignmentCount);
+
+        var primary = Assert.Single(result.Displays, item => item.Display.DeviceName == @"\\.\DISPLAY1");
+        Assert.Equal(0, primary.SourceAssignmentCount);
+        Assert.Equal(0, primary.MappedAssignmentCount);
+        Assert.Single(primary.ReservedRegions);
+        Assert.NotEmpty(primary.Draft.Zones);
+        Assert.All(primary.Draft.Zones, zone => Assert.True(
+            zone.Bounds.Right <= 3_000
+            || zone.Bounds.Left >= 7_000
+            || zone.Bounds.Bottom <= 3_000
+            || zone.Bounds.Top >= 7_000));
+        Assert.Equal(
+            new[] { "p-game", "p-work" },
+            primary.Draft.RuleSet.Rules
+                .Where(rule => rule.Kind == DesktopLayoutIconRuleKind.Exclude)
+                .Select(static rule => rule.StableId)
+                .ToArray());
+        Assert.Empty(primary.Draft.ExplicitInboundStableIds);
+
+        var secondary = Assert.Single(result.Displays, item => item.Display.DeviceName == @"\\.\DISPLAY2");
+        Assert.Equal(4, secondary.SourceAssignmentCount);
+        Assert.Equal(4, secondary.MappedAssignmentCount);
+        Assert.Equal(new[] { "p-game", "p-work" }, secondary.Draft.ExplicitInboundStableIds);
     }
 
     private static DesktopUnderstandingDraft CreateUnderstanding(Guid? workExistingZoneId = null)

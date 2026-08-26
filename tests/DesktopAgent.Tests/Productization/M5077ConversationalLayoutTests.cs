@@ -70,7 +70,17 @@ public sealed class M5077ConversationalLayoutTests
         Assert.Equal(0, result.UnscopedAssignmentCount);
         Assert.Equal(1, result.CrossDisplayAssignmentCount);
 
-        var secondary = Assert.Single(result.Displays);
+        Assert.Equal(2, result.Displays.Count);
+        var primary = Assert.Single(result.Displays, item => item.Display.DeviceName == @"\\.\DISPLAY1");
+        Assert.Equal("primary", primary.DisplayRef);
+        Assert.Equal(0, primary.SourceAssignmentCount);
+        Assert.Equal(0, primary.ExplicitInboundCount);
+        var outboundRule = Assert.Single(
+            primary.Draft.RuleSet.Rules,
+            rule => rule.StableId == "p-work");
+        Assert.Equal(DesktopLayoutIconRuleKind.Exclude, outboundRule.Kind);
+
+        var secondary = Assert.Single(result.Displays, item => item.Display.DeviceName == @"\\.\DISPLAY2");
         Assert.Equal(@"\\.\DISPLAY2", secondary.Display.DeviceName);
         Assert.Equal("secondary_1", secondary.DisplayRef);
         Assert.Equal(2, secondary.SourceAssignmentCount);

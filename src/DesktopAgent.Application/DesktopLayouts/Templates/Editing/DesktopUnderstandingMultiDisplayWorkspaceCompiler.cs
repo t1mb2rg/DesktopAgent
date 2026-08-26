@@ -98,8 +98,17 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
             StringComparer.Ordinal);
         var inboundByTargetDevice = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var outboundBySourceDevice = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var participatingDeviceNames = new HashSet<string>(StringComparer.Ordinal);
         var unscoped = 0;
         var crossDisplay = 0;
+
+        foreach (var displayRef in conversationState.CategoryDisplayTargets.Values
+                     .Concat(conversationState.ItemDisplayTargets.Values)
+                     .Concat(conversationState.DisplayLoadPreferences.Keys)
+                     .Concat(conversationState.ReservedRegions.Select(static region => region.DisplayRef)))
+        {
+            participatingDeviceNames.Add(displayMap.ResolveDisplayRef(displayRef).Display.DeviceName);
+        }
 
         foreach (var assignment in understanding.Assignments)
         {
@@ -116,6 +125,8 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
                 currentEntry.DisplayRef,
                 conversationState);
             var targetEntry = displayMap.ResolveDisplayRef(targetDisplayRef);
+            participatingDeviceNames.Add(currentEntry.Display.DeviceName);
+            participatingDeviceNames.Add(targetEntry.Display.DeviceName);
 
             if (!assignmentsByTargetDevice.TryGetValue(targetEntry.Display.DeviceName, out var targetList))
             {
@@ -139,13 +150,55 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
 
         // 同一逻辑 Zone 若最终同时出现在多块屏幕，不能把同一个 ExistingZoneId
         // 复制为多个物理布局中的共享身份。
-        var zoneDisplayCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var pair in assignmentsByTargetDevice)
+        var zoneKeysByDevice = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var mapEntry in displayMap.Entries)
         {
-            foreach (var zoneKey in pair.Value
-                         .Where(static assignment => assignment.ZoneKey is not null)
-                         .Select(static assignment => assignment.ZoneKey!)
-                         .Distinct(StringComparer.Ordinal))
+            if (!participatingDeviceNames.Contains(mapEntry.Display.DeviceName))
+                continue;
+
+            var usedZoneKeys = assignmentsByTargetDevice.TryGetValue(mapEntry.Display.DeviceName, out var targeted)
+                ? targeted
+                    .Where(static assignment => assignment.ZoneKey is not null)
+                    .Select(static assignment => assignment.ZoneKey!)
+                    .ToHashSet(StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+
+            if (outboundBySourceDevice.TryGetValue(mapEntry.Display.DeviceName, out var outbound))
+            {
+                usedZoneKeys.UnionWith(understanding.Assignments
+                    .Where(assignment => outbound.Contains(assignment.StableId) && assignment.ZoneKey is not null)
+                    .Select(static assignment => assignment.ZoneKey!));
+            }
+
+            var explicitlyTargetedCategories = conversationState.CategoryDisplayTargets
+                .Where(pair => string.Equals(pair.Value, mapEntry.DisplayRef, StringComparison.Ordinal))
+                .Select(static pair => pair.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            if (explicitlyTargetedCategories.Count > 0)
+            {
+                usedZoneKeys.UnionWith(understanding.Zones
+                    .Where(zone => zone.CategoryKeys.Any(explicitlyTargetedCategories.Contains))
+                    .Select(static zone => zone.Key));
+            }
+
+            usedZoneKeys.UnionWith(conversationState.ItemDisplayTargets
+                .Where(pair => string.Equals(pair.Value, mapEntry.DisplayRef, StringComparison.Ordinal))
+                .Select(pair => understanding.Assignments.Single(assignment =>
+                    string.Equals(assignment.StableId, pair.Key, StringComparison.Ordinal)).ZoneKey)
+                .Where(static zoneKey => zoneKey is not null)
+                .Select(static zoneKey => zoneKey!));
+
+            // A reserved/load-only participant still needs local geometry, but no item assignments.
+            if (usedZoneKeys.Count == 0 && (targeted is null || targeted.Count == 0))
+                usedZoneKeys.UnionWith(understanding.Zones.Select(static zone => zone.Key));
+
+            zoneKeysByDevice.Add(mapEntry.Display.DeviceName, usedZoneKeys);
+        }
+
+        var zoneDisplayCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var usedZoneKeys in zoneKeysByDevice.Values)
+        {
+            foreach (var zoneKey in usedZoneKeys)
             {
                 zoneDisplayCounts.TryGetValue(zoneKey, out var count);
                 zoneDisplayCounts[zoneKey] = count + 1;
@@ -156,16 +209,13 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
         foreach (var mapEntry in displayMap.Entries)
         {
             var display = mapEntry.Display;
-            if (!assignmentsByTargetDevice.TryGetValue(display.DeviceName, out var assignments)
-                || assignments.Count == 0)
-            {
+            if (!participatingDeviceNames.Contains(display.DeviceName))
                 continue;
-            }
+            var assignments = assignmentsByTargetDevice.TryGetValue(display.DeviceName, out var targeted)
+                ? targeted
+                : [];
 
-            var usedZoneKeys = assignments
-                .Where(static assignment => assignment.ZoneKey is not null)
-                .Select(static assignment => assignment.ZoneKey!)
-                .ToHashSet(StringComparer.Ordinal);
+            var usedZoneKeys = zoneKeysByDevice[display.DeviceName];
             if (usedZoneKeys.Count == 0)
             {
                 throw new InvalidOperationException(

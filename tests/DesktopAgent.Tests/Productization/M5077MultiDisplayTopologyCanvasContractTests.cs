@@ -19,6 +19,12 @@ public sealed class M5077MultiDisplayTopologyCanvasContractTests
         Assert.Contains("state.Draft.Zones", source, StringComparison.Ordinal);
         Assert.Contains("AiWorkspaceDisplayCombo.SelectedIndex", source, StringComparison.Ordinal);
         Assert.Contains("RenderActivePreviewAcrossTopology", source, StringComparison.Ordinal);
+        Assert.Contains("var current = item.CurrentPosition;", source, StringComparison.Ordinal);
+        Assert.Contains("X1 = currentX", source, StringComparison.Ordinal);
+        Assert.Contains("Y1 = currentY", source, StringComparison.Ordinal);
+        Assert.Contains("X2 = targetX", source, StringComparison.Ordinal);
+        Assert.Contains("Y2 = targetY", source, StringComparison.Ordinal);
+        Assert.Contains("item.Icon.MonitorDeviceName == _latestPreview.Plan.TargetDisplay.DeviceName", source, StringComparison.Ordinal);
 
         Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IDesktopIconPositionWriter", source, StringComparison.Ordinal);
