@@ -181,6 +181,37 @@ public sealed class AiProductIntegrationContractTests
         Assert.Contains("已完整理解", codeBehind, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void LogicalWorkspacePlanner_ValidatesCompletePlanAndNeverReferencesExecutionTypes()
+    {
+        var root = FindRepositoryRoot();
+        var planner = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Application",
+            "Intelligence",
+            "OpenAiCompatibleDesktopLogicalWorkspacePlanner.cs"));
+        var contract = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Application",
+            "Intelligence",
+            "DesktopLogicalWorkspacePlanningContract.cs"));
+
+        Assert.Contains("DesktopDesiredWorkspacePlanValidator.Validate", planner, StringComparison.Ordinal);
+        Assert.Contains("DesktopObservedLogicalWorkspace", contract, StringComparison.Ordinal);
+        Assert.Contains("ValidatedPlan", contract, StringComparison.Ordinal);
+        Assert.Contains("RejectedPlan", contract, StringComparison.Ordinal);
+        Assert.Contains("CanRetryValidation", contract, StringComparison.Ordinal);
+
+        var planningSource = planner + contract;
+        Assert.DoesNotContain("IDesktopIconPositionWriter", planningSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopShellIconPositionWriter", planningSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopIconMovePlanner", planningSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriterCommand", planningSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopLayoutExecution", planningSource, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         for (var current = new DirectoryInfo(AppContext.BaseDirectory); current is not null; current = current.Parent)
