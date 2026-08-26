@@ -21,6 +21,7 @@ public enum DesktopLogicalWorkspaceProjectionIssueCode
     IconOutsideDisplayGrid = 7,
     SemanticAssignmentOutsideObservation = 8,
     InvalidSemanticCategoryCatalog = 9,
+    GridPhaseConflict = 10,
 }
 
 public sealed record DesktopLogicalWorkspaceProjectionIssue(
@@ -216,15 +217,20 @@ public static class DesktopLogicalWorkspaceProjector
             return DesktopLogicalWorkspaceProjectionResult.Failure(issues);
 
         var spacing = observation.PositioningCapabilities.Spacing;
-        var gridInference = DesktopExplorerGridPhaseResolver.TryInfer(
-            observation.Icons.Select(static icon => icon.PixelPosition).ToArray(),
-            spacing,
-            MinimumGridConsensusRatio);
-        if (gridInference is null)
+        if (!TryResolveSharedGridPhase(
+                observation,
+                displayEntries,
+                spacing,
+                out var gridPhase,
+                out var gridPhaseConflict))
         {
-            issues.Add(new(
-                DesktopLogicalWorkspaceProjectionIssueCode.GridPhaseUnavailable,
-                "当前图标位置无法形成可靠的 Explorer 网格相位，拒绝猜测逻辑格位。"));
+            issues.Add(gridPhaseConflict
+                ? new(
+                    DesktopLogicalWorkspaceProjectionIssueCode.GridPhaseConflict,
+                    "多块显示器分别形成可靠但不一致的 Explorer 网格相位，拒绝猜测统一逻辑格位。")
+                : new(
+                    DesktopLogicalWorkspaceProjectionIssueCode.GridPhaseUnavailable,
+                    "当前各显示器均无法形成可靠的 Explorer 网格相位，且全局回退也没有强多数，拒绝猜测逻辑格位。"));
             return DesktopLogicalWorkspaceProjectionResult.Failure(issues);
         }
 
@@ -234,8 +240,8 @@ public static class DesktopLogicalWorkspaceProjector
         foreach (var entry in displayEntries)
         {
             var origin = new PixelPoint(
-                AlignUpToPhase(entry.Display.WorkArea.Left, spacing.X, gridInference.Phase.X),
-                AlignUpToPhase(entry.Display.WorkArea.Top, spacing.Y, gridInference.Phase.Y));
+                AlignUpToPhase(entry.Display.WorkArea.Left, spacing.X, gridPhase.X),
+                AlignUpToPhase(entry.Display.WorkArea.Top, spacing.Y, gridPhase.Y));
             var columns = CountFullyContainedCells(origin.X, entry.Display.WorkArea.Right, spacing.X);
             var rows = CountFullyContainedCells(origin.Y, entry.Display.WorkArea.Bottom, spacing.Y);
             if (columns <= 0 || rows <= 0)
@@ -315,7 +321,7 @@ public static class DesktopLogicalWorkspaceProjector
             return DesktopLogicalWorkspaceProjectionResult.Failure(issues);
 
         var topologyFingerprint = ComputeTopologyFingerprint(observation.Displays);
-        var gridFingerprint = ComputeGridFingerprint(spacing, gridInference.Phase, calibrations);
+        var gridFingerprint = ComputeGridFingerprint(spacing, gridPhase, calibrations);
         var workspace = new DesktopObservedLogicalWorkspace(
             observation.ObservationId,
             topologyFingerprint,
@@ -327,6 +333,54 @@ public static class DesktopLogicalWorkspaceProjector
             itemBindings,
             calibrations);
         return DesktopLogicalWorkspaceProjectionResult.Success(workspace, authority);
+    }
+
+    private static bool TryResolveSharedGridPhase(
+        DesktopObservation observation,
+        IReadOnlyList<DisplayEntry> displayEntries,
+        PixelPoint spacing,
+        out PixelPoint phase,
+        out bool conflict)
+    {
+        var reliable = new List<DesktopExplorerGridPhaseResolver.Inference>();
+        foreach (var entry in displayEntries)
+        {
+            var positions = observation.Icons
+                .Where(icon => string.Equals(
+                    icon.MonitorDeviceName,
+                    entry.Display.DeviceName,
+                    StringComparison.Ordinal))
+                .Select(static icon => icon.PixelPosition)
+                .ToArray();
+            var inference = DesktopExplorerGridPhaseResolver.TryInfer(
+                positions,
+                spacing,
+                MinimumGridConsensusRatio);
+            if (inference is not null)
+                reliable.Add(inference);
+        }
+
+        if (reliable.Count > 0)
+        {
+            phase = reliable[0].Phase;
+            conflict = reliable.Skip(1).Any(inference => inference.Phase != phase);
+            return !conflict;
+        }
+
+        var globalFallback = DesktopExplorerGridPhaseResolver.TryInfer(
+            observation.Icons.Select(static icon => icon.PixelPosition).ToArray(),
+            spacing,
+            MinimumGridConsensusRatio);
+        if (globalFallback is null)
+        {
+            phase = default;
+            conflict = false;
+            return false;
+        }
+
+        phase = globalFallback.Phase;
+        conflict = false;
+        return true;
     }
 
     private static IReadOnlyList<DisplayEntry> CreateDisplayEntries(
