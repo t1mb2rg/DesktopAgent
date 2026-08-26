@@ -362,8 +362,9 @@ public static class DesktopLogicalWorkspaceProjector
 
         if (reliable.Count > 0)
         {
-            phase = reliable[0].Phase;
-            conflict = reliable.Skip(1).Any(inference => inference.Phase != phase);
+            var sharedPhase = reliable[0].Phase;
+            phase = sharedPhase;
+            conflict = reliable.Skip(1).Any(inference => inference.Phase != sharedPhase);
             return !conflict;
         }
 
