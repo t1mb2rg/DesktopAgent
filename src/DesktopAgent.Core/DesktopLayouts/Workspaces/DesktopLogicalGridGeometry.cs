@@ -1,6 +1,42 @@
 namespace DesktopAgent.Core.DesktopLayouts.Workspaces;
 
 /// <summary>
+/// 显示器在 Provider-safe 相对拓扑中的归一化矩形。
+/// 坐标只表达显示器之间的相对位置与尺寸，不是 Windows 虚拟桌面像素。
+/// </summary>
+public readonly record struct DesktopLogicalTopologyRect
+{
+    public const int Scale = 10_000;
+
+    public int Left { get; }
+    public int Top { get; }
+    public int Right { get; }
+    public int Bottom { get; }
+
+    public int Width => checked(Right - Left);
+    public int Height => checked(Bottom - Top);
+
+    public DesktopLogicalTopologyRect(int left, int top, int right, int bottom)
+    {
+        if (left < 0 || left >= Scale)
+            throw new ArgumentOutOfRangeException(nameof(left), $"Left 必须位于 [0, {Scale})。");
+        if (top < 0 || top >= Scale)
+            throw new ArgumentOutOfRangeException(nameof(top), $"Top 必须位于 [0, {Scale})。");
+        if (right <= left || right > Scale)
+            throw new ArgumentOutOfRangeException(nameof(right), $"Right 必须位于 (Left, {Scale}]。");
+        if (bottom <= top || bottom > Scale)
+            throw new ArgumentOutOfRangeException(nameof(bottom), $"Bottom 必须位于 (Top, {Scale}]。");
+
+        Left = left;
+        Top = top;
+        Right = right;
+        Bottom = bottom;
+    }
+
+    public static DesktopLogicalTopologyRect Full => new(0, 0, Scale, Scale);
+}
+
+/// <summary>
 /// Provider-safe 的显示器本地逻辑网格尺寸。不包含物理像素、DPI 或 Windows 设备身份。
 /// </summary>
 public readonly record struct DesktopLogicalGridSize

@@ -134,6 +134,64 @@ public sealed class DesktopDesiredWorkspacePlanValidatorTests
     }
 
     [Fact]
+    public void OffGridStationaryItem_BlocksEveryOccupiedLogicalCell()
+    {
+        var observed = new DesktopObservedLogicalWorkspace(
+            ObservationId,
+            "topology-v1",
+            "grid-v1",
+            [new DesktopObservedLogicalDisplay("primary", true, new DesktopLogicalGridSize(4, 2))],
+            [
+                new DesktopObservedLogicalItem(
+                    "moving",
+                    "Moving.txt",
+                    ItemKind.File,
+                    "primary",
+                    new DesktopLogicalGridCell(0, 0),
+                    true),
+                new DesktopObservedLogicalItem(
+                    "fixed",
+                    "Fixed",
+                    ItemKind.SystemItem,
+                    "primary",
+                    new DesktopLogicalGridCell(1, 0),
+                    false,
+                    isGridAligned: false,
+                    occupiedCells:
+                    [
+                        new DesktopLogicalGridCell(1, 0),
+                        new DesktopLogicalGridCell(2, 0),
+                    ]),
+            ]);
+        var plan = new DesktopDesiredWorkspacePlan(
+            Guid.NewGuid(),
+            ObservationId,
+            "topology-v1",
+            "grid-v1",
+            zones:
+            [
+                new DesktopDesiredWorkspaceZone(
+                    "all",
+                    "全部",
+                    "primary",
+                    new DesktopLogicalGridRect(0, 0, 4, 2)),
+            ],
+            items:
+            [
+                DesktopDesiredWorkspaceItem.Place(
+                    "moving",
+                    "primary",
+                    new DesktopLogicalGridCell(2, 0),
+                    "all"),
+                DesktopDesiredWorkspaceItem.Exclude("fixed"),
+            ]);
+
+        var result = DesktopDesiredWorkspacePlanValidator.Validate(observed, plan);
+
+        AssertIssue(result, DesktopDesiredWorkspacePlanIssueCode.TargetCellCollision);
+    }
+
+    [Fact]
     public void ZoneAndReservedRegionGeometry_IsStrictlyValidated()
     {
         var observed = CreateObserved();

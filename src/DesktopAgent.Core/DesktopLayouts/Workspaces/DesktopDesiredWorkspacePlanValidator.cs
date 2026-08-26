@@ -214,7 +214,8 @@ public static class DesktopDesiredWorkspacePlanValidator
 
             if (desired.State != DesktopDesiredItemState.Place)
             {
-                AddOccupant(current.CurrentDisplayRef, current.CurrentCell, desired.ItemRef, false);
+                foreach (var occupiedCell in current.OccupiedCells)
+                    AddOccupant(current.CurrentDisplayRef, occupiedCell, desired.ItemRef, false);
                 continue;
             }
 
@@ -226,7 +227,8 @@ public static class DesktopDesiredWorkspacePlanValidator
                     desired.ItemRef,
                     desired.TargetDisplayRef,
                     desired.ZoneKey);
-                AddOccupant(current.CurrentDisplayRef, current.CurrentCell, desired.ItemRef, false);
+                foreach (var occupiedCell in current.OccupiedCells)
+                    AddOccupant(current.CurrentDisplayRef, occupiedCell, desired.ItemRef, false);
                 continue;
             }
 
