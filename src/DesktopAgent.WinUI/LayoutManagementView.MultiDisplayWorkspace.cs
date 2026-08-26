@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
+using DesktopAgent.Core.Displays;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -9,6 +10,7 @@ public sealed partial class LayoutManagementView
 {
     private sealed class AiWorkspaceDraftState
     {
+        public DisplayDescriptor Display { get; }
         public string DeviceName { get; }
         public bool IsPrimary { get; }
         public int ObservedIconCount { get; }
@@ -19,6 +21,7 @@ public sealed partial class LayoutManagementView
         public AiWorkspaceDraftState(
             DesktopUnderstandingMultiDisplayWorkspaceCompiler.DisplayCompilation compilation)
         {
+            Display = compilation.Display;
             DeviceName = compilation.Display.DeviceName;
             IsPrimary = compilation.Display.IsPrimary;
             ObservedIconCount = compilation.ObservedIconCount;

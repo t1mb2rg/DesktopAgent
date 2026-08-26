@@ -13,6 +13,7 @@ public sealed class M5077MultiDisplayTopologyCanvasContractTests
         Assert.Contains("virtualTop", source, StringComparison.Ordinal);
         Assert.Contains("item.Display.Bounds.Left", source, StringComparison.Ordinal);
         Assert.Contains("item.Display.Bounds.Top", source, StringComparison.Ordinal);
+        Assert.Contains("state.Display", source, StringComparison.Ordinal);
         Assert.Contains("var bounds = display.Bounds;", source, StringComparison.Ordinal);
         Assert.Contains("X(bounds.Left)", source, StringComparison.Ordinal);
         Assert.Contains("Y(bounds.Top)", source, StringComparison.Ordinal);
@@ -30,6 +31,7 @@ public sealed class M5077MultiDisplayTopologyCanvasContractTests
         Assert.DoesNotContain("IDesktopIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TargetDisplayLayoutExecutionCoordinator", source, StringComparison.Ordinal);
         Assert.DoesNotContain("MoveDesktopIcon", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("NativeDisplayTopologyReader", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -41,7 +43,23 @@ public sealed class M5077MultiDisplayTopologyCanvasContractTests
 
         Assert.Contains("!IsAiMultiDisplayWorkspaceActive", source, StringComparison.Ordinal);
         Assert.Contains("_aiWorkspaceDrafts.Count <= 1", source, StringComparison.Ordinal);
-        Assert.Contains("HasTopologyMarker", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("LayoutCanvas.LayoutUpdated", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LayoutWorkbench_RenderPath_InvokesCompositeTopologyDirectly()
+    {
+        var root = FindRepoRoot();
+        var renderSource = File.ReadAllText(Path.Combine(
+            root,
+            "src", "DesktopAgent.WinUI", "LayoutManagementView.xaml.cs"));
+        var workspaceSource = File.ReadAllText(Path.Combine(
+            root,
+            "src", "DesktopAgent.WinUI", "LayoutManagementView.MultiDisplayWorkspace.cs"));
+
+        Assert.Contains("if (TryRenderAiMultiDisplayTopology())", renderSource, StringComparison.Ordinal);
+        Assert.Contains("public DisplayDescriptor Display { get; }", workspaceSource, StringComparison.Ordinal);
+        Assert.Contains("Display = compilation.Display;", workspaceSource, StringComparison.Ordinal);
     }
 
     private static string FindRepoRoot()

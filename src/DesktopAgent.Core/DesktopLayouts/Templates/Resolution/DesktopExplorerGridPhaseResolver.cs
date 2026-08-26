@@ -35,19 +35,43 @@ public static class DesktopExplorerGridPhaseResolver
         if (minimumConsensusRatio is <= 0d or > 1d)
             throw new ArgumentOutOfRangeException(nameof(minimumConsensusRatio));
 
-        // 单个图标不足以区分“真实全局网格”与“用户恰好放在这里”。
-        if (icons.Count < 2)
+        var positions = new PixelPoint[icons.Count];
+        for (var index = 0; index < icons.Count; index++)
+        {
+            var icon = icons[index]
+                ?? throw new ArgumentException("Icons 不能包含 null 元素。", nameof(icons));
+            positions[index] = icon.PixelPosition;
+        }
+
+        return TryInfer(positions, spacing, minimumConsensusRatio);
+    }
+
+    /// <summary>
+    /// 从已观察到的像素坐标推断 Explorer 网格相位。
+    /// </summary>
+    public static Inference? TryInfer(
+        IReadOnlyList<PixelPoint> positions,
+        PixelPoint spacing,
+        double minimumConsensusRatio = 0.60d)
+    {
+        ArgumentNullException.ThrowIfNull(positions);
+        if (spacing.X <= 0)
+            throw new ArgumentOutOfRangeException(nameof(spacing), "Spacing.X 必须大于 0。");
+        if (spacing.Y <= 0)
+            throw new ArgumentOutOfRangeException(nameof(spacing), "Spacing.Y 必须大于 0。");
+        if (minimumConsensusRatio is <= 0d or > 1d)
+            throw new ArgumentOutOfRangeException(nameof(minimumConsensusRatio));
+
+        // 单个坐标不足以区分“真实全局网格”与“用户恰好放在这里”。
+        if (positions.Count < 2)
             return null;
 
         var phaseCounts = new Dictionary<(int X, int Y), int>();
-        foreach (var icon in icons)
+        foreach (var position in positions)
         {
-            if (icon is null)
-                throw new ArgumentException("Icons 不能包含 null 元素。", nameof(icons));
-
             var phase = (
-                PositiveModulo(icon.PixelPosition.X, spacing.X),
-                PositiveModulo(icon.PixelPosition.Y, spacing.Y));
+                PositiveModulo(position.X, spacing.X),
+                PositiveModulo(position.Y, spacing.Y));
             phaseCounts.TryGetValue(phase, out var count);
             phaseCounts[phase] = count + 1;
         }
@@ -57,14 +81,14 @@ public static class DesktopExplorerGridPhaseResolver
             .ThenBy(static pair => pair.Key.X)
             .ThenBy(static pair => pair.Key.Y)
             .First();
-        var required = Math.Max(2, (int)Math.Ceiling(icons.Count * minimumConsensusRatio));
+        var required = Math.Max(2, (int)Math.Ceiling(positions.Count * minimumConsensusRatio));
 
         if (mode.Value < required)
             return null;
 
         return new Inference(
             new PixelPoint(mode.Key.X, mode.Key.Y),
-            icons.Count,
+            positions.Count,
             mode.Value);
     }
 

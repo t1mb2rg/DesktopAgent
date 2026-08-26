@@ -1,4 +1,5 @@
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Templates.Resolution;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Displays;
@@ -262,11 +263,26 @@ public static class DesktopUnderstandingMultiDisplayWorkspaceCompiler
                     StringComparison.Ordinal))
                 .ToArray();
 
+            var spacing = observation.PositioningCapabilities.Spacing;
+            var observedPositions = observation.Icons
+                .Where(icon => string.Equals(
+                    icon.MonitorDeviceName,
+                    display.DeviceName,
+                    StringComparison.Ordinal))
+                .Select(static icon => icon.PixelPosition)
+                .ToArray();
+            var gridPhase = DesktopExplorerGridPhaseResolver.TryInfer(observedPositions, spacing)?.Phase;
+            var physicalLayout = new DesktopUnderstandingLayoutDraftCompiler.PhysicalLayoutContext(
+                display.WorkArea,
+                spacing,
+                gridPhase);
+
             var layout = DesktopUnderstandingLayoutDraftCompiler.Compile(
                 localUnderstanding,
                 $"{name.Trim()} · {ShortDisplayName(display.DeviceName)}",
                 TargetDisplayBinding.ForExactDeviceName(display.DeviceName),
-                reservedForDisplay);
+                reservedForDisplay,
+                physicalLayout);
 
             var rules = layout.Draft.RuleSet.Rules.ToList();
             if (outboundBySourceDevice.TryGetValue(display.DeviceName, out var outbound))

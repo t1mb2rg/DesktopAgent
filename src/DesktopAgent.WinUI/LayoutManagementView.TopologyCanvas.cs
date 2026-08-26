@@ -9,62 +9,29 @@ namespace DesktopAgent.WinUI;
 public sealed partial class LayoutManagementView
 {
     private const string AiTopologyCanvasMarker = "Tessel.AiMultiDisplayTopology";
-    private bool _aiTopologyHookAttached;
     private bool _aiTopologyRendering;
 
-    protected override void OnApplyTemplate()
-    {
-        base.OnApplyTemplate();
-        if (_aiTopologyHookAttached)
-            return;
-
-        LayoutCanvas.LayoutUpdated += LayoutCanvas_AiTopologyLayoutUpdated;
-        _aiTopologyHookAttached = true;
-    }
-
-    private void LayoutCanvas_AiTopologyLayoutUpdated(object? sender, object e)
+    private bool TryRenderAiMultiDisplayTopology()
     {
         if (_aiTopologyRendering
             || !IsAiMultiDisplayWorkspaceActive
-            || _aiWorkspaceDrafts.Count <= 1
-            || HasTopologyMarker())
+            || _aiWorkspaceDrafts.Count <= 1)
         {
-            return;
+            return false;
         }
 
-        TryRenderAiMultiDisplayTopology();
-    }
-
-    private bool HasTopologyMarker()
-        => LayoutCanvas.Children
-            .OfType<FrameworkElement>()
-            .Any(static element => string.Equals(
-                element.Tag as string,
-                AiTopologyCanvasMarker,
-                StringComparison.Ordinal));
-
-    private void TryRenderAiMultiDisplayTopology()
-    {
         _aiTopologyRendering = true;
         try
         {
-            var topology = new DesktopAgent.WindowsInterop.Displays.NativeDisplayTopologyReader()
-                .GetDisplays();
-            var displayByDevice = topology.ToDictionary(
-                static display => display.DeviceName,
-                StringComparer.Ordinal);
-
             var workspaceDisplays = new List<(int Index, AiWorkspaceDraftState State, DisplayDescriptor Display)>();
             for (var index = 0; index < _aiWorkspaceDrafts.Count; index++)
             {
                 var state = _aiWorkspaceDrafts[index];
-                if (!displayByDevice.TryGetValue(state.DeviceName, out var display))
-                    return;
-                workspaceDisplays.Add((index, state, display));
+                workspaceDisplays.Add((index, state, state.Display));
             }
 
             if (workspaceDisplays.Count <= 1)
-                return;
+                return false;
 
             var virtualLeft = workspaceDisplays.Min(static item => item.Display.Bounds.Left);
             var virtualTop = workspaceDisplays.Min(static item => item.Display.Bounds.Top);
@@ -73,7 +40,7 @@ public sealed partial class LayoutManagementView
             var virtualWidth = (long)virtualRight - virtualLeft;
             var virtualHeight = (long)virtualBottom - virtualTop;
             if (virtualWidth <= 0 || virtualHeight <= 0)
-                return;
+                return false;
 
             var canvasWidth = Math.Max(100d, LayoutCanvas.ActualWidth);
             var canvasHeight = Math.Max(100d, LayoutCanvas.ActualHeight);
@@ -82,7 +49,7 @@ public sealed partial class LayoutManagementView
             var drawableHeight = Math.Max(1d, canvasHeight - inset * 2);
             var scale = Math.Min(drawableWidth / virtualWidth, drawableHeight / virtualHeight);
             if (!double.IsFinite(scale) || scale <= 0d)
-                return;
+                return false;
 
             var renderedWidth = virtualWidth * scale;
             var renderedHeight = virtualHeight * scale;
@@ -197,10 +164,12 @@ public sealed partial class LayoutManagementView
             LayoutCanvasStatusText.Text =
                 $"多屏拓扑 · {_aiWorkspaceDrafts.Count} 块显示器 · 点击屏幕聚焦编辑" +
                 (_latestPreview is null ? " · 尚未预览当前聚焦屏" : " · 蓝线/蓝点为当前聚焦屏 Preview");
+            return true;
         }
         catch
         {
             // 这里只是产品可视化增强。失败时保留原单屏 Canvas，不改变任何 Preview / Writer 权限。
+            return false;
         }
         finally
         {

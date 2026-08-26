@@ -1,5 +1,6 @@
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
+using DesktopAgent.Core.Geometry;
 using DesktopAgent.Core.Intelligence;
 
 namespace DesktopAgent.Application.DesktopLayouts.Templates.Editing;
@@ -10,6 +11,11 @@ namespace DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 /// </summary>
 public static class DesktopUnderstandingLayoutDraftCompiler
 {
+    public sealed record PhysicalLayoutContext(
+        PixelRect WorkArea,
+        PixelPoint IconSpacing,
+        PixelPoint? ExplorerGridPhase);
+
     public sealed record CompilationResult(
         DesktopLayoutEditDraft Draft,
         int SourceAssignmentCount,
@@ -35,6 +41,19 @@ public static class DesktopUnderstandingLayoutDraftCompiler
         string name,
         TargetDisplayBinding? targetDisplayBinding,
         IReadOnlyList<DesktopReservedRegionConstraint> reservedRegions)
+        => Compile(
+            understanding,
+            name,
+            targetDisplayBinding,
+            reservedRegions,
+            physicalLayout: null);
+
+    public static CompilationResult Compile(
+        DesktopUnderstandingDraft understanding,
+        string name,
+        TargetDisplayBinding? targetDisplayBinding,
+        IReadOnlyList<DesktopReservedRegionConstraint> reservedRegions,
+        PhysicalLayoutContext? physicalLayout)
     {
         ArgumentNullException.ThrowIfNull(understanding);
         ArgumentNullException.ThrowIfNull(reservedRegions);
@@ -44,7 +63,7 @@ public static class DesktopUnderstandingLayoutDraftCompiler
             throw new InvalidOperationException("AI 没有建议可导入的逻辑 Zone。请先修正 AI 建议后再导入布局工作台。");
 
         var compiledZones = reservedRegions.Count == 0
-            ? CompileZonesLegacy(understanding.Zones)
+            ? CompileZonesLegacy(understanding.Zones, understanding.Assignments, physicalLayout)
             : CompileZonesWithReservedSpace(understanding.Zones, reservedRegions);
         var zoneIdsByKey = understanding.Zones
             .Select((zone, index) => (zone.Key, compiledZones[index].ZoneId))
@@ -85,7 +104,9 @@ public static class DesktopUnderstandingLayoutDraftCompiler
     }
 
     private static IReadOnlyList<DesktopLayoutZone> CompileZonesLegacy(
-        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones)
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyList<DesktopUnderstandingAssignment> assignments,
+        PhysicalLayoutContext? physicalLayout)
     {
         var count = semanticZones.Count;
         var columns = (int)Math.Ceiling(Math.Sqrt(count));
@@ -134,6 +155,29 @@ public static class DesktopUnderstandingLayoutDraftCompiler
 
         var xBounds = BuildBoundaries(columnWeights);
         var yBounds = BuildBoundaries(rowWeights);
+        // 多屏导入已经冻结了工作区、间距和可信网格相位时，优先在原语义网格中
+        // 重新分配整行/整列槽位。若物理容量本来就不足，则保留原草稿，后续 Preview
+        // 仍会按既有 fail-closed 规则报告未规划项。
+        if (physicalLayout is not null)
+        {
+            var assignmentCounts = assignments
+                .Where(static assignment => assignment.ZoneKey is not null)
+                .GroupBy(static assignment => assignment.ZoneKey!, StringComparer.Ordinal)
+                .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.Ordinal);
+            if (TryBuildCapacityAwareGridBoundaries(
+                    semanticZones,
+                    cellByZoneKey,
+                    assignmentCounts,
+                    columnWeights,
+                    rowWeights,
+                    physicalLayout,
+                    out var capacityXBounds,
+                    out var capacityYBounds))
+            {
+                xBounds = capacityXBounds;
+                yBounds = capacityYBounds;
+            }
+        }
         var result = new DesktopLayoutZone[count];
 
         for (var i = 0; i < count; i++)
@@ -151,6 +195,286 @@ public static class DesktopUnderstandingLayoutDraftCompiler
         ValidateZones(result);
         return Array.AsReadOnly(result);
     }
+
+    private static bool TryBuildCapacityAwareGridBoundaries(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyDictionary<string, GridCell> cellByZoneKey,
+        IReadOnlyDictionary<string, int> assignmentCounts,
+        IReadOnlyList<double> columnWeights,
+        IReadOnlyList<double> rowWeights,
+        PhysicalLayoutContext physicalLayout,
+        out int[] xBounds,
+        out int[] yBounds)
+    {
+        xBounds = [];
+        yBounds = [];
+
+        var work = physicalLayout.WorkArea;
+        var spacing = physicalLayout.IconSpacing;
+        if (work.Width <= 0 || work.Height <= 0 || spacing.X <= 0 || spacing.Y <= 0)
+            return false;
+        if (physicalLayout.ExplorerGridPhase is { } phase
+            && (phase.X < 0 || phase.X >= spacing.X || phase.Y < 0 || phase.Y >= spacing.Y))
+        {
+            return false;
+        }
+
+        var originX = physicalLayout.ExplorerGridPhase is { } xPhase
+            ? AlignUpToPhase(work.Left, spacing.X, xPhase.X)
+            : work.Left;
+        var originY = physicalLayout.ExplorerGridPhase is { } yPhase
+            ? AlignUpToPhase(work.Top, spacing.Y, yPhase.Y)
+            : work.Top;
+        var totalColumns = Math.Max(0, (work.Right - originX) / spacing.X);
+        var totalRows = Math.Max(0, (work.Bottom - originY) / spacing.Y);
+        if (totalColumns < columnWeights.Count || totalRows < rowWeights.Count)
+            return false;
+
+        var rowsFirst = TryAllocateRowsFirst(
+            semanticZones,
+            cellByZoneKey,
+            assignmentCounts,
+            columnWeights,
+            rowWeights,
+            totalColumns,
+            totalRows);
+        var columnsFirst = TryAllocateColumnsFirst(
+            semanticZones,
+            cellByZoneKey,
+            assignmentCounts,
+            columnWeights,
+            rowWeights,
+            totalColumns,
+            totalRows);
+        var allocation = new[] { rowsFirst, columnsFirst }
+            .Where(static candidate => candidate is not null)
+            .Select(static candidate => candidate!)
+            .OrderBy(candidate =>
+                AllocationScore(candidate.Columns, columnWeights)
+                + AllocationScore(candidate.Rows, rowWeights))
+            .FirstOrDefault();
+        if (allocation is null)
+            return false;
+
+        xBounds = BuildPhysicalBoundaries(
+            allocation.Columns,
+            work.Left,
+            work.Width,
+            originX,
+            spacing.X);
+        yBounds = BuildPhysicalBoundaries(
+            allocation.Rows,
+            work.Top,
+            work.Height,
+            originY,
+            spacing.Y);
+        return true;
+    }
+
+    private static GridSlotAllocation? TryAllocateRowsFirst(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyDictionary<string, GridCell> cellByZoneKey,
+        IReadOnlyDictionary<string, int> assignmentCounts,
+        IReadOnlyList<double> columnWeights,
+        IReadOnlyList<double> rowWeights,
+        int totalColumns,
+        int totalRows)
+    {
+        var rows = Enumerable.Repeat(1, rowWeights.Count).ToArray();
+        while (rows.Sum() < totalRows)
+        {
+            var requiredBefore = RequiredColumnSlots(
+                semanticZones, cellByZoneKey, assignmentCounts, rows, columnWeights.Count).Sum();
+            var needsCapacity = requiredBefore > totalColumns;
+            var selected = Enumerable.Range(0, rows.Length)
+                .Select(index =>
+                {
+                    rows[index]++;
+                    var requiredAfter = RequiredColumnSlots(
+                        semanticZones, cellByZoneKey, assignmentCounts, rows, columnWeights.Count).Sum();
+                    rows[index]--;
+                    var semanticNeed = rowWeights[index] / rowWeights.Sum() * totalRows - rows[index];
+                    return (Index: index, Reduction: requiredBefore - requiredAfter, SemanticNeed: semanticNeed);
+                })
+                .OrderByDescending(candidate => needsCapacity ? candidate.Reduction : candidate.SemanticNeed)
+                .ThenByDescending(candidate => needsCapacity ? candidate.SemanticNeed : candidate.Reduction)
+                .ThenBy(static candidate => candidate.Index)
+                .First();
+            rows[selected.Index]++;
+        }
+
+        var columns = RequiredColumnSlots(
+            semanticZones, cellByZoneKey, assignmentCounts, rows, columnWeights.Count);
+        if (columns.Sum() > totalColumns)
+            return null;
+        DistributeRemainingSlots(columns, totalColumns, columnWeights);
+        return FitsAll(semanticZones, cellByZoneKey, assignmentCounts, columns, rows)
+            ? new GridSlotAllocation(columns, rows)
+            : null;
+    }
+
+    private static GridSlotAllocation? TryAllocateColumnsFirst(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyDictionary<string, GridCell> cellByZoneKey,
+        IReadOnlyDictionary<string, int> assignmentCounts,
+        IReadOnlyList<double> columnWeights,
+        IReadOnlyList<double> rowWeights,
+        int totalColumns,
+        int totalRows)
+    {
+        var columns = Enumerable.Repeat(1, columnWeights.Count).ToArray();
+        while (columns.Sum() < totalColumns)
+        {
+            var requiredBefore = RequiredRowSlots(
+                semanticZones, cellByZoneKey, assignmentCounts, columns, rowWeights.Count).Sum();
+            var needsCapacity = requiredBefore > totalRows;
+            var selected = Enumerable.Range(0, columns.Length)
+                .Select(index =>
+                {
+                    columns[index]++;
+                    var requiredAfter = RequiredRowSlots(
+                        semanticZones, cellByZoneKey, assignmentCounts, columns, rowWeights.Count).Sum();
+                    columns[index]--;
+                    var semanticNeed = columnWeights[index] / columnWeights.Sum() * totalColumns - columns[index];
+                    return (Index: index, Reduction: requiredBefore - requiredAfter, SemanticNeed: semanticNeed);
+                })
+                .OrderByDescending(candidate => needsCapacity ? candidate.Reduction : candidate.SemanticNeed)
+                .ThenByDescending(candidate => needsCapacity ? candidate.SemanticNeed : candidate.Reduction)
+                .ThenBy(static candidate => candidate.Index)
+                .First();
+            columns[selected.Index]++;
+        }
+
+        var rows = RequiredRowSlots(
+            semanticZones, cellByZoneKey, assignmentCounts, columns, rowWeights.Count);
+        if (rows.Sum() > totalRows)
+            return null;
+        DistributeRemainingSlots(rows, totalRows, rowWeights);
+        return FitsAll(semanticZones, cellByZoneKey, assignmentCounts, columns, rows)
+            ? new GridSlotAllocation(columns, rows)
+            : null;
+    }
+
+    private static int[] RequiredColumnSlots(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyDictionary<string, GridCell> cellByZoneKey,
+        IReadOnlyDictionary<string, int> assignmentCounts,
+        IReadOnlyList<int> rowSlots,
+        int columnCount)
+    {
+        var required = Enumerable.Repeat(1, columnCount).ToArray();
+        foreach (var zone in semanticZones)
+        {
+            var cell = cellByZoneKey[zone.Key];
+            assignmentCounts.TryGetValue(zone.Key, out var count);
+            required[cell.Column] = Math.Max(
+                required[cell.Column],
+                DivideRoundUp(Math.Max(1, count), rowSlots[cell.Row]));
+        }
+        return required;
+    }
+
+    private static int[] RequiredRowSlots(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyDictionary<string, GridCell> cellByZoneKey,
+        IReadOnlyDictionary<string, int> assignmentCounts,
+        IReadOnlyList<int> columnSlots,
+        int rowCount)
+    {
+        var required = Enumerable.Repeat(1, rowCount).ToArray();
+        foreach (var zone in semanticZones)
+        {
+            var cell = cellByZoneKey[zone.Key];
+            assignmentCounts.TryGetValue(zone.Key, out var count);
+            required[cell.Row] = Math.Max(
+                required[cell.Row],
+                DivideRoundUp(Math.Max(1, count), columnSlots[cell.Column]));
+        }
+        return required;
+    }
+
+    private static bool FitsAll(
+        IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
+        IReadOnlyDictionary<string, GridCell> cellByZoneKey,
+        IReadOnlyDictionary<string, int> assignmentCounts,
+        IReadOnlyList<int> columnSlots,
+        IReadOnlyList<int> rowSlots)
+    {
+        foreach (var zone in semanticZones)
+        {
+            var cell = cellByZoneKey[zone.Key];
+            assignmentCounts.TryGetValue(zone.Key, out var count);
+            if ((long)columnSlots[cell.Column] * rowSlots[cell.Row] < Math.Max(1, count))
+                return false;
+        }
+        return true;
+    }
+
+    private static void DistributeRemainingSlots(
+        int[] allocation,
+        int total,
+        IReadOnlyList<double> semanticWeights)
+    {
+        var totalWeight = semanticWeights.Sum();
+        while (allocation.Sum() < total)
+        {
+            var index = Enumerable.Range(0, allocation.Length)
+                .OrderByDescending(candidate =>
+                    semanticWeights[candidate] / totalWeight * total - allocation[candidate])
+                .ThenBy(static candidate => candidate)
+                .First();
+            allocation[index]++;
+        }
+    }
+
+    private static double AllocationScore(
+        IReadOnlyList<int> allocation,
+        IReadOnlyList<double> semanticWeights)
+    {
+        var totalSlots = allocation.Sum();
+        var totalWeight = semanticWeights.Sum();
+        var score = 0d;
+        for (var index = 0; index < allocation.Count; index++)
+        {
+            var delta = allocation[index] / (double)totalSlots
+                - semanticWeights[index] / totalWeight;
+            score += delta * delta;
+        }
+        return score;
+    }
+
+    private static int[] BuildPhysicalBoundaries(
+        IReadOnlyList<int> slotAllocation,
+        int workStart,
+        int workLength,
+        int alignedOrigin,
+        int spacing)
+    {
+        var boundaries = new int[slotAllocation.Count + 1];
+        boundaries[0] = 0;
+        boundaries[^1] = NormalizedRect.Scale;
+        var consumedSlots = 0;
+        for (var index = 1; index < slotAllocation.Count; index++)
+        {
+            consumedSlots += slotAllocation[index - 1];
+            var pixelBoundary = checked(alignedOrigin + consumedSlots * spacing);
+            boundaries[index] = checked((int)Math.Ceiling(
+                (pixelBoundary - workStart) * (double)NormalizedRect.Scale / workLength));
+        }
+        return boundaries;
+    }
+
+    private static int AlignUpToPhase(int value, int spacing, int phase)
+    {
+        var residue = value % spacing;
+        if (residue < 0)
+            residue += spacing;
+        var delta = (phase - residue + spacing) % spacing;
+        return checked(value + delta);
+    }
+
+    private static int DivideRoundUp(int value, int divisor)
+        => checked((int)(((long)value + divisor - 1) / divisor));
 
     private static IReadOnlyList<DesktopLayoutZone> CompileZonesWithReservedSpace(
         IReadOnlyList<DesktopUnderstandingZoneDraft> semanticZones,
@@ -393,6 +717,7 @@ public static class DesktopUnderstandingLayoutDraftCompiler
 
     private sealed record IndexedZone(DesktopUnderstandingZoneDraft Zone, int Index);
     private sealed record GridCell(int Row, int Column, double CenterX, double CenterY);
+    private sealed record GridSlotAllocation(int[] Columns, int[] Rows);
     private sealed record FreeRect(int Left, int Top, int Right, int Bottom)
     {
         public int Width => Right - Left;

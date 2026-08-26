@@ -512,6 +512,11 @@ public sealed partial class LayoutManagementView : UserControl
         if (draft is null)
             return;
 
+        // 复合工作区直接使用导入时冻结的显示器几何绘制拓扑；不要依赖一次偶发的
+        // LayoutUpdated，也不要为了纯可视化再次读取可能已经变化的原生拓扑。
+        if (TryRenderAiMultiDisplayTopology())
+            return;
+
         var width = Math.Max(100d, LayoutCanvas.ActualWidth);
         var height = Math.Max(100d, LayoutCanvas.ActualHeight);
         var drawableWidth = Math.Max(1d, width - CanvasInset * 2);

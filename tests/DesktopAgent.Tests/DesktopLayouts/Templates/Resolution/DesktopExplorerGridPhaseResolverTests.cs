@@ -12,6 +12,27 @@ namespace DesktopAgent.Tests.DesktopLayouts.Templates.Resolution;
 public sealed class DesktopExplorerGridPhaseResolverTests
 {
     [Fact]
+    public void TryInfer_PixelPositions_UsesSameStrongMajorityContract()
+    {
+        var spacing = new PixelPoint(76, 101);
+        var positions = new[]
+        {
+            new PixelPoint(36, 28),
+            new PixelPoint(112, 129),
+            new PixelPoint(188, 230),
+            new PixelPoint(264, 331),
+            new PixelPoint(12, 17),
+        };
+
+        var inference = DesktopExplorerGridPhaseResolver.TryInfer(positions, spacing);
+
+        Assert.NotNull(inference);
+        Assert.Equal(new PixelPoint(36, 28), inference.Phase);
+        Assert.Equal(5, inference.SampleCount);
+        Assert.Equal(4, inference.ConsensusCount);
+    }
+
+    [Fact]
     public void TryInfer_StrongGridConsensus_ReturnsModalPhase()
     {
         var spacing = new PixelPoint(76, 83);
