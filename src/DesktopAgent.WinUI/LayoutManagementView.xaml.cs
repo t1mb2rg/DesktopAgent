@@ -529,6 +529,13 @@ public sealed partial class LayoutManagementView : UserControl
     private void RenderLayoutCanvas()
     {
         LayoutCanvas.Children.Clear();
+        if (_logicalWorkspaceSession is not null)
+        {
+            LayoutCanvasEmptyState.Visibility = Visibility.Collapsed;
+            RenderAiLogicalWorkspacePreview();
+            return;
+        }
+
         var draft = _draft;
         LayoutCanvasEmptyState.Visibility = draft is null ? Visibility.Visible : Visibility.Collapsed;
         if (draft is null)

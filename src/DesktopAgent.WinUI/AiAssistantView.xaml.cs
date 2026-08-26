@@ -1,4 +1,5 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.Intelligence;
 using Microsoft.UI.Xaml;
@@ -10,6 +11,7 @@ public sealed partial class AiAssistantView : UserControl
 {
     private readonly AiDesktopUnderstandingService _understandingService = new();
     private readonly AiDesktopLayoutConversationService _layoutConversationService = new();
+    private readonly AiDesktopLogicalWorkspacePlanningService _logicalWorkspacePlanningService = new();
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _probeCts;
     private AiDesktopUnderstandingProductResult? _latestSuccessfulUnderstanding;
@@ -17,6 +19,9 @@ public sealed partial class AiAssistantView : UserControl
 
     internal event Action<DesktopUnderstandingLayoutDraftCompiler.CompilationResult>?
         LayoutDraftImportRequested;
+
+    internal event Action<DesktopLogicalWorkspacePlanningSession>?
+        LogicalWorkspacePreviewRequested;
 
     internal bool IsRequestActive => _analysisCts is not null || _probeCts is not null;
 

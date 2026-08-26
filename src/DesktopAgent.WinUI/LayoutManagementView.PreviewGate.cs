@@ -10,6 +10,16 @@ public sealed partial class LayoutManagementView
     {
         ApplyToDesktopButton.IsEnabled = false;
 
+        if (_logicalWorkspaceSession is not null)
+        {
+            RenderLayoutCanvas();
+            ShowInfo(
+                "冻结逻辑预览仍然有效",
+                "这张图直接来自同一次 fresh Observation 的 ValidatedPlan。它不会重新读取桌面，也不会启动 Writer；若桌面已经变化，请回到 AI 助手重新生成。",
+                InfoBarSeverity.Informational);
+            return;
+        }
+
         try
         {
             if (!await EnsureDraftForSelectedLayoutAsync())

@@ -312,6 +312,12 @@ public sealed partial class LayoutManagementView
         if (_suppressAiWorkspaceSelectionChanged)
             return;
 
+        if (_logicalWorkspaceSession is not null)
+        {
+            FocusAiLogicalWorkspaceDisplay(AiWorkspaceDisplayCombo.SelectedIndex);
+            return;
+        }
+
         var targetIndex = AiWorkspaceDisplayCombo.SelectedIndex;
         if (targetIndex < 0 || targetIndex >= _aiWorkspaceDrafts.Count)
             return;
@@ -447,6 +453,7 @@ public sealed partial class LayoutManagementView
 
     internal void ClearAiMultiDisplayWorkspace()
     {
+        ClearAiLogicalWorkspacePreview();
         _aiWorkspaceDrafts.Clear();
         _aiWorkspaceMigrations.Clear();
         _activeAiWorkspaceIndex = -1;

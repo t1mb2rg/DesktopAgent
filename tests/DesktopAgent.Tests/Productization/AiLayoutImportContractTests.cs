@@ -58,8 +58,8 @@ public sealed class AiLayoutImportContractTests
             "DesktopAgent.WinUI",
             "MainWindow.AiAssistant.cs"));
 
-        Assert.Contains("导入到布局工作台", aiView, StringComparison.Ordinal);
-        Assert.Contains("未保存、未应用", aiView, StringComparison.Ordinal);
+        Assert.Contains("生成精确布局预览", aiView, StringComparison.Ordinal);
+        Assert.Contains("本地必须完整校验", aiView, StringComparison.Ordinal);
         Assert.Contains("_isLayoutEditing && _draft is not null", importSurface, StringComparison.Ordinal);
         Assert.Contains("AI 草案没有覆盖当前未保存修改", importSurface, StringComparison.Ordinal);
         Assert.Contains("LayoutDraftImportRequested", host, StringComparison.Ordinal);

@@ -20,6 +20,7 @@ public sealed class DesktopLogicalWorkspacePlanningSession
 {
     public DesktopObservedLogicalWorkspace Workspace { get; }
     public DesktopDesiredWorkspacePlan ValidatedPlan { get; }
+    public DesktopLogicalWorkspaceFrozenPreview FrozenPreview { get; }
     public int ProviderAttemptCount { get; }
 
     internal DesktopLogicalWorkspaceProjectionAuthority Authority { get; }
@@ -52,6 +53,9 @@ public sealed class DesktopLogicalWorkspacePlanningSession
 
         Workspace = workspace;
         ValidatedPlan = validatedPlan;
+        FrozenPreview = DesktopLogicalWorkspaceFrozenPreviewProjector.Create(
+            workspace,
+            validatedPlan);
         ProviderAttemptCount = providerAttemptCount;
         Authority = authority;
     }

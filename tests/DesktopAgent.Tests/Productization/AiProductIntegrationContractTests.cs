@@ -203,7 +203,7 @@ public sealed class AiProductIntegrationContractTests
     }
 
     [Fact]
-    public void LogicalWorkspaceProductService_UsesFreshSafeSessionWithoutLegacyCompilerOrUiWiring()
+    public void LogicalWorkspaceProductService_UsesFreshSafeSessionAndUiWiresOnlyFrozenPreview()
     {
         var root = FindRepositoryRoot();
         var service = File.ReadAllText(Path.Combine(
@@ -216,6 +216,16 @@ public sealed class AiProductIntegrationContractTests
             "src",
             "DesktopAgent.WinUI",
             "AiAssistantView.xaml.cs"));
+        var importSurface = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "AiAssistantView.MultiDisplayImport.cs"));
+        var previewSurface = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "LayoutManagementView.LogicalWorkspacePreview.cs"));
 
         Assert.Contains("DesktopProductIntelligenceOptionsFactory.Create", service, StringComparison.Ordinal);
         Assert.Contains("WindowsDesktopObservationSource", service, StringComparison.Ordinal);
@@ -235,7 +245,18 @@ public sealed class AiProductIntegrationContractTests
         Assert.DoesNotContain("DesktopShellIconPositionWriter", service, StringComparison.Ordinal);
         Assert.DoesNotContain("WriterCommand", service, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopLayoutExecution", service, StringComparison.Ordinal);
-        Assert.DoesNotContain("AiDesktopLogicalWorkspacePlanningService", aiSurface, StringComparison.Ordinal);
+        Assert.Contains("AiDesktopLogicalWorkspacePlanningService", aiSurface, StringComparison.Ordinal);
+        Assert.Contains("LogicalWorkspacePreviewRequested", aiSurface, StringComparison.Ordinal);
+        Assert.Contains("BuildLogicalWorkspacePlanningGuidance", importSurface, StringComparison.Ordinal);
+        Assert.Contains("FrozenPreview", importSurface, StringComparison.Ordinal);
+        Assert.Contains("TryLoadAiLogicalWorkspacePreview", previewSurface, StringComparison.Ordinal);
+
+        foreach (var source in new[] { importSurface, previewSurface })
+        {
+            Assert.DoesNotContain("DesktopUnderstandingMultiDisplayWorkspaceCompiler", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("WriterCommand", source, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

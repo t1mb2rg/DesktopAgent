@@ -30,7 +30,7 @@
                         <StackPanel Grid.Column="1" Spacing="5">
                             <TextBlock Text="桌面语义模型" FontSize="20" FontWeight="SemiBold" />
                             <TextBlock Text="第一次“分析当前桌面”会 fresh 读取全部项目并完整理解当前桌面，这一步项目较多时可能需要几分钟。建立模型后，下面的每条修正只发送已有分类、语义屏幕和当前布局状态，不再重新分析所有项目。" TextWrapping="Wrap" Opacity="0.62" />
-                            <TextBlock Text="完整理解只生成语义草案，不调用 Writer，也不会移动任何桌面图标。AI 仍然看不到 Windows DeviceName 或物理坐标；主屏 / 副屏只是语义引用，真正显示器映射、留白几何和跨屏执行全部由本地安全链处理。" TextWrapping="Wrap" Opacity="0.48" />
+                            <TextBlock Text="完整理解只生成语义草案，不调用 Writer，也不会移动任何桌面图标。AI 仍然看不到 Windows DeviceName 或物理坐标；它只读取请求内逻辑显示器、网格和项目引用，并规划精确逻辑终点。物理映射和执行仍由本地安全链处理。" TextWrapping="Wrap" Opacity="0.48" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -67,8 +67,8 @@
 
                         <Grid Margin="0,4,0,0" ColumnSpacing="12">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="导入只生成未保存、未应用的多屏草稿，并把当前累计布局意图交给本地多屏编译器。跨屏目标变成显式迁入授权，保留区域会从可放置空间中真正扣除；所有草稿仍需预览和确认后才能写桌面。" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.52" />
-                            <Button x:Name="AiImportLayoutButton" Grid.Column="1" Content="导入到布局工作台" IsEnabled="False" Click="ImportMultiDisplayLayoutDraft_Click" />
+                            <TextBlock Text="生成预览时会 fresh 重读桌面，再由 AI 为每个项目规划请求内逻辑终点和分区边界。本地必须完整校验全部项目、碰撞、保留空间和显示器身份；通过后只生成冻结预览，Writer 仍未获得权限。" VerticalAlignment="Center" TextWrapping="Wrap" Opacity="0.52" />
+                            <Button x:Name="AiImportLayoutButton" Grid.Column="1" Content="生成精确布局预览" IsEnabled="False" Click="ImportMultiDisplayLayoutDraft_Click" />
                         </Grid>
                     </StackPanel>
                 </Border>

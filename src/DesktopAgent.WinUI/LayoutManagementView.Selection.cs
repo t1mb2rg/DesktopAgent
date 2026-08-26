@@ -17,9 +17,9 @@ public sealed partial class LayoutManagementView
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
             return;
 
-        if (_isLayoutEditing && _draft is not null)
+        if (_isLayoutEditing && (_draft is not null || _logicalWorkspaceSession is not null))
         {
-            if (_draft.TemplateId == selected.TemplateId)
+            if (_draft is not null && _draft.TemplateId == selected.TemplateId)
                 return;
 
             RestoreSelectionToCurrentDraft();
@@ -131,19 +131,22 @@ public sealed partial class LayoutManagementView
         ConfigureTargetDisplayUx();
 
         _isLayoutEditing = isEditing;
+        var isLogicalWorkspacePreview = _logicalWorkspaceSession is not null;
         var isAiMultiDisplayWorkspace = _activeAiWorkspaceIndex >= 0;
         EditingBadge.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
-        LayoutNameTextBox.IsReadOnly = !isEditing;
-        LayoutTargetBindingCombo.IsEnabled = isEditing && !isAiMultiDisplayWorkspace;
-        LayoutDeviceNameTextBox.IsReadOnly = !isEditing || isAiMultiDisplayWorkspace;
-        LayoutPresetCombo.IsEnabled = isEditing;
-        ApplyPresetButton.IsEnabled = isEditing;
-        SaveLayoutButton.IsEnabled = isEditing;
+        LayoutNameTextBox.IsReadOnly = !isEditing || isLogicalWorkspacePreview;
+        LayoutTargetBindingCombo.IsEnabled = isEditing && !isAiMultiDisplayWorkspace && !isLogicalWorkspacePreview;
+        LayoutDeviceNameTextBox.IsReadOnly = !isEditing || isAiMultiDisplayWorkspace || isLogicalWorkspacePreview;
+        LayoutPresetCombo.IsEnabled = isEditing && !isLogicalWorkspacePreview;
+        ApplyPresetButton.IsEnabled = isEditing && !isLogicalWorkspacePreview;
+        SaveLayoutButton.IsEnabled = isEditing && !isLogicalWorkspacePreview;
+        OverlayToggleButton.IsEnabled = !isLogicalWorkspacePreview;
+        PreviewLayoutButton.IsEnabled = true;
         CancelLayoutEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
         EditLayoutButton.Content = isEditing ? "桌面编辑" : "编辑";
-        EditLayoutButton.IsEnabled = isEditing
+        EditLayoutButton.IsEnabled = !isLogicalWorkspacePreview && (isEditing
             ? _draft is not null
-            : LayoutTemplateList.SelectedItem is LayoutTemplateListItem;
+            : LayoutTemplateList.SelectedItem is LayoutTemplateListItem);
     }
 
     private void ConfigureTargetDisplayUx()
