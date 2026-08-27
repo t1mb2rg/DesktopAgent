@@ -33,7 +33,8 @@ public sealed partial class MainWindow
         DesktopLogicalWorkspacePlanningSession session)
     {
         NavigateToLayouts();
-        _layoutManagementView!.TryLoadAiLogicalWorkspacePreview(session);
+        _layoutManagementView!.PrepareLogicalWorkspacePreviewReplacement();
+        _layoutManagementView.TryLoadAiLogicalWorkspacePreview(session);
     }
 
     private void NavigateToLayouts()
