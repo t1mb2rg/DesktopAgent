@@ -160,7 +160,11 @@ public sealed class DesktopLogicalWorkspacePlanningSessionCoordinator
         ArgumentNullException.ThrowIfNull(freshObservation);
 
         var projection = DesktopLogicalWorkspaceProjector.Project(freshObservation);
-        return await PlanProjectedAsync(projection, userGuidance, cancellationToken)
+        return await PlanProjectedAsync(
+                projection,
+                userGuidance,
+                semanticIntent: null,
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -174,20 +178,28 @@ public sealed class DesktopLogicalWorkspacePlanningSessionCoordinator
         ArgumentNullException.ThrowIfNull(semanticUnderstanding);
 
         var projection = DesktopLogicalWorkspaceProjector.Project(freshObservation);
+        DesktopLogicalWorkspaceSemanticPlanningIntent? semanticIntent = null;
         if (projection.Succeeded)
         {
             projection = DesktopLogicalWorkspaceSemanticOverlay.Apply(
                 projection,
                 semanticUnderstanding);
+            if (projection.Succeeded)
+                semanticIntent = BuildSemanticPlanningIntent(projection, semanticUnderstanding);
         }
 
-        return await PlanProjectedAsync(projection, userGuidance, cancellationToken)
+        return await PlanProjectedAsync(
+                projection,
+                userGuidance,
+                semanticIntent,
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
     private async Task<DesktopLogicalWorkspacePlanningSessionResult> PlanProjectedAsync(
         DesktopLogicalWorkspaceProjectionResult projection,
         string userGuidance,
+        DesktopLogicalWorkspaceSemanticPlanningIntent? semanticIntent,
         CancellationToken cancellationToken)
     {
         if (!projection.Succeeded)
@@ -195,7 +207,7 @@ public sealed class DesktopLogicalWorkspacePlanningSessionCoordinator
 
         var workspace = projection.Workspace!;
         var planningRun = await _planningCoordinator
-            .PlanAsync(workspace, userGuidance, cancellationToken)
+            .PlanAsync(workspace, userGuidance, semanticIntent, cancellationToken)
             .ConfigureAwait(false);
         if (!planningRun.Succeeded)
             return DesktopLogicalWorkspacePlanningSessionResult.PlanningFailure(planningRun);
@@ -219,5 +231,46 @@ public sealed class DesktopLogicalWorkspacePlanningSessionCoordinator
             planningRun.AttemptCount,
             projection.Authority!);
         return DesktopLogicalWorkspacePlanningSessionResult.Success(session, planningRun);
+    }
+
+    private static DesktopLogicalWorkspaceSemanticPlanningIntent BuildSemanticPlanningIntent(
+        DesktopLogicalWorkspaceProjectionResult projection,
+        DesktopUnderstandingDraft understanding)
+    {
+        var authority = projection.Authority
+            ?? throw new InvalidOperationException("成功的逻辑投影缺少 authority sidecar。");
+        var categoryKeyByOriginal = understanding.Categories.ToDictionary(
+            static category => category.Key,
+            static category => category.Key.Trim(),
+            StringComparer.Ordinal);
+        var zoneKeyByOriginal = understanding.Zones.ToDictionary(
+            static zone => zone.Key,
+            static zone => zone.Key.Trim(),
+            StringComparer.Ordinal);
+
+        var zones = understanding.Zones.Select(zone =>
+            new DesktopLogicalWorkspaceSemanticZoneIntent(
+                zoneKeyByOriginal[zone.Key],
+                zone.Name,
+                zone.CategoryKeys.Select(categoryKey => categoryKeyByOriginal[categoryKey])))
+            .ToArray();
+
+        var items = new List<DesktopLogicalWorkspaceSemanticItemIntent>();
+        foreach (var assignment in understanding.Assignments)
+        {
+            if (assignment.ZoneKey is null)
+                continue;
+            if (!authority.TryResolveItemByStableId(assignment.StableId, out var binding))
+            {
+                throw new InvalidOperationException(
+                    "Semantic overlay 已通过，但 Zone intent 无法重新绑定到当前 Observation。");
+            }
+
+            items.Add(new DesktopLogicalWorkspaceSemanticItemIntent(
+                binding!.ItemRef,
+                zoneKeyByOriginal[assignment.ZoneKey]));
+        }
+
+        return new DesktopLogicalWorkspaceSemanticPlanningIntent(zones, items);
     }
 }
