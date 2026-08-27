@@ -3,7 +3,7 @@ using DesktopAgent.Core.DesktopLayouts.Workspaces;
 namespace DesktopAgent.Application.Intelligence;
 
 /// <summary>
-/// 一次 Provider 逻辑工作区规划请求。Workspace 与失败反馈均不包含 Writer authority。
+/// 一次 Provider 逻辑工作区规划请求。Workspace、语义约束与失败反馈均不包含 Writer authority。
 /// </summary>
 public sealed record DesktopLogicalWorkspacePlanningRequest
 {
@@ -13,12 +13,14 @@ public sealed record DesktopLogicalWorkspacePlanningRequest
     public string UserGuidance { get; }
     public DesktopDesiredWorkspacePlan? PreviousRejectedPlan { get; }
     public IReadOnlyList<DesktopDesiredWorkspacePlanIssue> ValidationIssues { get; }
+    public DesktopLogicalWorkspaceSemanticPlanningIntent? SemanticIntent { get; }
 
     public DesktopLogicalWorkspacePlanningRequest(
         DesktopObservedLogicalWorkspace workspace,
         string userGuidance,
         DesktopDesiredWorkspacePlan? previousRejectedPlan = null,
-        IEnumerable<DesktopDesiredWorkspacePlanIssue>? validationIssues = null)
+        IEnumerable<DesktopDesiredWorkspacePlanIssue>? validationIssues = null,
+        DesktopLogicalWorkspaceSemanticPlanningIntent? semanticIntent = null)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         if (string.IsNullOrWhiteSpace(userGuidance))
@@ -52,10 +54,22 @@ public sealed record DesktopLogicalWorkspacePlanningRequest
                 nameof(previousRejectedPlan));
         }
 
+        if (semanticIntent is not null)
+        {
+            var itemRefs = workspace.Items
+                .Select(static item => item.ItemRef)
+                .ToHashSet(StringComparer.Ordinal);
+            if (semanticIntent.Items.Any(item => !itemRefs.Contains(item.ItemRef)))
+                throw new ArgumentException(
+                    "SemanticIntent 引用了当前 Workspace 之外的 ItemRef。",
+                    nameof(semanticIntent));
+        }
+
         Workspace = workspace;
         UserGuidance = userGuidance.Trim();
         PreviousRejectedPlan = previousRejectedPlan;
         ValidationIssues = Array.AsReadOnly(issueArray);
+        SemanticIntent = semanticIntent;
     }
 }
 
@@ -170,12 +184,22 @@ public sealed class DesktopLogicalWorkspacePlanningCoordinator
         _maxValidationRetries = maxValidationRetries;
     }
 
-    public async Task<DesktopLogicalWorkspacePlanningRunResult> PlanAsync(
+    public Task<DesktopLogicalWorkspacePlanningRunResult> PlanAsync(
         DesktopObservedLogicalWorkspace workspace,
         string userGuidance,
         CancellationToken cancellationToken = default)
+        => PlanAsync(workspace, userGuidance, semanticIntent: null, cancellationToken);
+
+    public async Task<DesktopLogicalWorkspacePlanningRunResult> PlanAsync(
+        DesktopObservedLogicalWorkspace workspace,
+        string userGuidance,
+        DesktopLogicalWorkspaceSemanticPlanningIntent? semanticIntent,
+        CancellationToken cancellationToken = default)
     {
-        var request = new DesktopLogicalWorkspacePlanningRequest(workspace, userGuidance);
+        var request = new DesktopLogicalWorkspacePlanningRequest(
+            workspace,
+            userGuidance,
+            semanticIntent: semanticIntent);
 
         for (var attempt = 1; ; attempt++)
         {
@@ -187,7 +211,8 @@ public sealed class DesktopLogicalWorkspacePlanningCoordinator
                 workspace,
                 userGuidance,
                 result.RejectedPlan,
-                result.ValidationIssues);
+                result.ValidationIssues,
+                semanticIntent);
         }
     }
 }
