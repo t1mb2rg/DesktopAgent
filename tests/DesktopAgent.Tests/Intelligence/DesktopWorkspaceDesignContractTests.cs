@@ -163,6 +163,121 @@ public sealed class DesktopWorkspaceDesignContractTests
     }
 
     [Fact]
+    public void ProviderSuccess_RejectsMissingDisplayPolicyAndUnknownDisplayReference()
+    {
+        var request = CreateInitialRequest();
+        var id = request.RevisionTarget.BlueprintId;
+
+        var missingPolicy = new DesktopWorkspaceBlueprint(
+            id,
+            revision: 1,
+            "missing left display policy",
+            displayPolicies:
+            [
+                new DesktopWorkspaceBlueprintDisplayPolicy("primary", DesktopWorkspaceDisplayPolicyKind.Design),
+                new DesktopWorkspaceBlueprintDisplayPolicy("lower-secondary", DesktopWorkspaceDisplayPolicyKind.Design),
+            ],
+            zones:
+            [
+                new DesktopWorkspaceBlueprintZone(
+                    "tools",
+                    "Tools",
+                    "lower-secondary",
+                    new DesktopWorkspaceRelativeRect(0, 0, 1, 1)),
+            ],
+            categoryRules:
+            [new DesktopWorkspaceBlueprintCategoryRule("dev", "tools")]);
+
+        Assert.Throws<ArgumentException>(() =>
+            DesktopWorkspaceDesignProviderResult.Success(request, missingPolicy));
+
+        var unknownDisplay = new DesktopWorkspaceBlueprint(
+            id,
+            revision: 1,
+            "invented display",
+            displayPolicies:
+            [
+                new DesktopWorkspaceBlueprintDisplayPolicy("left-secondary", DesktopWorkspaceDisplayPolicyKind.Preserve),
+                new DesktopWorkspaceBlueprintDisplayPolicy("primary", DesktopWorkspaceDisplayPolicyKind.Design),
+                new DesktopWorkspaceBlueprintDisplayPolicy("lower-secondary", DesktopWorkspaceDisplayPolicyKind.Design),
+            ],
+            zones:
+            [
+                new DesktopWorkspaceBlueprintZone(
+                    "tools",
+                    "Tools",
+                    "secondary-7",
+                    new DesktopWorkspaceRelativeRect(0, 0, 1, 1)),
+            ],
+            categoryRules:
+            [new DesktopWorkspaceBlueprintCategoryRule("dev", "tools")]);
+
+        Assert.Throws<ArgumentException>(() =>
+            DesktopWorkspaceDesignProviderResult.Success(request, unknownDisplay));
+    }
+
+    [Fact]
+    public void ProviderSuccess_RejectsUnknownCategoryAndItemReference()
+    {
+        var request = CreateInitialRequest(
+            criticalItems:
+            [
+                new DesktopWorkspaceDesignCriticalItem(
+                    "item-0001",
+                    "Visual Studio Code",
+                    "dev",
+                    "primary",
+                    isMovable: true),
+            ]);
+        var id = request.RevisionTarget.BlueprintId;
+
+        var unknownCategory = new DesktopWorkspaceBlueprint(
+            id,
+            revision: 1,
+            "invented category",
+            displayPolicies: CreateDisplayPolicies(),
+            zones:
+            [
+                new DesktopWorkspaceBlueprintZone(
+                    "tools",
+                    "Tools",
+                    "lower-secondary",
+                    new DesktopWorkspaceRelativeRect(0, 0, 1, 1)),
+            ],
+            categoryRules:
+            [new DesktopWorkspaceBlueprintCategoryRule("invented-category", "tools")]);
+
+        Assert.Throws<ArgumentException>(() =>
+            DesktopWorkspaceDesignProviderResult.Success(request, unknownCategory));
+
+        var unknownItem = new DesktopWorkspaceBlueprint(
+            id,
+            revision: 1,
+            "invented item",
+            displayPolicies: CreateDisplayPolicies(),
+            zones:
+            [
+                new DesktopWorkspaceBlueprintZone(
+                    "tools",
+                    "Tools",
+                    "lower-secondary",
+                    new DesktopWorkspaceRelativeRect(0, 0, 1, 1)),
+            ],
+            categoryRules:
+            [new DesktopWorkspaceBlueprintCategoryRule("dev", "tools")],
+            itemOverrides:
+            [
+                new DesktopWorkspaceBlueprintItemOverride(
+                    "item-not-sent",
+                    DesktopWorkspaceItemOverrideKind.PlaceInZone,
+                    "tools"),
+            ]);
+
+        Assert.Throws<ArgumentException>(() =>
+            DesktopWorkspaceDesignProviderResult.Success(request, unknownItem));
+    }
+
+    [Fact]
     public void RevisionTarget_RequiresExplicitParentAfterRevisionOne()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -212,6 +327,20 @@ public sealed class DesktopWorkspaceDesignContractTests
             criticalItems,
             previousBlueprint);
 
+    private static IReadOnlyList<DesktopWorkspaceBlueprintDisplayPolicy> CreateDisplayPolicies()
+        =>
+        [
+            new DesktopWorkspaceBlueprintDisplayPolicy(
+                "left-secondary",
+                DesktopWorkspaceDisplayPolicyKind.Preserve),
+            new DesktopWorkspaceBlueprintDisplayPolicy(
+                "primary",
+                DesktopWorkspaceDisplayPolicyKind.Design),
+            new DesktopWorkspaceBlueprintDisplayPolicy(
+                "lower-secondary",
+                DesktopWorkspaceDisplayPolicyKind.Design),
+        ];
+
     private static DesktopWorkspaceBlueprint CreateBlueprint(
         Guid blueprintId,
         int revision,
@@ -220,18 +349,7 @@ public sealed class DesktopWorkspaceDesignContractTests
             blueprintId,
             revision,
             "工具放在下方副屏，主屏保留中央壁纸区域，左侧副屏保持不动。",
-            displayPolicies:
-            [
-                new DesktopWorkspaceBlueprintDisplayPolicy(
-                    "left-secondary",
-                    DesktopWorkspaceDisplayPolicyKind.Preserve),
-                new DesktopWorkspaceBlueprintDisplayPolicy(
-                    "primary",
-                    DesktopWorkspaceDisplayPolicyKind.Design),
-                new DesktopWorkspaceBlueprintDisplayPolicy(
-                    "lower-secondary",
-                    DesktopWorkspaceDisplayPolicyKind.Design),
-            ],
+            displayPolicies: CreateDisplayPolicies(),
             zones:
             [
                 new DesktopWorkspaceBlueprintZone(
