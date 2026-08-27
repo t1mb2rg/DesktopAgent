@@ -1,7 +1,11 @@
 # ADR-0004：AI 获得完整逻辑工作区规划权，但不获得 Writer Authority
 
-- 状态：已接受
+- 状态：已取代（Superseded）
 - 日期：2026-08-19
+- 被取代于：2026-08-27
+- 取代它的决策：ADR-0005《AI Workspace Blueprint 与 Explorer 原生编译》
+
+> 历史说明：本文保留 ADR-0004 当时的完整决策与背景。M5-07.7 后续真实 Windows Physical Gate 证明“AI 直接规划完整逻辑网格与逐项 exact cell”会把 Explorer 几何权威、AI 设计权和本地施工权混在一起，因此该目标架构已由 ADR-0005 取代。ADR-0004 中关于 Writer 隔离、Frozen Preview、fresh observation、Workspace 事务语义和 fail-closed Recovery 的原则仍被后续架构继承。
 
 ## 背景
 
