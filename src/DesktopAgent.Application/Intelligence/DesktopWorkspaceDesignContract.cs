@@ -112,7 +112,7 @@ public sealed record DesktopWorkspaceDesignCategorySummary
 
 /// <summary>
 /// 只有真正需要 Item Override / anchor / Keep / Exclude 的设计关键例外才进入 Provider 请求。
-/// ItemRef 与 DisplayLabel 均由上层生成并显式标记为 Provider-safe，不得使用 StableId、真实路径或 DeviceName。
+/// ItemRef 与 Label 均由上层生成并显式标记为 Provider-safe，不得使用 StableId、真实路径或 DeviceName。
 /// </summary>
 public sealed record DesktopWorkspaceDesignCriticalItem
 {
@@ -299,7 +299,7 @@ public sealed record DesktopWorkspaceDesignRequest
 }
 
 /// <summary>
-/// Workspace Designer 单次结果。成功只表示 Provider 形成了结构上有效且绑定目标 revision 的 Blueprint；
+/// Workspace Designer 单次结果。成功只表示 Provider 形成了结构上有效、引用边界合法且绑定目标 revision 的 Blueprint；
 /// 它仍未经过 Explorer Geometry、Compile、Semantic Equivalence 或 Preview。
 /// </summary>
 public sealed record DesktopWorkspaceDesignProviderResult
@@ -338,6 +338,8 @@ public sealed record DesktopWorkspaceDesignProviderResult
                 nameof(blueprint));
         }
 
+        ValidateProviderReferences(request, blueprint);
+
         return new(
             IntelligenceProviderStatus.Success,
             blueprint,
@@ -354,6 +356,53 @@ public sealed record DesktopWorkspaceDesignProviderResult
             throw new ArgumentException("Failure 不能使用 Success 状态。", nameof(status));
 
         return new(status, null, diagnosticMessage, httpStatusCode);
+    }
+
+    private static void ValidateProviderReferences(
+        DesktopWorkspaceDesignRequest request,
+        DesktopWorkspaceBlueprint blueprint)
+    {
+        var requestedDisplayRefs = request.Displays
+            .Select(static display => display.DisplayRef)
+            .ToHashSet(StringComparer.Ordinal);
+        var policyDisplayRefs = blueprint.DisplayPolicies
+            .Select(static policy => policy.DisplayRef)
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (!requestedDisplayRefs.SetEquals(policyDisplayRefs))
+        {
+            throw new ArgumentException(
+                "Provider Blueprint 必须为请求中的每块显示器且仅为这些显示器声明 Design / Preserve policy。",
+                nameof(blueprint));
+        }
+
+        if (blueprint.Zones.Any(zone => !requestedDisplayRefs.Contains(zone.DisplayRef)) ||
+            blueprint.ReservedRegions.Any(region => !requestedDisplayRefs.Contains(region.DisplayRef)))
+        {
+            throw new ArgumentException(
+                "Provider Blueprint 引用了请求之外的 DisplayRef。",
+                nameof(blueprint));
+        }
+
+        var requestedCategoryKeys = request.Categories
+            .Select(static category => category.CategoryKey)
+            .ToHashSet(StringComparer.Ordinal);
+        if (blueprint.CategoryRules.Any(rule => !requestedCategoryKeys.Contains(rule.CategoryKey)))
+        {
+            throw new ArgumentException(
+                "Provider Blueprint 引用了请求之外的 CategoryKey。",
+                nameof(blueprint));
+        }
+
+        var requestedItemRefs = request.CriticalItems
+            .Select(static item => item.ItemRef)
+            .ToHashSet(StringComparer.Ordinal);
+        if (blueprint.ItemOverrides.Any(item => !requestedItemRefs.Contains(item.ItemRef)))
+        {
+            throw new ArgumentException(
+                "Provider Blueprint ItemOverride 引用了请求之外的 ItemRef。",
+                nameof(blueprint));
+        }
     }
 }
 
