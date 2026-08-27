@@ -10,10 +10,10 @@ namespace DesktopAgent.Tests.Intelligence;
 public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
 {
     private const string UserPromptPrefix =
-        "Create one complete Desired Workspace Plan from this Provider-safe input JSON:\n";
+        "Create one complete Desired Workspace Plan from this compact Provider-safe input JSON:\n";
 
     [Fact]
-    public async Task Provider_SendsOnlyLogicalWorkspaceAndLocallyBindsValidatedPlanIdentity()
+    public async Task Provider_SendsCompactLogicalWorkspaceAndLocallyBindsValidatedPlanIdentity()
     {
         string? requestBody = null;
         using var httpClient = CreateClient(async (request, cancellationToken) =>
@@ -39,14 +39,31 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
         Assert.Equal("secondary_1", result.ValidatedPlan.Items[0].TargetDisplayRef);
 
         var context = ExtractUserContext(requestBody!);
-        Assert.Equal("desktop-logical-workspace-plan-v1", context.GetProperty("contract").GetString());
-        var observed = context.GetProperty("observed_workspace");
-        Assert.Equal(2, observed.GetProperty("categories").GetArrayLength());
-        Assert.Equal("工作资料", observed.GetProperty("categories")[0].GetProperty("name").GetString());
-        Assert.Equal(2, observed.GetProperty("displays").GetArrayLength());
-        Assert.Equal(3, observed.GetProperty("items").GetArrayLength());
-        Assert.Equal(2, observed.GetProperty("items")[0].GetProperty("occupied_cells").GetArrayLength());
-        Assert.False(context.TryGetProperty("retry_feedback", out _));
+        Assert.Equal("desktop-logical-workspace-plan-v1-compact", context.GetProperty("contract").GetString());
+        Assert.Equal("把可移动项目放到副屏，主屏中央留白。", context.GetProperty("guidance").GetString());
+        Assert.Equal(2, context.GetProperty("categories").GetArrayLength());
+        Assert.Equal("工作资料", context.GetProperty("categories")[0].GetProperty("n").GetString());
+        Assert.Equal(2, context.GetProperty("displays").GetArrayLength());
+        Assert.True(context.GetProperty("displays")[0].GetProperty("p").GetBoolean());
+        Assert.Equal(3, context.GetProperty("items").GetArrayLength());
+
+        var firstItem = context.GetProperty("items")[0];
+        Assert.Equal(2, firstItem.GetProperty("o").GetArrayLength());
+        Assert.True(firstItem.GetProperty("u").GetBoolean());
+        Assert.False(firstItem.TryGetProperty("f", out _));
+
+        var fixedItem = context.GetProperty("items")[1];
+        Assert.True(fixedItem.GetProperty("f").GetBoolean());
+
+        var simpleItem = context.GetProperty("items")[2];
+        Assert.False(simpleItem.TryGetProperty("o", out _));
+        Assert.False(simpleItem.TryGetProperty("u", out _));
+        Assert.False(simpleItem.TryGetProperty("f", out _));
+        Assert.False(context.TryGetProperty("retry", out _));
+        Assert.False(context.TryGetProperty("observed_workspace", out _));
+        Assert.DoesNotContain(workspace.ObservationId.ToString(), requestBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(workspace.TopologyFingerprint, requestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain(workspace.GridFingerprint, requestBody, StringComparison.Ordinal);
 
         Assert.DoesNotContain("stable-private-id", requestBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\\\\.\\DISPLAY", requestBody, StringComparison.OrdinalIgnoreCase);
@@ -77,7 +94,7 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
     }
 
     [Fact]
-    public async Task Coordinator_RetriesOnlyStructuredValidationFailureAndSendsSafeFeedback()
+    public async Task Coordinator_RetriesOnlyStructuredValidationFailureAndSendsCompactSafeFeedback()
     {
         var responses = new Queue<string>([CreateCollisionPlanJson(), CreateValidPlanJson()]);
         var requestBodies = new List<string>();
@@ -97,18 +114,18 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
         Assert.Equal(2, requestBodies.Count);
 
         var retryContext = ExtractUserContext(requestBodies[1]);
-        var retry = retryContext.GetProperty("retry_feedback");
+        var retry = retryContext.GetProperty("retry");
         Assert.Equal(JsonValueKind.Object, retry.ValueKind);
-        var issues = retry.GetProperty("validation_issues").EnumerateArray().ToArray();
+        var issues = retry.GetProperty("issues").EnumerateArray().ToArray();
         Assert.Contains(issues, static issue =>
-            issue.GetProperty("code").GetString() ==
+            issue.GetProperty("c").GetString() ==
             nameof(DesktopDesiredWorkspacePlanIssueCode.FixedItemMoveRequested));
         Assert.Contains(issues, static issue =>
-            issue.GetProperty("code").GetString() ==
+            issue.GetProperty("c").GetString() ==
             nameof(DesktopDesiredWorkspacePlanIssueCode.TargetCellCollision));
 
-        var rejected = retry.GetProperty("previous_rejected_plan");
-        Assert.Equal(3, rejected.GetProperty("items").GetArrayLength());
+        var rejected = retry.GetProperty("previous");
+        Assert.Equal(3, rejected.GetProperty("i").GetArrayLength());
         Assert.False(rejected.TryGetProperty("plan_id", out _));
         Assert.False(rejected.TryGetProperty("source_observation_id", out _));
     }
@@ -228,70 +245,30 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
 
     private static string CreateValidPlanJson() => """
         {
-          "zones": [
-            {
-              "zone_key": "work",
-              "name": "Work",
-              "display_ref": "secondary_1",
-              "bounds": { "column": 0, "row": 0, "width": 4, "height": 4 }
-            }
+          "z": [
+            { "k": "work", "n": "Work", "d": "secondary_1", "b": [0, 0, 4, 4] }
           ],
-          "reserved_regions": [
-            {
-              "region_key": "wallpaper-center",
-              "purpose": "keep wallpaper visible",
-              "display_ref": "primary",
-              "bounds": { "column": 1, "row": 1, "width": 2, "height": 2 }
-            }
+          "r": [
+            { "k": "wallpaper-center", "p": "keep wallpaper visible", "d": "primary", "b": [1, 1, 2, 2] }
           ],
-          "items": [
-            {
-              "item_ref": "item-0001",
-              "state": "place",
-              "target_display_ref": "secondary_1",
-              "target_cell": { "column": 0, "row": 0 },
-              "zone_key": "work",
-              "reason": "move work to secondary"
-            },
-            { "item_ref": "item-0002", "state": "keep" },
-            { "item_ref": "item-0003", "state": "keep" }
+          "i": [
+            { "r": "item-0001", "s": "p", "d": "secondary_1", "c": [0, 0], "z": "work", "y": "move work to secondary" },
+            { "r": "item-0002", "s": "k" },
+            { "r": "item-0003", "s": "k" }
           ]
         }
         """;
 
     private static string CreateCollisionPlanJson() => """
         {
-          "zones": [
-            {
-              "zone_key": "work",
-              "name": "Work",
-              "display_ref": "secondary_1",
-              "bounds": { "column": 0, "row": 0, "width": 4, "height": 4 }
-            }
+          "z": [
+            { "k": "work", "n": "Work", "d": "secondary_1", "b": [0, 0, 4, 4] }
           ],
-          "reserved_regions": [],
-          "items": [
-            {
-              "item_ref": "item-0001",
-              "state": "place",
-              "target_display_ref": "secondary_1",
-              "target_cell": { "column": 0, "row": 0 },
-              "zone_key": "work"
-            },
-            {
-              "item_ref": "item-0002",
-              "state": "place",
-              "target_display_ref": "secondary_1",
-              "target_cell": { "column": 1, "row": 0 },
-              "zone_key": "work"
-            },
-            {
-              "item_ref": "item-0003",
-              "state": "place",
-              "target_display_ref": "secondary_1",
-              "target_cell": { "column": 0, "row": 0 },
-              "zone_key": "work"
-            }
+          "r": [],
+          "i": [
+            { "r": "item-0001", "s": "p", "d": "secondary_1", "c": [0, 0], "z": "work" },
+            { "r": "item-0002", "s": "p", "d": "secondary_1", "c": [1, 0], "z": "work" },
+            { "r": "item-0003", "s": "p", "d": "secondary_1", "c": [0, 0], "z": "work" }
           ]
         }
         """;
