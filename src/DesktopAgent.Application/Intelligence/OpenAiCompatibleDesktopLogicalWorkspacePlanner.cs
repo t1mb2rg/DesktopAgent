@@ -43,6 +43,14 @@ Compact input legend:
 - items: { r:item_ref, n:display_name, k:category_key when known, d:current_display_ref,
            c:[column,row], f:true only when fixed, u:true only when current placement is not grid aligned,
            o:[[column,row],...] only when the item occupies non-trivial current cells }
+- semantic, when present, comes from the same fresh first-pass desktop understanding of the same user guidance:
+  - semantic.z: { k:semantic_zone_key, n:name, c:[category_key,...] }
+  - semantic.i: { r:item_ref, z:semantic_zone_key }
+- semantic is a continuity constraint, not a suggestion. Preserve its zone structure.
+- For every movable item listed in semantic.i, return s="p" and use exactly that semantic zone key in i.z.
+- Define exactly one output zone for every semantic zone key referenced by a movable semantic item.
+- You still choose each preserved zone's display, bounds, and every item's exact final cell according to the user guidance.
+- Fixed items remain k or x even if a semantic item intent exists; safety overrides semantic placement.
 - If f is absent the item is movable. If o is absent the current cell c is its only occupied cell.
 - retry contains the previous rejected compact plan and local validation issues when a repair attempt is allowed.
 
@@ -108,7 +116,7 @@ Return this exact compact shape:
                 transportResult.HttpStatusCode);
         }
 
-        return ParseAndValidate(transportResult.Content!, request.Workspace);
+        return ParseAndValidate(transportResult.Content!, request);
     }
 
     private static object BuildProviderContext(DesktopLogicalWorkspacePlanningRequest request)
@@ -150,7 +158,29 @@ Return this exact compact shape:
                     ? item.OccupiedCells.Select(static cell => new[] { cell.Column, cell.Row }).ToArray()
                     : null,
             }),
+            semantic = BuildSemanticIntent(request.SemanticIntent),
             retry = BuildRetryFeedback(request),
+        };
+    }
+
+    private static object? BuildSemanticIntent(DesktopLogicalWorkspaceSemanticPlanningIntent? intent)
+    {
+        if (intent is null)
+            return null;
+
+        return new
+        {
+            z = intent.Zones.Select(static zone => new
+            {
+                k = zone.ZoneKey,
+                n = zone.Name,
+                c = zone.CategoryKeys,
+            }),
+            i = intent.Items.Select(static item => new
+            {
+                r = item.ItemRef,
+                z = item.ZoneKey,
+            }),
         };
     }
 
@@ -217,8 +247,9 @@ Return this exact compact shape:
 
     private static DesktopLogicalWorkspacePlanningProviderResult ParseAndValidate(
         string content,
-        DesktopObservedLogicalWorkspace workspace)
+        DesktopLogicalWorkspacePlanningRequest request)
     {
+        var workspace = request.Workspace;
         Payload? payload;
         try
         {
@@ -252,17 +283,71 @@ Return this exact compact shape:
                 reservedRegions,
                 items);
             var validation = DesktopDesiredWorkspacePlanValidator.Validate(workspace, plan);
-
-            return validation.IsValid
-                ? DesktopLogicalWorkspacePlanningProviderResult.Success(plan)
-                : DesktopLogicalWorkspacePlanningProviderResult.ValidationFailure(
+            if (!validation.IsValid)
+            {
+                return DesktopLogicalWorkspacePlanningProviderResult.ValidationFailure(
                     plan,
                     validation.Issues);
+            }
+
+            var semanticError = ValidateSemanticContinuity(request.SemanticIntent, workspace, plan);
+            return semanticError is null
+                ? DesktopLogicalWorkspacePlanningProviderResult.Success(plan)
+                : Invalid(semanticError);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidDataException or OverflowException)
         {
             return Invalid($"Provider Desired Workspace Plan 结构无效：{ex.Message}");
         }
+    }
+
+    private static string? ValidateSemanticContinuity(
+        DesktopLogicalWorkspaceSemanticPlanningIntent? intent,
+        DesktopObservedLogicalWorkspace workspace,
+        DesktopDesiredWorkspacePlan plan)
+    {
+        if (intent is null || intent.Items.Count == 0)
+            return null;
+
+        var observedByRef = workspace.Items.ToDictionary(
+            static item => item.ItemRef,
+            StringComparer.Ordinal);
+        var desiredByRef = plan.Items.ToDictionary(
+            static item => item.ItemRef,
+            StringComparer.Ordinal);
+        var requiredZoneKeys = intent.Items
+            .Where(item => observedByRef.TryGetValue(item.ItemRef, out var observed) && observed.IsMovable)
+            .Select(static item => item.ZoneKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var plannedZoneKeys = plan.Zones
+            .Select(static zone => zone.ZoneKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var missingZone = requiredZoneKeys.FirstOrDefault(zoneKey => !plannedZoneKeys.Contains(zoneKey));
+        if (missingZone is not null)
+        {
+            return $"Provider 丢失了首次桌面理解的语义分区 \"{missingZone}\"；精确规划不得把已理解的多分区结构折叠成更少的 Zone。";
+        }
+
+        foreach (var itemIntent in intent.Items)
+        {
+            if (!observedByRef.TryGetValue(itemIntent.ItemRef, out var observed) || !observed.IsMovable)
+                continue;
+            if (!desiredByRef.TryGetValue(itemIntent.ItemRef, out var desired))
+                continue;
+            if (desired.State != DesktopDesiredItemState.Place)
+            {
+                return $"Provider 把已有语义分区归属的项目 \"{itemIntent.ItemRef}\" 退化为 {desired.State}；" +
+                       "精确规划必须显式 Place 到首次理解给出的 Zone。";
+            }
+            if (!string.Equals(desired.ZoneKey, itemIntent.ZoneKey, StringComparison.Ordinal))
+            {
+                return $"Provider 改写了项目 \"{itemIntent.ItemRef}\" 的语义 Zone：" +
+                       $"期望 \"{itemIntent.ZoneKey}\"，实际 \"{desired.ZoneKey}\"。";
+            }
+        }
+
+        return null;
     }
 
     private static DesktopDesiredWorkspaceZone ParseZone(ZonePayload payload)
