@@ -3,6 +3,7 @@ using System.Text;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry;
+using DesktopAgent.Core.Geometry;
 
 namespace DesktopAgent.Core.DesktopLayouts.Workspaces.Equivalence;
 
@@ -23,7 +24,12 @@ public enum DesktopWorkspaceEquivalenceIssueCode
     ItemOverrideUnbound = 12,
     ItemOverrideViolated = 13,
     PreservePolicyViolated = 14,
-    UnexpectedCompiledItem = 15,
+    CompiledItemSetMismatch = 15,
+    NonMovablePolicyViolated = 16,
+    ItemTargetOutsideZone = 17,
+    ItemTargetPixelMismatch = 18,
+    ItemPackingMismatch = 19,
+    ZoneAvailableSurfaceMismatch = 20,
 }
 
 public sealed record DesktopWorkspaceEquivalenceIssue(
@@ -35,7 +41,7 @@ public sealed record DesktopWorkspaceEquivalenceIssue(
 
 /// <summary>
 /// 一块 Zone / Reserved Region 的 native quantization 证明。
-/// RequestedBounds 属于 Blueprint 设计空间；RealizedBounds / NativeRect 是独立复算后的 Explorer realization。
+/// RequestedBounds 属于 Blueprint 设计空间；RealizedBounds / NativeRect 是 Checker 独立复算后的 Explorer realization。
 /// </summary>
 public sealed record WorkspaceGeometryRealizationProof
 {
@@ -66,13 +72,55 @@ public sealed record WorkspaceGeometryRealizationProof
 }
 
 /// <summary>
+/// 一个项目的语义 realization 证明。只记录已经验证通过的最终事实，不授予执行 authority。
+/// </summary>
+public sealed record WorkspaceItemRealizationProof
+{
+    public string StableId { get; }
+    public string SourceDisplayRef { get; }
+    public string CategoryKey { get; }
+    public DesktopWorkspaceCompiledItemDisposition Disposition { get; }
+    public string? ZoneKey { get; }
+    public string? TargetDisplayRef { get; }
+    public string? TargetSlotId { get; }
+
+    public WorkspaceItemRealizationProof(
+        string stableId,
+        string sourceDisplayRef,
+        string categoryKey,
+        DesktopWorkspaceCompiledItemDisposition disposition,
+        string? zoneKey,
+        string? targetDisplayRef,
+        string? targetSlotId)
+    {
+        if (string.IsNullOrEmpty(stableId))
+            throw new ArgumentException("StableId 不能为空。", nameof(stableId));
+        if (string.IsNullOrWhiteSpace(sourceDisplayRef))
+            throw new ArgumentException("SourceDisplayRef 不能为空。", nameof(sourceDisplayRef));
+        if (string.IsNullOrWhiteSpace(categoryKey))
+            throw new ArgumentException("CategoryKey 不能为空。", nameof(categoryKey));
+        if (!Enum.IsDefined(disposition))
+            throw new ArgumentOutOfRangeException(nameof(disposition));
+
+        StableId = stableId;
+        SourceDisplayRef = sourceDisplayRef.Trim();
+        CategoryKey = categoryKey.Trim();
+        Disposition = disposition;
+        ZoneKey = zoneKey;
+        TargetDisplayRef = targetDisplayRef;
+        TargetSlotId = targetSlotId;
+    }
+}
+
+/// <summary>
 /// ADR-0005 的 realization certificate。
-/// 它不授予 Preview / Candidate / Writer authority，只证明某个 Exact Plan 忠实实现了指定 Blueprint revision。
+/// 它只证明某个 Exact Plan 忠实实现指定 Blueprint revision，不授予 Preview / Candidate / Writer authority。
 /// </summary>
 public sealed record WorkspaceRealizationCertificate
 {
     private readonly IReadOnlyList<WorkspaceGeometryRealizationProof> _zoneProofs;
     private readonly IReadOnlyList<WorkspaceGeometryRealizationProof> _reservedRegionProofs;
+    private readonly IReadOnlyList<WorkspaceItemRealizationProof> _itemProofs;
 
     public Guid BlueprintId { get; }
     public int BlueprintRevision { get; }
@@ -81,6 +129,7 @@ public sealed record WorkspaceRealizationCertificate
     public string CertificateFingerprint { get; }
     public IReadOnlyList<WorkspaceGeometryRealizationProof> ZoneProofs => _zoneProofs;
     public IReadOnlyList<WorkspaceGeometryRealizationProof> ReservedRegionProofs => _reservedRegionProofs;
+    public IReadOnlyList<WorkspaceItemRealizationProof> ItemProofs => _itemProofs;
 
     public WorkspaceRealizationCertificate(
         Guid blueprintId,
@@ -89,7 +138,8 @@ public sealed record WorkspaceRealizationCertificate
         string planFingerprint,
         string certificateFingerprint,
         IEnumerable<WorkspaceGeometryRealizationProof> zoneProofs,
-        IEnumerable<WorkspaceGeometryRealizationProof> reservedRegionProofs)
+        IEnumerable<WorkspaceGeometryRealizationProof> reservedRegionProofs,
+        IEnumerable<WorkspaceItemRealizationProof> itemProofs)
     {
         if (blueprintId == Guid.Empty)
             throw new ArgumentException("BlueprintId 不能为 Guid.Empty。", nameof(blueprintId));
@@ -103,11 +153,14 @@ public sealed record WorkspaceRealizationCertificate
             throw new ArgumentException("CertificateFingerprint 不能为空。", nameof(certificateFingerprint));
         ArgumentNullException.ThrowIfNull(zoneProofs);
         ArgumentNullException.ThrowIfNull(reservedRegionProofs);
+        ArgumentNullException.ThrowIfNull(itemProofs);
 
         var zoneArray = zoneProofs.ToArray();
         var reservedArray = reservedRegionProofs.ToArray();
+        var itemArray = itemProofs.ToArray();
         RejectNullElements(zoneArray, nameof(zoneProofs));
         RejectNullElements(reservedArray, nameof(reservedRegionProofs));
+        RejectNullElements(itemArray, nameof(itemProofs));
 
         BlueprintId = blueprintId;
         BlueprintRevision = blueprintRevision;
@@ -116,6 +169,7 @@ public sealed record WorkspaceRealizationCertificate
         CertificateFingerprint = certificateFingerprint.Trim();
         _zoneProofs = Array.AsReadOnly(zoneArray);
         _reservedRegionProofs = Array.AsReadOnly(reservedArray);
+        _itemProofs = Array.AsReadOnly(itemArray);
     }
 
     private static void RejectNullElements<T>(IEnumerable<T> values, string parameterName)
@@ -160,12 +214,7 @@ public sealed class DesktopWorkspaceEquivalenceResult
 
 /// <summary>
 /// 对 Compiler 输出做独立、确定性的 Blueprint semantic-equivalence 验证。
-///
-/// 原则：
-/// 1. Hard semantics 必须逐条成立；
-/// 2. 连续几何只允许 nearest Explorer-native boundary quantization；
-/// 3. Blueprint 未指定的自由度可由 Compiler 机械决定，但显式 anchor / packing / policy 不得改变；
-/// 4. 不使用“±X% 看起来差不多”的模糊容差。
+/// Checker 独立复算 quantization、stationary occupancy 与 deterministic packing，不调用 Compiler helper。
 /// </summary>
 public static class DesktopWorkspaceSemanticEquivalenceChecker
 {
@@ -173,11 +222,13 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
         DesktopWorkspaceBlueprint blueprint,
         ExplorerWorkspaceGeometry geometry,
         CompiledWorkspacePlan plan,
+        IEnumerable<DesktopWorkspaceCompilationItemFact> itemFacts,
         IEnumerable<DesktopWorkspaceCompilationItemRefBinding>? itemRefBindings = null)
     {
         ArgumentNullException.ThrowIfNull(blueprint);
         ArgumentNullException.ThrowIfNull(geometry);
         ArgumentNullException.ThrowIfNull(plan);
+        ArgumentNullException.ThrowIfNull(itemFacts);
 
         var issues = new List<DesktopWorkspaceEquivalenceIssue>();
         if (plan.BlueprintId != blueprint.BlueprintId || plan.BlueprintRevision != blueprint.Revision)
@@ -196,9 +247,47 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
         if (issues.Count > 0)
             return DesktopWorkspaceEquivalenceResult.Failure(issues);
 
+        var factArray = itemFacts.ToArray();
+        if (factArray.Any(static fact => fact is null))
+            throw new ArgumentException("ItemFacts 不能包含 null。", nameof(itemFacts));
+        if (factArray.Select(static fact => fact.StableId).Distinct(StringComparer.Ordinal).Count() != factArray.Length ||
+            plan.Items.Select(static item => item.StableId).Distinct(StringComparer.Ordinal).Count() != plan.Items.Count)
+        {
+            issues.Add(new(
+                DesktopWorkspaceEquivalenceIssueCode.CompiledItemSetMismatch,
+                "ItemFacts / Compiled Items 必须各自具有唯一 StableId。"));
+            return DesktopWorkspaceEquivalenceResult.Failure(issues);
+        }
+
+        var factsById = factArray.ToDictionary(static fact => fact.StableId, StringComparer.Ordinal);
+        var planItemsById = plan.Items.ToDictionary(static item => item.StableId, StringComparer.Ordinal);
+        if (!SameKeys(factsById.Keys, planItemsById.Keys))
+        {
+            issues.Add(new(
+                DesktopWorkspaceEquivalenceIssueCode.CompiledItemSetMismatch,
+                "Compiled plan 的项目集合与当前 local ItemFacts 不一致。"));
+        }
+
+        var bindingArray = itemRefBindings?.ToArray() ?? [];
+        if (bindingArray.Any(static binding => binding is null) ||
+            bindingArray.Select(static binding => binding.ItemRef).Distinct(StringComparer.Ordinal).Count() != bindingArray.Length ||
+            bindingArray.Select(static binding => binding.StableId).Distinct(StringComparer.Ordinal).Count() != bindingArray.Length)
+        {
+            issues.Add(new(
+                DesktopWorkspaceEquivalenceIssueCode.ItemOverrideUnbound,
+                "ItemRef bindings 必须是无 null、无重复的一对一映射。"));
+        }
+
+        if (issues.Count > 0)
+            return DesktopWorkspaceEquivalenceResult.Failure(issues);
+
         var geometryDisplays = geometry.Displays.ToDictionary(static display => display.DisplayRef, StringComparer.Ordinal);
         var blueprintZones = blueprint.Zones.ToDictionary(static zone => zone.ZoneKey, StringComparer.Ordinal);
         var compiledZones = plan.Zones.ToDictionary(static zone => zone.ZoneKey, StringComparer.Ordinal);
+        var policies = blueprint.DisplayPolicies.ToDictionary(static policy => policy.DisplayRef, StringComparer.Ordinal);
+        var stableIdByItemRef = bindingArray.ToDictionary(static binding => binding.ItemRef, static binding => binding.StableId, StringComparer.Ordinal);
+        var overridesByStableId = ResolveOverrides(blueprint, stableIdByItemRef, planItemsById, issues);
+
         if (!SameKeys(blueprintZones.Keys, compiledZones.Keys))
         {
             issues.Add(new(
@@ -323,19 +412,43 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
             }
         }
 
-        ValidateCategoryRules(blueprint, plan, issues);
-        ValidatePreservePolicies(blueprint, plan, issues);
-        ValidateItemOverrides(blueprint, plan, itemRefBindings, issues);
+        ValidateItemPoliciesAndRules(
+            blueprint,
+            plan,
+            factsById,
+            policies,
+            overridesByStableId,
+            issues);
+        ValidateIndependentPacking(
+            blueprint,
+            geometry,
+            plan,
+            factsById,
+            compiledZones,
+            overridesByStableId,
+            issues);
 
         if (issues.Count > 0)
             return DesktopWorkspaceEquivalenceResult.Failure(issues);
 
+        var itemProofs = plan.Items
+            .OrderBy(static item => item.StableId, StringComparer.Ordinal)
+            .Select(static item => new WorkspaceItemRealizationProof(
+                item.StableId,
+                item.SourceDisplayRef,
+                item.CategoryKey,
+                item.Disposition,
+                item.ZoneKey,
+                item.TargetDisplayRef,
+                item.TargetSlotId))
+            .ToArray();
         var certificateFingerprint = ComputeCertificateFingerprint(
             blueprint,
             geometry,
             plan,
             zoneProofs,
-            reservedProofs);
+            reservedProofs,
+            itemProofs);
         return DesktopWorkspaceEquivalenceResult.Success(new(
             blueprint.BlueprintId,
             blueprint.Revision,
@@ -343,110 +456,108 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
             plan.PlanFingerprint,
             certificateFingerprint,
             zoneProofs,
-            reservedProofs));
+            reservedProofs,
+            itemProofs));
     }
 
-    private static void ValidateCategoryRules(
+    private static Dictionary<string, DesktopWorkspaceBlueprintItemOverride> ResolveOverrides(
         DesktopWorkspaceBlueprint blueprint,
-        CompiledWorkspacePlan plan,
+        IReadOnlyDictionary<string, string> stableIdByItemRef,
+        IReadOnlyDictionary<string, CompiledWorkspaceItem> planItemsById,
         ICollection<DesktopWorkspaceEquivalenceIssue> issues)
     {
-        var rulesByCategory = blueprint.CategoryRules.ToDictionary(
-            static rule => rule.CategoryKey,
-            static rule => rule.ZoneKey,
-            StringComparer.Ordinal);
-        var overrideItemRefs = blueprint.ItemOverrides
-            .Select(static item => item.ItemRef)
-            .ToHashSet(StringComparer.Ordinal);
-
-        // ItemRef 与 StableId 的关系在 ValidateItemOverrides 中独立验证；这里仅验证非 override 的 Category→Zone。
-        // 若某 StableId 对应 override，调用方绑定后会由 override gate 覆盖。
-        var overrideStableIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var item in plan.Items)
-        {
-            if (item.Disposition != DesktopWorkspaceCompiledItemDisposition.Place)
-                continue;
-            if (!rulesByCategory.TryGetValue(item.CategoryKey, out var expectedZone))
-                continue;
-            if (overrideStableIds.Contains(item.StableId))
-                continue;
-            if (!string.Equals(item.ZoneKey, expectedZone, StringComparison.Ordinal))
-            {
-                issues.Add(new(
-                    DesktopWorkspaceEquivalenceIssueCode.CategoryRuleViolated,
-                    $"项目 {item.StableId} 没有落入 Category {item.CategoryKey} 指定的 Zone {expectedZone}。",
-                    item.TargetDisplayRef,
-                    item.ZoneKey,
-                    item.StableId));
-            }
-        }
-    }
-
-    private static void ValidateItemOverrides(
-        DesktopWorkspaceBlueprint blueprint,
-        CompiledWorkspacePlan plan,
-        IEnumerable<DesktopWorkspaceCompilationItemRefBinding>? bindings,
-        ICollection<DesktopWorkspaceEquivalenceIssue> issues)
-    {
-        var bindingArray = bindings?.ToArray() ?? [];
-        var duplicateRefs = bindingArray.GroupBy(static binding => binding.ItemRef, StringComparer.Ordinal)
-            .Any(static group => group.Count() > 1);
-        var duplicateStableIds = bindingArray.GroupBy(static binding => binding.StableId, StringComparer.Ordinal)
-            .Any(static group => group.Count() > 1);
-        if (duplicateRefs || duplicateStableIds)
-        {
-            issues.Add(new(
-                DesktopWorkspaceEquivalenceIssueCode.ItemOverrideUnbound,
-                "ItemRef bindings 必须是一对一映射。"));
-            return;
-        }
-
-        var stableIdByRef = bindingArray.ToDictionary(static binding => binding.ItemRef, static binding => binding.StableId, StringComparer.Ordinal);
-        var itemByStableId = plan.Items.ToDictionary(static item => item.StableId, StringComparer.Ordinal);
-        var overriddenStableIds = new HashSet<string>(StringComparer.Ordinal);
-
+        var result = new Dictionary<string, DesktopWorkspaceBlueprintItemOverride>(StringComparer.Ordinal);
         foreach (var itemOverride in blueprint.ItemOverrides)
         {
-            if (!stableIdByRef.TryGetValue(itemOverride.ItemRef, out var stableId) ||
-                !itemByStableId.TryGetValue(stableId, out var compiledItem))
+            if (!stableIdByItemRef.TryGetValue(itemOverride.ItemRef, out var stableId) ||
+                !planItemsById.ContainsKey(stableId))
             {
                 issues.Add(new(
                     DesktopWorkspaceEquivalenceIssueCode.ItemOverrideUnbound,
                     $"ItemOverride {itemOverride.ItemRef} 无法绑定到当前 compiled item。"));
                 continue;
             }
-            overriddenStableIds.Add(stableId);
-
-            var satisfied = itemOverride.Kind switch
-            {
-                DesktopWorkspaceItemOverrideKind.PlaceInZone =>
-                    compiledItem.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
-                    string.Equals(compiledItem.ZoneKey, itemOverride.ZoneKey, StringComparison.Ordinal),
-                DesktopWorkspaceItemOverrideKind.Keep =>
-                    compiledItem.Disposition == DesktopWorkspaceCompiledItemDisposition.Keep,
-                DesktopWorkspaceItemOverrideKind.Exclude =>
-                    compiledItem.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude,
-                _ => false,
-            };
-            if (!satisfied)
-            {
-                issues.Add(new(
-                    DesktopWorkspaceEquivalenceIssueCode.ItemOverrideViolated,
-                    $"ItemOverride {itemOverride.ItemRef} 没有在 Exact Plan 中保持。",
-                    compiledItem.TargetDisplayRef,
-                    compiledItem.ZoneKey,
-                    stableId));
-            }
+            result.Add(stableId, itemOverride);
         }
+        return result;
+    }
 
-        // 对没有 override 的 Place item 再核一遍 Category→Zone，避免 override 目标与 category rule 的差异被误判。
+    private static void ValidateItemPoliciesAndRules(
+        DesktopWorkspaceBlueprint blueprint,
+        CompiledWorkspacePlan plan,
+        IReadOnlyDictionary<string, DesktopWorkspaceCompilationItemFact> factsById,
+        IReadOnlyDictionary<string, DesktopWorkspaceBlueprintDisplayPolicy> policies,
+        IReadOnlyDictionary<string, DesktopWorkspaceBlueprintItemOverride> overridesByStableId,
+        ICollection<DesktopWorkspaceEquivalenceIssue> issues)
+    {
         var rulesByCategory = blueprint.CategoryRules.ToDictionary(
             static rule => rule.CategoryKey,
             static rule => rule.ZoneKey,
             StringComparer.Ordinal);
+
         foreach (var item in plan.Items)
         {
-            if (item.Disposition != DesktopWorkspaceCompiledItemDisposition.Place || overriddenStableIds.Contains(item.StableId))
+            if (!factsById.TryGetValue(item.StableId, out var fact))
+                continue;
+            if (!string.Equals(item.SourceDisplayRef, fact.CurrentDisplayRef, StringComparison.Ordinal))
+            {
+                issues.Add(new(
+                    DesktopWorkspaceEquivalenceIssueCode.CompiledItemSetMismatch,
+                    $"项目 {item.StableId} 的 SourceDisplayRef 与 local fact 不一致。",
+                    item.SourceDisplayRef,
+                    item.ZoneKey,
+                    item.StableId));
+            }
+
+            if (!fact.IsMovable && item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place)
+            {
+                issues.Add(new(
+                    DesktopWorkspaceEquivalenceIssueCode.NonMovablePolicyViolated,
+                    $"不可移动项目 {item.StableId} 被 Exact Plan 安排移动。",
+                    item.SourceDisplayRef,
+                    item.ZoneKey,
+                    item.StableId));
+            }
+
+            if (policies.TryGetValue(item.SourceDisplayRef, out var sourcePolicy) &&
+                sourcePolicy.Policy == DesktopWorkspaceDisplayPolicyKind.Preserve &&
+                item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place)
+            {
+                issues.Add(new(
+                    DesktopWorkspaceEquivalenceIssueCode.PreservePolicyViolated,
+                    $"Preserve 显示器 {item.SourceDisplayRef} 上的项目 {item.StableId} 被迁移。",
+                    item.SourceDisplayRef,
+                    item.ZoneKey,
+                    item.StableId));
+            }
+
+            overridesByStableId.TryGetValue(item.StableId, out var itemOverride);
+            if (itemOverride is not null)
+            {
+                var satisfied = itemOverride.Kind switch
+                {
+                    DesktopWorkspaceItemOverrideKind.PlaceInZone =>
+                        item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
+                        string.Equals(item.ZoneKey, itemOverride.ZoneKey, StringComparison.Ordinal),
+                    DesktopWorkspaceItemOverrideKind.Keep =>
+                        item.Disposition == DesktopWorkspaceCompiledItemDisposition.Keep,
+                    DesktopWorkspaceItemOverrideKind.Exclude =>
+                        item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude,
+                    _ => false,
+                };
+                if (!satisfied)
+                {
+                    issues.Add(new(
+                        DesktopWorkspaceEquivalenceIssueCode.ItemOverrideViolated,
+                        $"项目 {item.StableId} 的 Blueprint ItemOverride 未保持。",
+                        item.TargetDisplayRef,
+                        item.ZoneKey,
+                        item.StableId));
+                }
+                continue;
+            }
+
+            if (item.Disposition != DesktopWorkspaceCompiledItemDisposition.Place)
                 continue;
             if (!rulesByCategory.TryGetValue(item.CategoryKey, out var expectedZone) ||
                 !string.Equals(item.ZoneKey, expectedZone, StringComparison.Ordinal))
@@ -461,28 +572,141 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
         }
     }
 
-    private static void ValidatePreservePolicies(
+    private static void ValidateIndependentPacking(
         DesktopWorkspaceBlueprint blueprint,
+        ExplorerWorkspaceGeometry geometry,
         CompiledWorkspacePlan plan,
+        IReadOnlyDictionary<string, DesktopWorkspaceCompilationItemFact> factsById,
+        IReadOnlyDictionary<string, CompiledWorkspaceZone> compiledZones,
+        IReadOnlyDictionary<string, DesktopWorkspaceBlueprintItemOverride> overridesByStableId,
         ICollection<DesktopWorkspaceEquivalenceIssue> issues)
     {
-        var preserveRefs = blueprint.DisplayPolicies
-            .Where(static policy => policy.Policy == DesktopWorkspaceDisplayPolicyKind.Preserve)
-            .Select(static policy => policy.DisplayRef)
-            .ToHashSet(StringComparer.Ordinal);
-
+        var blockedSlotIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var display in geometry.Displays)
+        {
+            foreach (var obstacle in display.FixedObstacles)
+            {
+                foreach (var slotId in obstacle.BlockedSlotIds)
+                    blockedSlotIds.Add(slotId);
+            }
+        }
+        foreach (var region in plan.ReservedRegions)
+        {
+            var display = geometry.ResolveDisplay(region.DisplayRef);
+            foreach (var slot in SlotsInside(display, region.NativeRect))
+                blockedSlotIds.Add(slot.SlotId);
+        }
         foreach (var item in plan.Items)
         {
-            if (!preserveRefs.Contains(item.SourceDisplayRef))
+            if (item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place ||
+                !factsById.TryGetValue(item.StableId, out var fact))
                 continue;
-            if (item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place)
+            var display = geometry.ResolveDisplay(fact.CurrentDisplayRef);
+            foreach (var slotId in GetOverlappedSlotIds(fact.PixelPosition, display))
+                blockedSlotIds.Add(slotId);
+        }
+
+        foreach (var blueprintZone in blueprint.Zones.OrderBy(static zone => zone.ZoneKey, StringComparer.Ordinal))
+        {
+            if (!compiledZones.TryGetValue(blueprintZone.ZoneKey, out var compiledZone))
+                continue;
+            var display = geometry.ResolveDisplay(compiledZone.DisplayRef);
+            var candidateSlots = SlotsInside(display, compiledZone.NativeRect)
+                .Where(slot => !blockedSlotIds.Contains(slot.SlotId))
+                .ToArray();
+            if (compiledZone.AvailableSlotCount != candidateSlots.Length)
             {
                 issues.Add(new(
-                    DesktopWorkspaceEquivalenceIssueCode.PreservePolicyViolated,
-                    $"Preserve 显示器 {item.SourceDisplayRef} 上的项目 {item.StableId} 被迁移。",
-                    item.SourceDisplayRef,
-                    item.ZoneKey,
-                    item.StableId));
+                    DesktopWorkspaceEquivalenceIssueCode.ZoneAvailableSurfaceMismatch,
+                    $"Zone {compiledZone.ZoneKey} 的 AvailableSlotCount 与独立复算不一致。",
+                    compiledZone.DisplayRef,
+                    compiledZone.ZoneKey));
+            }
+
+            var zoneItems = plan.Items
+                .Where(item => item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
+                               string.Equals(item.ZoneKey, compiledZone.ZoneKey, StringComparison.Ordinal))
+                .ToArray();
+            var candidateById = candidateSlots.ToDictionary(static slot => slot.SlotId, StringComparer.Ordinal);
+            var targetIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in zoneItems)
+            {
+                if (item.TargetSlotId is null || !candidateById.TryGetValue(item.TargetSlotId, out var slot) ||
+                    !string.Equals(item.TargetDisplayRef, compiledZone.DisplayRef, StringComparison.Ordinal))
+                {
+                    issues.Add(new(
+                        DesktopWorkspaceEquivalenceIssueCode.ItemTargetOutsideZone,
+                        $"项目 {item.StableId} 的目标不在 Zone {compiledZone.ZoneKey} 的可用 native surface。",
+                        item.TargetDisplayRef,
+                        compiledZone.ZoneKey,
+                        item.StableId));
+                    continue;
+                }
+                if (!targetIds.Add(item.TargetSlotId))
+                {
+                    issues.Add(new(
+                        DesktopWorkspaceEquivalenceIssueCode.ItemTargetOutsideZone,
+                        $"Zone {compiledZone.ZoneKey} 存在重复 TargetSlotId {item.TargetSlotId}。",
+                        compiledZone.DisplayRef,
+                        compiledZone.ZoneKey,
+                        item.StableId));
+                }
+                if (item.TargetPixelPosition != slot.PixelPosition)
+                {
+                    issues.Add(new(
+                        DesktopWorkspaceEquivalenceIssueCode.ItemTargetPixelMismatch,
+                        $"项目 {item.StableId} 的 TargetPixelPosition 与 TargetSlotId 不一致。",
+                        compiledZone.DisplayRef,
+                        compiledZone.ZoneKey,
+                        item.StableId));
+                }
+            }
+
+            var available = new HashSet<string>(candidateSlots.Select(static slot => slot.SlotId), StringComparer.Ordinal);
+            var expectedSlotByStableId = new Dictionary<string, ExplorerNativeSlot>(StringComparer.Ordinal);
+            foreach (var item in zoneItems
+                         .Where(item => overridesByStableId.TryGetValue(item.StableId, out var itemOverride) && itemOverride.Anchor.HasValue)
+                         .OrderBy(static item => item.StableId, StringComparer.Ordinal))
+            {
+                var itemOverride = overridesByStableId[item.StableId];
+                var expected = OrderSlots(
+                        candidateSlots.Where(slot => available.Contains(slot.SlotId)),
+                        compiledZone.NativeRect,
+                        itemOverride.Anchor!.Value,
+                        compiledZone.PackingOrder)
+                    .FirstOrDefault();
+                if (expected is null)
+                    continue;
+                expectedSlotByStableId[item.StableId] = expected;
+                available.Remove(expected.SlotId);
+            }
+
+            var remainingItems = zoneItems
+                .Where(item => !expectedSlotByStableId.ContainsKey(item.StableId))
+                .OrderBy(static item => item.StableId, StringComparer.Ordinal)
+                .ToArray();
+            var remainingSlots = OrderSlots(
+                    candidateSlots.Where(slot => available.Contains(slot.SlotId)),
+                    compiledZone.NativeRect,
+                    compiledZone.Anchor,
+                    compiledZone.PackingOrder)
+                .ToArray();
+            for (var index = 0; index < remainingItems.Length && index < remainingSlots.Length; index++)
+                expectedSlotByStableId[remainingItems[index].StableId] = remainingSlots[index];
+
+            foreach (var item in zoneItems)
+            {
+                if (!expectedSlotByStableId.TryGetValue(item.StableId, out var expected))
+                    continue;
+                if (!string.Equals(item.TargetSlotId, expected.SlotId, StringComparison.Ordinal))
+                {
+                    issues.Add(new(
+                        DesktopWorkspaceEquivalenceIssueCode.ItemPackingMismatch,
+                        $"项目 {item.StableId} 没有按 Blueprint anchor / packing 规则落到独立复算的 native slot。",
+                        compiledZone.DisplayRef,
+                        compiledZone.ZoneKey,
+                        item.StableId));
+                }
             }
         }
     }
@@ -550,6 +774,88 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
     private static int NearestBoundary(double normalized, int count)
         => checked((int)Math.Round(normalized * count, MidpointRounding.AwayFromZero));
 
+    private static IEnumerable<ExplorerNativeSlot> SlotsInside(
+        ExplorerDisplayGeometry display,
+        DesktopWorkspaceNativeRect rect)
+        => display.Slots.Where(slot =>
+            slot.Column >= rect.FirstColumn && slot.Column < rect.ExclusiveColumn &&
+            slot.Row >= rect.FirstRow && slot.Row < rect.ExclusiveRow);
+
+    private static IEnumerable<ExplorerNativeSlot> OrderSlots(
+        IEnumerable<ExplorerNativeSlot> slots,
+        DesktopWorkspaceNativeRect rect,
+        DesktopWorkspaceAnchorKind anchor,
+        DesktopWorkspacePackingOrder packingOrder)
+    {
+        var slotArray = slots.ToArray();
+        if (anchor == DesktopWorkspaceAnchorKind.Center)
+        {
+            var centerColumn = rect.FirstColumn + (rect.ColumnCount - 1) / 2d;
+            var centerRow = rect.FirstRow + (rect.RowCount - 1) / 2d;
+            return slotArray
+                .OrderBy(slot => Math.Abs(slot.Column - centerColumn) + Math.Abs(slot.Row - centerRow))
+                .ThenBy(static slot => slot.Row)
+                .ThenBy(static slot => slot.Column);
+        }
+
+        var rightFirst = anchor == DesktopWorkspaceAnchorKind.TopRight ||
+                         anchor == DesktopWorkspaceAnchorKind.BottomRight;
+        var bottomFirst = anchor == DesktopWorkspaceAnchorKind.BottomLeft ||
+                          anchor == DesktopWorkspaceAnchorKind.BottomRight;
+        if (packingOrder == DesktopWorkspacePackingOrder.ColumnMajor)
+        {
+            return rightFirst
+                ? bottomFirst
+                    ? slotArray.OrderByDescending(static slot => slot.Column).ThenByDescending(static slot => slot.Row)
+                    : slotArray.OrderByDescending(static slot => slot.Column).ThenBy(static slot => slot.Row)
+                : bottomFirst
+                    ? slotArray.OrderBy(static slot => slot.Column).ThenByDescending(static slot => slot.Row)
+                    : slotArray.OrderBy(static slot => slot.Column).ThenBy(static slot => slot.Row);
+        }
+
+        return bottomFirst
+            ? rightFirst
+                ? slotArray.OrderByDescending(static slot => slot.Row).ThenByDescending(static slot => slot.Column)
+                : slotArray.OrderByDescending(static slot => slot.Row).ThenBy(static slot => slot.Column)
+            : rightFirst
+                ? slotArray.OrderBy(static slot => slot.Row).ThenByDescending(static slot => slot.Column)
+                : slotArray.OrderBy(static slot => slot.Row).ThenBy(static slot => slot.Column);
+    }
+
+    private static IReadOnlyList<string> GetOverlappedSlotIds(
+        PixelPoint position,
+        ExplorerDisplayGeometry display)
+    {
+        var firstColumn = FloorDivide((long)position.X - display.GridOrigin.X, display.Spacing.X);
+        var firstRow = FloorDivide((long)position.Y - display.GridOrigin.Y, display.Spacing.Y);
+        var lastColumn = FloorDivide(
+            (long)position.X + display.Spacing.X - 1 - display.GridOrigin.X,
+            display.Spacing.X);
+        var lastRow = FloorDivide(
+            (long)position.Y + display.Spacing.Y - 1 - display.GridOrigin.Y,
+            display.Spacing.Y);
+
+        firstColumn = Math.Max(0, firstColumn);
+        firstRow = Math.Max(0, firstRow);
+        lastColumn = Math.Min(display.Columns - 1L, lastColumn);
+        lastRow = Math.Min(display.Rows - 1L, lastRow);
+        if (firstColumn > lastColumn || firstRow > lastRow)
+            return [];
+
+        return display.Slots
+            .Where(slot => slot.Column >= firstColumn && slot.Column <= lastColumn &&
+                           slot.Row >= firstRow && slot.Row <= lastRow)
+            .Select(static slot => slot.SlotId)
+            .ToArray();
+    }
+
+    private static long FloorDivide(long value, int divisor)
+    {
+        var quotient = value / divisor;
+        var remainder = value % divisor;
+        return remainder < 0 ? quotient - 1 : quotient;
+    }
+
     private static bool SameKeys(IEnumerable<string> first, IEnumerable<string> second)
         => first.ToHashSet(StringComparer.Ordinal).SetEquals(second);
 
@@ -558,7 +864,8 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
         ExplorerWorkspaceGeometry geometry,
         CompiledWorkspacePlan plan,
         IEnumerable<WorkspaceGeometryRealizationProof> zoneProofs,
-        IEnumerable<WorkspaceGeometryRealizationProof> reservedProofs)
+        IEnumerable<WorkspaceGeometryRealizationProof> reservedProofs,
+        IEnumerable<WorkspaceItemRealizationProof> itemProofs)
     {
         var builder = new StringBuilder();
         builder.Append("workspace-certificate-v1|")
@@ -569,15 +876,22 @@ public static class DesktopWorkspaceSemanticEquivalenceChecker
             .AppendLine();
 
         foreach (var proof in zoneProofs.OrderBy(static proof => proof.Key, StringComparer.Ordinal))
-            AppendProof(builder, "z", proof);
+            AppendGeometryProof(builder, "z", proof);
         foreach (var proof in reservedProofs.OrderBy(static proof => proof.Key, StringComparer.Ordinal))
-            AppendProof(builder, "r", proof);
+            AppendGeometryProof(builder, "r", proof);
+        foreach (var proof in itemProofs.OrderBy(static proof => proof.StableId, StringComparer.Ordinal))
+        {
+            builder.Append("i|").Append(proof.StableId).Append('|').Append(proof.SourceDisplayRef).Append('|')
+                .Append(proof.CategoryKey).Append('|').Append((int)proof.Disposition).Append('|')
+                .Append(proof.ZoneKey ?? string.Empty).Append('|').Append(proof.TargetDisplayRef ?? string.Empty).Append('|')
+                .Append(proof.TargetSlotId ?? string.Empty).AppendLine();
+        }
 
         return "workspace-certificate-v1:" +
                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
     }
 
-    private static void AppendProof(StringBuilder builder, string kind, WorkspaceGeometryRealizationProof proof)
+    private static void AppendGeometryProof(StringBuilder builder, string kind, WorkspaceGeometryRealizationProof proof)
     {
         builder.Append(kind).Append('|').Append(proof.Key).Append('|').Append(proof.DisplayRef).Append('|')
             .Append(proof.NativeRect.FirstColumn).Append('|').Append(proof.NativeRect.FirstRow).Append('|')
