@@ -207,12 +207,12 @@ public sealed class DesktopExplorerWorkspaceGeometryAdapterTests
         => new(
             stableId,
             displayName,
-            parsingName: null,
+            ParsingName: null,
             itemKind,
             new PixelPoint(x, y),
             monitorDeviceName,
             isSystemItem,
-            isFileSystemItem: itemKind != ItemKind.SystemItem);
+            IsFileSystemItem: itemKind != ItemKind.SystemItem);
 
     private static int PositiveModulo(int value, int modulus)
     {
