@@ -8,6 +8,9 @@ namespace DesktopAgent.WinUI;
 
 public sealed partial class LayoutManagementView
 {
+    private const int MaxLogicalPreviewMovementLines = 32;
+    private const int MaxLogicalPreviewItemDots = 180;
+
     private DesktopLogicalWorkspacePlanningSession? _logicalWorkspaceSession;
     private int _activeLogicalWorkspaceDisplayIndex = -1;
 
@@ -155,7 +158,47 @@ public sealed partial class LayoutManagementView
                 AddLogicalRegion(item, region.Bounds, $"留白 · {region.Purpose}", isReserved: true);
         }
 
-        foreach (var item in preview.Items.Take(180))
+        var selectedDisplayRef = _activeLogicalWorkspaceDisplayIndex >= 0 &&
+                                 _activeLogicalWorkspaceDisplayIndex < preview.Displays.Count
+            ? preview.Displays[_activeLogicalWorkspaceDisplayIndex].DisplayRef
+            : null;
+        var movementLinesDrawn = 0;
+        foreach (var item in preview.Items)
+        {
+            if (movementLinesDrawn >= MaxLogicalPreviewMovementLines)
+                break;
+            if (!item.IsPositionChange || item.State != DesktopDesiredItemState.Place ||
+                item.TargetDisplayRef is null || !item.TargetCell.HasValue)
+            {
+                continue;
+            }
+            if (selectedDisplayRef is not null &&
+                !string.Equals(item.SourceDisplayRef, selectedDisplayRef, StringComparison.Ordinal) &&
+                !string.Equals(item.TargetDisplayRef, selectedDisplayRef, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            if (!geometry.TryGetValue(item.SourceDisplayRef, out var source) ||
+                !geometry.TryGetValue(item.TargetDisplayRef, out var target))
+            {
+                continue;
+            }
+
+            var sourcePoint = source.CellCenter(item.SourceCell);
+            var targetPoint = target.CellCenter(item.TargetCell.Value);
+            LayoutCanvas.Children.Add(new Line
+            {
+                X1 = sourcePoint.X,
+                Y1 = sourcePoint.Y,
+                X2 = targetPoint.X,
+                Y2 = targetPoint.Y,
+                StrokeThickness = item.IsCrossDisplayMove ? 1.45d : 0.85d,
+                Stroke = Brush(item.IsCrossDisplayMove ? (byte)105 : (byte)48, 0x00, 0x78, 0xD4),
+            });
+            movementLinesDrawn++;
+        }
+
+        foreach (var item in preview.Items.Take(MaxLogicalPreviewItemDots))
         {
             if (!geometry.TryGetValue(item.SourceDisplayRef, out var source))
                 continue;
@@ -164,18 +207,6 @@ public sealed partial class LayoutManagementView
                 item.TargetCell.HasValue && geometry.TryGetValue(item.TargetDisplayRef, out var target))
             {
                 var targetPoint = target.CellCenter(item.TargetCell.Value);
-                if (item.IsPositionChange)
-                {
-                    LayoutCanvas.Children.Add(new Line
-                    {
-                        X1 = sourcePoint.X,
-                        Y1 = sourcePoint.Y,
-                        X2 = targetPoint.X,
-                        Y2 = targetPoint.Y,
-                        StrokeThickness = item.IsCrossDisplayMove ? 1.7d : 1d,
-                        Stroke = Brush(item.IsCrossDisplayMove ? (byte)145 : (byte)82, 0x00, 0x78, 0xD4),
-                    });
-                }
                 AddLogicalItemDot(item, targetPoint.X, targetPoint.Y, 0x00, 0x78, 0xD4);
             }
             else
@@ -185,6 +216,17 @@ public sealed partial class LayoutManagementView
                     item.State == DesktopDesiredItemState.Exclude ? (byte)0x6B : (byte)0x72,
                     item.State == DesktopDesiredItemState.Exclude ? (byte)0x00 : (byte)0x72);
             }
+        }
+
+        // 点和迁移线只负责表达项目终态。最后重新描边 Zone / Reserved Region，
+        // 防止大量桌面项目把用户真正要审阅的空间结构淹没。
+        foreach (var display in preview.Displays)
+        {
+            var item = geometry[display.DisplayRef];
+            foreach (var zone in display.Zones)
+                AddLogicalRegionOutline(item, zone.Bounds, zone.Name, isReserved: false);
+            foreach (var region in display.ReservedRegions)
+                AddLogicalRegionOutline(item, region.Bounds, $"留白 · {region.Purpose}", isReserved: true);
         }
 
         foreach (var pair in preview.Displays.Select((display, index) => (display, index)))
@@ -237,16 +279,57 @@ public sealed partial class LayoutManagementView
         LayoutCanvas.Children.Add(region);
     }
 
+    private void AddLogicalRegionOutline(
+        LogicalDisplayCanvasGeometry display,
+        DesktopLogicalGridRect bounds,
+        string label,
+        bool isReserved)
+    {
+        var left = display.Left + display.Width * bounds.Column / display.Display.GridSize.Columns;
+        var top = display.Top + display.Height * bounds.Row / display.Display.GridSize.Rows;
+        var labelHost = new Border
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(4),
+            Padding = new Thickness(4, 2, 4, 2),
+            CornerRadius = new CornerRadius(3),
+            Background = isReserved ? Brush(205, 0x5A, 0x38, 0x00) : Brush(205, 0x00, 0x3D, 0x6B),
+            Child = new TextBlock
+            {
+                Text = label,
+                FontSize = 10,
+                Foreground = Brush(255, 0xFF, 0xFF, 0xFF),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = Math.Max(32d, display.Width * bounds.Width / display.Display.GridSize.Columns - 12d),
+            },
+        };
+        var outline = new Border
+        {
+            Width = Math.Max(1d, display.Width * bounds.Width / display.Display.GridSize.Columns),
+            Height = Math.Max(1d, display.Height * bounds.Height / display.Display.GridSize.Rows),
+            CornerRadius = new CornerRadius(5),
+            BorderThickness = new Thickness(isReserved ? 2.2d : 1.8d),
+            BorderBrush = isReserved ? Brush(235, 0xD8, 0x83, 0x00) : Brush(225, 0x00, 0x78, 0xD4),
+            Background = Brush(0, 0x00, 0x00, 0x00),
+            IsHitTestVisible = false,
+            Child = labelHost,
+        };
+        Canvas.SetLeft(outline, left);
+        Canvas.SetTop(outline, top);
+        LayoutCanvas.Children.Add(outline);
+    }
+
     private void AddLogicalItemDot(DesktopLogicalWorkspacePreviewItem item, double x, double y, byte red, byte green, byte blue)
     {
-        const double size = 7d;
+        const double size = 5d;
         var dot = new Ellipse
         {
             Width = size,
             Height = size,
-            Fill = Brush(235, red, green, blue),
-            Stroke = Brush(255, 0xFF, 0xFF, 0xFF),
-            StrokeThickness = 1d,
+            Fill = Brush(215, red, green, blue),
+            Stroke = Brush(235, 0xFF, 0xFF, 0xFF),
+            StrokeThickness = 0.8d,
         };
         ToolTipService.SetToolTip(dot, $"{item.DisplayName} · {item.State} · {item.SourceDisplayRef} → {item.TargetDisplayRef ?? "—"}");
         Canvas.SetLeft(dot, x - size / 2d);
