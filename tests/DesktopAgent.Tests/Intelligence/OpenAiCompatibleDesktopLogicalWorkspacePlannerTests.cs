@@ -59,6 +59,7 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
         Assert.False(simpleItem.TryGetProperty("o", out _));
         Assert.False(simpleItem.TryGetProperty("u", out _));
         Assert.False(simpleItem.TryGetProperty("f", out _));
+        Assert.False(context.TryGetProperty("semantic", out _));
         Assert.False(context.TryGetProperty("retry", out _));
         Assert.False(context.TryGetProperty("observed_workspace", out _));
         Assert.DoesNotContain(workspace.ObservationId.ToString(), requestBody, StringComparison.OrdinalIgnoreCase);
@@ -69,6 +70,53 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
         Assert.DoesNotContain("\\\\.\\DISPLAY", requestBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("pixel_position", requestBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("writer_command", requestBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Provider_PreservesFreshSemanticZoneIntentInCompactContext()
+    {
+        string? requestBody = null;
+        using var httpClient = CreateClient(async (request, cancellationToken) =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            return JsonResponse(CreateCompletionJson(CreateSemanticCompliantPlanJson()));
+        });
+        var workspace = CreateWorkspace();
+        var provider = CreateProvider(httpClient);
+
+        var result = await provider.PlanAsync(new DesktopLogicalWorkspacePlanningRequest(
+            workspace,
+            "按已理解的工作区整理到副屏。",
+            semanticIntent: CreateSemanticIntent()));
+
+        Assert.True(result.Succeeded);
+        var context = ExtractUserContext(requestBody!);
+        var semantic = context.GetProperty("semantic");
+        Assert.Single(semantic.GetProperty("z").EnumerateArray());
+        Assert.Equal("work", semantic.GetProperty("z")[0].GetProperty("k").GetString());
+        Assert.Equal("工作区", semantic.GetProperty("z")[0].GetProperty("n").GetString());
+        Assert.Equal(2, semantic.GetProperty("i").GetArrayLength());
+        Assert.Equal("item-0001", semantic.GetProperty("i")[0].GetProperty("r").GetString());
+        Assert.Equal("work", semantic.GetProperty("i")[0].GetProperty("z").GetString());
+    }
+
+    [Fact]
+    public async Task Provider_RejectsPlanThatCollapsesFreshSemanticZoneIntent()
+    {
+        using var httpClient = CreateClient((_, _) => Task.FromResult(
+            JsonResponse(CreateCompletionJson(CreateValidPlanJson()))));
+        var provider = CreateProvider(httpClient);
+
+        var result = await provider.PlanAsync(new DesktopLogicalWorkspacePlanningRequest(
+            CreateWorkspace(),
+            "按已理解的工作区整理到副屏。",
+            semanticIntent: CreateSemanticIntent()));
+
+        Assert.Equal(IntelligenceProviderStatus.InvalidResponse, result.Status);
+        Assert.False(result.Succeeded);
+        Assert.False(result.CanRetryValidation);
+        Assert.Contains("语义", result.DiagnosticMessage, StringComparison.Ordinal);
+        Assert.Contains("item-0003", result.DiagnosticMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -191,6 +239,18 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
             new OpenAiCompatibleProviderOptions(new Uri("https://example.test/v1"), "model"),
             new StubSecretResolver());
 
+    private static DesktopLogicalWorkspaceSemanticPlanningIntent CreateSemanticIntent() => new(
+        [
+            new DesktopLogicalWorkspaceSemanticZoneIntent(
+                "work",
+                "工作区",
+                ["work"]),
+        ],
+        [
+            new DesktopLogicalWorkspaceSemanticItemIntent("item-0001", "work"),
+            new DesktopLogicalWorkspaceSemanticItemIntent("item-0003", "work"),
+        ]);
+
     private static DesktopObservedLogicalWorkspace CreateWorkspace() => new(
         Guid.Parse("11111111-2222-3333-4444-555555555555"),
         "topology-v1:SAFE",
@@ -255,6 +315,22 @@ public sealed class OpenAiCompatibleDesktopLogicalWorkspacePlannerTests
             { "r": "item-0001", "s": "p", "d": "secondary_1", "c": [0, 0], "z": "work", "y": "move work to secondary" },
             { "r": "item-0002", "s": "k" },
             { "r": "item-0003", "s": "k" }
+          ]
+        }
+        """;
+
+    private static string CreateSemanticCompliantPlanJson() => """
+        {
+          "z": [
+            { "k": "work", "n": "工作区", "d": "secondary_1", "b": [0, 0, 4, 4] }
+          ],
+          "r": [
+            { "k": "wallpaper-center", "p": "keep wallpaper visible", "d": "primary", "b": [1, 1, 2, 2] }
+          ],
+          "i": [
+            { "r": "item-0001", "s": "p", "d": "secondary_1", "c": [0, 0], "z": "work" },
+            { "r": "item-0002", "s": "k" },
+            { "r": "item-0003", "s": "p", "d": "secondary_1", "c": [1, 0], "z": "work" }
           ]
         }
         """;
