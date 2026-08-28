@@ -144,10 +144,10 @@ public sealed class DesktopSemanticUnderstandingFreshnessTests
         => new(
             stableId,
             displayName,
-            parsingName: $@"C:\Desktop\{stableId}",
+            $@"C:\Desktop\{stableId}",
             ItemKind.File,
             position,
             monitor,
-            isSystemItem: false,
-            isFileSystemItem: true);
+            false,
+            true);
 }
