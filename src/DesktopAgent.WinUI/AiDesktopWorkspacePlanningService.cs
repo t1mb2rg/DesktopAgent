@@ -106,10 +106,11 @@ internal sealed class AiDesktopWorkspacePlanningService
         using var httpClient = new HttpClient();
         var secretStore = new DpapiIntelligenceSecretStore(
             DesktopAgentDataPaths.DefaultSecretsDirectory);
-        var designer = new OpenAiCompatibleDesktopWorkspaceDesigner(
-            httpClient,
-            options,
-            secretStore);
+        IDesktopWorkspaceDesigner designer = new ContractRepairingDesktopWorkspaceDesigner(
+            new OpenAiCompatibleDesktopWorkspaceDesigner(
+                httpClient,
+                options,
+                secretStore));
         var coordinator = new DesktopWorkspaceDesignLoopCoordinator(designer);
 
         var loop = await coordinator.DesignAndCompileAsync(
