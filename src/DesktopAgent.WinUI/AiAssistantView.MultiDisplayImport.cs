@@ -15,8 +15,8 @@ public sealed partial class AiAssistantView
         if (latest?.Draft is null || latest.Observation is null)
         {
             AiStatusBar.Severity = InfoBarSeverity.Warning;
-            AiStatusBar.Title = "还没有可导入的完整 AI 草案";
-            AiStatusBar.Message = "先完成一次 fresh 桌面理解，再导入多显示器布局工作区。";
+            AiStatusBar.Title = "还没有可设计的完整桌面语义模型";
+            AiStatusBar.Message = "先完成一次 fresh 桌面理解，再生成 Workspace Blueprint 预览。";
             AiStatusBar.IsOpen = true;
             return;
         }
@@ -25,44 +25,49 @@ public sealed partial class AiAssistantView
         _analysisCts = cts;
         SetBusy(true);
         AiStatusBar.Severity = InfoBarSeverity.Informational;
-        AiStatusBar.Title = "正在生成精确逻辑终态";
+        AiStatusBar.Title = "正在设计 Workspace Blueprint";
         AiStatusBar.Message =
-            "会 fresh 重读一次桌面，并让 AI 在只读逻辑网格上给出每个项目的最终格位。" +
-            "本地严格校验通过后才会进入预览；Writer 不会启动。";
+            "AI 只设计多屏 Workspace 的 Zone、留白、Category→Zone 与少量例外；" +
+            "本地 Compiler 再映射到 Explorer 原生槽位，并由独立 Checker 验证。当前 Writer 为 0。";
         AiStatusBar.IsOpen = true;
 
         try
         {
-            var result = await _logicalWorkspacePlanningService.PlanAsync(
-                BuildLogicalWorkspacePlanningGuidance(latest.Draft),
+            var result = await _workspacePlanningService.PlanAsync(
+                latest.Draft,
+                latest.Observation,
+                _conversationState,
                 cts.Token);
             if (cts.IsCancellationRequested)
             {
                 ShowCancelled();
                 return;
             }
-            if (!result.Succeeded || result.Session is null)
+
+            if (!result.Succeeded || result.Preview is null)
             {
-                AiStatusBar.Severity = result.Status == AiDesktopLogicalWorkspacePlanningProductStatus.AiDisabled
+                AiStatusBar.Severity = result.Status == AiDesktopWorkspacePlanningProductStatus.AiDisabled
                     ? InfoBarSeverity.Warning
                     : InfoBarSeverity.Error;
-                AiStatusBar.Title = "精确逻辑终态没有通过安全边界";
+                AiStatusBar.Title = "Workspace Blueprint 没有形成可验证预览";
                 AiStatusBar.Message = result.Message ??
-                    $"结果：{result.Status}。没有生成 Preview，也没有调用 Writer。";
+                    $"结果：{result.Status}。没有生成 Frozen Preview，也没有调用 Writer。";
                 AiStatusBar.IsOpen = true;
                 return;
             }
-            if (LogicalWorkspacePreviewRequested is null)
-                throw new InvalidOperationException("布局工作台当前没有挂载逻辑工作区预览入口。");
 
-            LogicalWorkspacePreviewRequested.Invoke(result.Session);
+            if (WorkspaceFrozenPreviewRequested is null)
+                throw new InvalidOperationException("布局工作台当前没有挂载 Workspace Frozen Preview 入口。");
+
+            WorkspaceFrozenPreviewRequested.Invoke(result.Preview);
             AiStatusBar.Severity = InfoBarSeverity.Success;
-            AiStatusBar.Title = "已生成只读逻辑工作区预览";
+            AiStatusBar.Title = "已生成 Workspace Frozen Preview";
             AiStatusBar.Message =
-                $"{result.Session.FrozenPreview.Displays.Count} 块显示器、" +
-                $"{result.Session.FrozenPreview.Items.Count} 个项目、" +
-                $"{result.Session.FrozenPreview.CrossDisplayAssignmentCount} 个跨屏终点。" +
-                "当前仍是 0 Writer。";
+                $"Blueprint v{result.Preview.Blueprint.Revision} · " +
+                $"{result.Preview.Displays.Count} 块显示器 · " +
+                $"{result.Preview.Items.Count} 个项目 · " +
+                $"移动 {result.Preview.MoveCount} · 跨屏 {result.Preview.CrossDisplayAssignmentCount} · " +
+                $"AI 设计尝试 {result.DesignAttempts} 次。当前仍是 0 Writer。";
             AiStatusBar.IsOpen = true;
         }
         catch (OperationCanceledException)
@@ -72,7 +77,7 @@ public sealed partial class AiAssistantView
         catch (Exception ex)
         {
             AiStatusBar.Severity = InfoBarSeverity.Error;
-            AiStatusBar.Title = "无法导入多显示器布局草案";
+            AiStatusBar.Title = "无法生成 Workspace Blueprint 预览";
             AiStatusBar.Message = ex.Message;
             AiStatusBar.IsOpen = true;
         }
@@ -85,6 +90,10 @@ public sealed partial class AiAssistantView
         }
     }
 
+    /// <summary>
+    /// legacy exact-cell PlanningSession 兼容路径仍保留到重构完成。
+    /// 新 Workspace Blueprint 路径不调用此方法；保留它只是避免在 Phase 7-C 同时删除旧产品合同。
+    /// </summary>
     private string BuildLogicalWorkspacePlanningGuidance(
         DesktopAgent.Core.Intelligence.DesktopUnderstandingDraft understanding)
     {
