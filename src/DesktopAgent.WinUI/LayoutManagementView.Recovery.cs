@@ -18,13 +18,38 @@ public sealed partial class LayoutManagementView
             return;
 
         int pendingCount;
+        IReadOnlyList<DesktopAgent.Core.DesktopLayouts.Workspaces.Execution.DesktopWorkspaceExecutionJournal> workspacePending;
         try
         {
+            await _workspaceExecutionJournalStore.InitializeAsync();
+            workspacePending = await _workspaceExecutionJournalStore.ListUnresolvedAsync();
             pendingCount = await RecoveryProductService.GetPendingCountAsync();
         }
         catch (Exception ex)
         {
             ShowError("无法读取恢复状态", $"{ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        // V9 Workspace journal 与旧单屏 RecoverySession 是两套不同恢复合同。
+        // 当前入口必须先识别 Workspace 现场，绝不能因为 legacy pending=0 就谎报“没有恢复”。
+        if (workspacePending.Count > 0)
+        {
+            DisableWorkspaceFrozenPreviewApplyEvidence();
+            ApplyToDesktopButton.IsEnabled = false;
+
+            var legacySuffix = pendingCount > 0
+                ? $" 同时还有 {pendingCount} 笔旧布局 unresolved 恢复会话。"
+                : string.Empty;
+            ShowInfo(
+                workspacePending.Count == 1 && pendingCount == 0
+                    ? "检测到 Workspace 恢复现场"
+                    : "存在多套待处理恢复",
+                $"检测到 {workspacePending.Count} 笔 unresolved Workspace execution journal。" +
+                "V9 Journal、Safety Snapshot 和 Writer 证据仍然保留，新的真实写入继续保持阻断。" +
+                legacySuffix +
+                " 当前版本不会把 Workspace 第三状态伪装成旧单屏恢复；需要先完成 Workspace Recovery 安全入口。",
+                InfoBarSeverity.Error);
             return;
         }
 
@@ -71,6 +96,10 @@ public sealed partial class LayoutManagementView
             ShowInfo("已取消", "没有执行恢复写入，恢复锁保持不变。", InfoBarSeverity.Informational);
             return;
         }
+
+        // 旧 Recovery 可能产生 Writer 或改变用户认可的现实基线，因此任何 Workspace Frozen Preview
+        // 都必须失去一次性 Apply authority。画面可以继续留作参考，但不能再执行。
+        DisableWorkspaceFrozenPreviewApplyEvidence();
 
         if (choice == ContentDialogResult.Secondary)
         {
@@ -132,10 +161,7 @@ public sealed partial class LayoutManagementView
     {
         _directApplyInProgress = busy;
         ReconcileRecoveryButton.IsEnabled = !busy;
-        ApplyToDesktopButton.IsEnabled = !busy
-            && _latestPreview is not null
-            && _latestPreview.Plan.IsComplete
-            && _latestPreview.Plan.MoveRequiredCount > 0;
+        RefreshApplyButtonFromCurrentEvidence();
 
         if (!string.IsNullOrWhiteSpace(status))
             LayoutCanvasStatusText.Text = status;
