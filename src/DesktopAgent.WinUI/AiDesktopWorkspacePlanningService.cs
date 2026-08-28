@@ -1,12 +1,15 @@
+using System.Text;
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Application.Intelligence;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Equivalence;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Preview;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Intelligence;
+using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Persistence.Productization;
 using DesktopAgent.WindowsInterop.Intelligence;
 
@@ -34,7 +37,8 @@ internal sealed record AiDesktopWorkspacePlanningProductResult(
     IReadOnlyList<DesktopExplorerWorkspaceGeometryIssue> GeometryIssues,
     IReadOnlyList<DesktopWorkspaceCompileIssue> CompileIssues,
     IReadOnlyList<DesktopWorkspaceEquivalenceIssue> EquivalenceIssues,
-    string? Message)
+    string? Message,
+    string? PersistenceWarning = null)
 {
     internal bool Succeeded =>
         Status == AiDesktopWorkspacePlanningProductStatus.Success && Preview is not null;
@@ -43,7 +47,8 @@ internal sealed record AiDesktopWorkspacePlanningProductResult(
 /// <summary>
 /// ADR-0005 Workspace Blueprint 产品级只读入口。
 /// 使用已有同一次 Full Understanding + Observation，生成 Explorer-native Frozen Preview；
-/// 当前没有 Candidate、Execution Session、Recovery 或 Writer authority。
+/// 成功且通过独立 equivalence 后，把本轮完整 immutable Blueprint revision history 写入 Workspace Library。
+/// Library persistence 从不保存 Exact Plan / Frozen Preview / Confirmation，也不授予 Candidate、Recovery 或 Writer authority。
 /// </summary>
 internal sealed class AiDesktopWorkspacePlanningService
 {
@@ -132,6 +137,25 @@ internal sealed class AiDesktopWorkspacePlanningService
                 loop.Certificate!,
                 preparation.SourceSnapshot,
                 preparation.ItemRefBindings);
+
+            string? persistenceWarning = null;
+            try
+            {
+                await PersistSuccessfulBlueprintAsync(
+                    loop.BlueprintRevisions,
+                    conversationState,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                persistenceWarning =
+                    $"Workspace Preview 已形成，但 Blueprint 没有写入长期 Library：{ex.Message}";
+            }
+
             return new AiDesktopWorkspacePlanningProductResult(
                 AiDesktopWorkspacePlanningProductStatus.Success,
                 preview,
@@ -141,7 +165,12 @@ internal sealed class AiDesktopWorkspacePlanningService
                 GeometryIssues: [],
                 CompileIssues: [],
                 EquivalenceIssues: [],
-                Message: null);
+                Message: null,
+                PersistenceWarning: persistenceWarning);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or InvalidDataException)
         {
@@ -150,6 +179,83 @@ internal sealed class AiDesktopWorkspacePlanningService
                 loop.DesignAttempts,
                 message: ex.Message);
         }
+    }
+
+    private static async Task PersistSuccessfulBlueprintAsync(
+        IReadOnlyList<DesktopWorkspaceBlueprint> revisions,
+        DesktopLayoutConversationState conversationState,
+        CancellationToken cancellationToken)
+    {
+        if (revisions.Count == 0)
+            throw new InvalidDataException("成功的 Workspace Design 没有可持久化 revision history。");
+
+        var finalBlueprint = revisions[^1];
+        var name = BuildAssetName(conversationState, finalBlueprint);
+        var sourceIntent = string.IsNullOrWhiteSpace(conversationState.IntentSummary)
+            ? null
+            : conversationState.IntentSummary.Trim();
+        var createdAt = DateTimeOffset.UtcNow;
+
+        var store = new SqliteDesktopWorkspaceBlueprintStore(
+            DesktopAgentDataPaths.DefaultDatabasePath);
+        await store.InitializeAsync(cancellationToken);
+
+        var first = new DesktopWorkspaceBlueprintRevisionRecord(
+            revisions[0],
+            createdAt,
+            sourceUnderstandingId: null,
+            sourceUserIntent: sourceIntent);
+        await store.CreateAsync(name, first, cancellationToken);
+
+        foreach (var blueprint in revisions.Skip(1))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await store.AppendRevisionAsync(
+                new DesktopWorkspaceBlueprintRevisionRecord(
+                    blueprint,
+                    createdAt,
+                    sourceUnderstandingId: null,
+                    sourceUserIntent: sourceIntent),
+                cancellationToken);
+        }
+    }
+
+    private static string BuildAssetName(
+        DesktopLayoutConversationState conversationState,
+        DesktopWorkspaceBlueprint blueprint)
+    {
+        var source = string.IsNullOrWhiteSpace(conversationState.IntentSummary)
+            ? blueprint.DesignSummary
+            : conversationState.IntentSummary;
+        var compact = CollapseWhitespace(source);
+        if (compact.Length == 0)
+            return "AI Workspace";
+        return compact.Length <= 48
+            ? compact
+            : $"{compact[..47].TrimEnd()}…";
+    }
+
+    private static string CollapseWhitespace(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var builder = new StringBuilder(value.Length);
+        var pendingSpace = false;
+        foreach (var character in value.Trim())
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = builder.Length > 0;
+                continue;
+            }
+
+            if (pendingSpace)
+                builder.Append(' ');
+            builder.Append(character);
+            pendingSpace = false;
+        }
+        return builder.ToString();
     }
 
     private static AiDesktopWorkspacePlanningProductResult FromLoopFailure(
