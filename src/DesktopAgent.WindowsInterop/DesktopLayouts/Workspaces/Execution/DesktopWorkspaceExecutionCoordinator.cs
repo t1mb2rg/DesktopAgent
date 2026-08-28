@@ -149,6 +149,7 @@ public sealed class DesktopWorkspaceExecutionCoordinator
 
         DesktopWorkspaceExecutionJournal? journal = null;
         DesktopLayoutSnapshot? safetySnapshot = null;
+        DesktopWorkspaceExecutionPlan? plan = null;
 
         try
         {
@@ -205,7 +206,7 @@ public sealed class DesktopWorkspaceExecutionCoordinator
                     string.Join("；", planning.Issues.Select(static issue => issue.Message)));
             }
 
-            var plan = planning.Plan!;
+            plan = planning.Plan!;
             if (plan.IsNoOp)
                 return DesktopWorkspaceExecutionRunResult.NoOp();
 
@@ -279,13 +280,6 @@ public sealed class DesktopWorkspaceExecutionCoordinator
                     journal);
             }
             journal = forwardStarted;
-
-            return await ExecuteForwardAsync(
-                confirmation,
-                plan,
-                safetySnapshot,
-                journal,
-                cancellationToken);
         }
         catch (OperationCanceledException ex)
         {
@@ -303,6 +297,34 @@ public sealed class DesktopWorkspaceExecutionCoordinator
                 safetySnapshot?.SnapshotId,
                 journal);
         }
+
+        if (plan is null || safetySnapshot is null || journal is null)
+        {
+            return DesktopWorkspaceExecutionRunResult.FailedBeforeWrite(
+                "ExecutionPreparationInvariantBroken",
+                "Workspace execution preparation 未形成完整 plan / snapshot / journal，拒绝进入 Writer boundary。 ",
+                safetySnapshot?.SnapshotId,
+                journal);
+        }
+
+        var writerStarted = false;
+        try
+        {
+            return await ExecuteForwardAsync(
+                confirmation,
+                plan,
+                safetySnapshot,
+                journal,
+                () => writerStarted = true,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return await ContainUnexpectedExecutionExceptionAsync(
+                journal,
+                writerStarted,
+                ex);
+        }
     }
 
     private async Task<DesktopWorkspaceExecutionRunResult> ExecuteForwardAsync(
@@ -310,8 +332,11 @@ public sealed class DesktopWorkspaceExecutionCoordinator
         DesktopWorkspaceExecutionPlan plan,
         DesktopLayoutSnapshot safetySnapshot,
         DesktopWorkspaceExecutionJournal journal,
+        Action onWriterStarting,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(onWriterStarting);
+
         var forwardAttempts = journal.ForwardAttempts.ToList();
         var rollbackAttempts = journal.RollbackAttempts.ToList();
         var completedForward = journal.CompletedForwardStepIndexes.ToList();
@@ -352,6 +377,7 @@ public sealed class DesktopWorkspaceExecutionCoordinator
 
             var step = plan.Steps[stepIndex];
             DesktopIconMoveResult moveResult;
+            onWriterStarting();
             writerStarted = true;
             try
             {
@@ -713,6 +739,91 @@ public sealed class DesktopWorkspaceExecutionCoordinator
             restored,
             forwardFailureType,
             forwardFailureMessage);
+    }
+
+    private async Task<DesktopWorkspaceExecutionRunResult> ContainUnexpectedExecutionExceptionAsync(
+        DesktopWorkspaceExecutionJournal startingJournal,
+        bool writerStarted,
+        Exception exception)
+    {
+        var journal = startingJournal;
+        try
+        {
+            var latest = await _journalStore.GetAsync(startingJournal.SessionId, CancellationToken.None);
+            if (latest is not null)
+                journal = latest;
+        }
+        catch
+        {
+            // 当前内存中的已验证 journal 仍是最保守的可用持久化锚点。
+        }
+
+        if (!writerStarted)
+        {
+            if (!journal.IsResolved)
+            {
+                var restored = await TryTransitionAsync(
+                    journal,
+                    journal with
+                    {
+                        Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored,
+                        ForwardFailureType = null,
+                        ForwardFailureMessage = null,
+                        RecoveryFailureType = null,
+                        RecoveryFailureMessage = null,
+                    });
+                if (restored is not null)
+                    journal = restored;
+            }
+
+            return DesktopWorkspaceExecutionRunResult.FailedBeforeWrite(
+                "UnhandledExecutionExceptionBeforeWrite",
+                $"进入 execution boundary 后、第一次 Writer 前发生未处理异常：{exception.GetType().Name}: {exception.Message}",
+                journal.SafetySnapshotId,
+                journal);
+        }
+
+        if (journal.IsResolved)
+        {
+            var resolvedStatus = journal.Lifecycle == DesktopWorkspaceExecutionJournalLifecycle.Committed
+                ? DesktopWorkspaceExecutionRunStatus.Committed
+                : DesktopWorkspaceExecutionRunStatus.Restored;
+            return DesktopWorkspaceExecutionRunResult.FromJournal(
+                resolvedStatus,
+                true,
+                journal,
+                "UnhandledExecutionExceptionAfterResolvedJournal",
+                $"Journal 已收敛后出现未处理异常：{exception.GetType().Name}: {exception.Message}");
+        }
+
+        if (journal.Lifecycle != DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention)
+        {
+            var rollbackPhase = journal.Lifecycle == DesktopWorkspaceExecutionJournalLifecycle.RollingBack ||
+                journal.RollbackAttempts.Count > 0;
+            var requested = rollbackPhase
+                ? journal with
+                {
+                    Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention,
+                    RecoveryFailureType = "UnhandledExecutionException",
+                    RecoveryFailureMessage = $"{exception.GetType().Name}: {exception.Message}",
+                }
+                : journal with
+                {
+                    Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention,
+                    ForwardFailureType = "UnhandledExecutionException",
+                    ForwardFailureMessage = $"{exception.GetType().Name}: {exception.Message}",
+                };
+            var terminal = await TryTransitionAsync(journal, requested);
+            if (terminal is not null)
+                journal = terminal;
+        }
+
+        return DesktopWorkspaceExecutionRunResult.FromJournal(
+            DesktopWorkspaceExecutionRunStatus.NeedsAttention,
+            true,
+            journal,
+            "UnhandledExecutionException",
+            $"Writer boundary 之后发生未处理异常：{exception.GetType().Name}: {exception.Message}。已停止新的 Writer。 ");
     }
 
     private async Task<DesktopWorkspaceExecutionJournal?> PersistNeedsAttentionAsync(
