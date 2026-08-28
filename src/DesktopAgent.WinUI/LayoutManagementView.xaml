@@ -24,10 +24,10 @@
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
-                        <TextBlock Text="Workspace Library" FontSize="17" FontWeight="SemiBold" />
-                        <TextBlock x:Name="WorkspaceLibraryStatusText" Text="正在读取 Workspace Library…" FontSize="12" Opacity="0.58" TextWrapping="Wrap" />
+                        <TextBlock Text="工作区设计库" FontSize="17" FontWeight="SemiBold" />
+                        <TextBlock x:Name="WorkspaceLibraryStatusText" Text="正在读取工作区设计库…" FontSize="12" Opacity="0.58" TextWrapping="Wrap" />
                     </StackPanel>
-                    <Button x:Name="WorkspaceLibraryRefreshButton" Grid.Column="1" Content="↻" Width="38" ToolTipService.ToolTip="刷新 Workspace Blueprint Library" Click="RefreshWorkspaceLibrary_Click" />
+                    <Button x:Name="WorkspaceLibraryRefreshButton" Grid.Column="1" Content="↻" Width="38" ToolTipService.ToolTip="刷新工作区设计库" Click="RefreshWorkspaceLibrary_Click" />
                 </Grid>
                 <Grid Grid.Row="1">
                     <TextBlock x:Name="WorkspaceLibraryEmptyText" Text="正在读取…" FontSize="12" Opacity="0.52" VerticalAlignment="Center" />
@@ -117,9 +117,9 @@
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <Button Content="← 返回 Workspace Library" Click="WorkspaceDetailBack_Click" VerticalAlignment="Center" />
+                    <Button Content="← 返回工作区设计库" Click="WorkspaceDetailBack_Click" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="1" Spacing="2">
-                        <TextBlock x:Name="WorkspaceDetailTitleText" Text="Workspace" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="WorkspaceDetailTitleText" Text="工作区" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                         <TextBlock x:Name="WorkspaceDetailMetaText" Text="只读设计资产" FontSize="12" Opacity="0.56" />
                     </StackPanel>
                     <Border Grid.Column="2" Padding="10,5" CornerRadius="10" Background="{ThemeResource LayerFillColorDefaultBrush}" VerticalAlignment="Center">
@@ -134,7 +134,7 @@
                         <ScrollViewer VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
                             <StackPanel Spacing="16">
                                 <StackPanel Spacing="4">
-                                    <TextBlock x:Name="WorkspaceDetailRevisionText" Text="Blueprint" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="WorkspaceDetailRevisionText" Text="设计版本" FontSize="17" FontWeight="SemiBold" />
                                     <TextBlock x:Name="WorkspaceDetailSummaryText" Text="设计摘要" FontSize="13" Opacity="0.72" TextWrapping="Wrap" />
                                 </StackPanel>
 
@@ -144,16 +144,16 @@
                                 </StackPanel>
 
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="Zones" FontSize="14" FontWeight="SemiBold" />
+                                    <TextBlock Text="分区" FontSize="14" FontWeight="SemiBold" />
                                     <StackPanel x:Name="WorkspaceDetailZonesPanel" Spacing="5" />
                                 </StackPanel>
 
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="Reserved Regions" FontSize="14" FontWeight="SemiBold" />
+                                    <TextBlock Text="保留区域" FontSize="14" FontWeight="SemiBold" />
                                     <StackPanel x:Name="WorkspaceDetailReservedPanel" Spacing="5" />
                                 </StackPanel>
 
-                                <Expander Header="Category → Zone" IsExpanded="False">
+                                <Expander Header="分类 → 分区" IsExpanded="False">
                                     <StackPanel x:Name="WorkspaceDetailCategoryRulesPanel" Padding="0,8,0,0" Spacing="5" />
                                 </Expander>
 
@@ -162,7 +162,7 @@
                                     <TextBlock x:Name="WorkspaceDetailRelationsText" Text="无显式硬关系" FontSize="12" Opacity="0.68" TextWrapping="Wrap" />
                                 </StackPanel>
 
-                                <Expander Header="Item Overrides" IsExpanded="False">
+                                <Expander Header="项目例外" IsExpanded="False">
                                     <StackPanel Padding="0,8,0,0" Spacing="6">
                                         <TextBlock x:Name="WorkspaceDetailOverridesSummaryText" FontSize="12" Opacity="0.68" TextWrapping="Wrap" />
                                         <StackPanel x:Name="WorkspaceDetailOverridesPanel" Spacing="5" />
@@ -170,7 +170,7 @@
                                 </Expander>
 
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="来源用户意图" FontSize="14" FontWeight="SemiBold" />
+                                    <TextBlock Text="来源用户要求" FontSize="14" FontWeight="SemiBold" />
                                     <TextBlock x:Name="WorkspaceDetailSourceIntentText" FontSize="12" Opacity="0.68" TextWrapping="Wrap" />
                                 </StackPanel>
                             </StackPanel>
@@ -182,7 +182,7 @@
                             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                             <StackPanel Spacing="2">
                                 <TextBlock Text="版本历史" FontSize="16" FontWeight="SemiBold" />
-                                <TextBlock Text="选择一个 revision 查看当时的设计。历史版本只读。" FontSize="11" Opacity="0.55" TextWrapping="Wrap" />
+                                <TextBlock Text="选择一个设计版本查看当时的方案。历史版本只读。" FontSize="11" Opacity="0.55" TextWrapping="Wrap" />
                             </StackPanel>
                             <ListView x:Name="WorkspaceRevisionList" Grid.Row="1" MinHeight="0" SelectionMode="Single" SelectionChanged="WorkspaceRevisionList_SelectionChanged">
                                 <ListView.ItemTemplate>
