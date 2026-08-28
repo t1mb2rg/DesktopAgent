@@ -150,8 +150,6 @@ public sealed partial class LayoutManagementView
         {
             Padding = new Thickness(12),
             CornerRadius = new CornerRadius(10),
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[
-                "LayerFillColorDefaultBrush"],
             Child = panel,
         };
     }
