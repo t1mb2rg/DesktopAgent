@@ -39,6 +39,7 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderRepairTes
 
         Assert.Equal(IntelligenceProviderStatus.Success, result.Status);
         Assert.NotNull(result.Draft);
+        Assert.Equal("LOCAL-SENSITIVE-STABLE-ID", Assert.Single(result.Draft!.Assignments).StableId);
         Assert.Equal(2, calls);
 
         using var secondRequest = JsonDocument.Parse(bodies[1]);
@@ -127,7 +128,15 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderRepairTes
             { "key": "dev", "name": "开发", "description": "开发工具" }
           ],
           "zones": [],
-          "assignments": [],
+          "assignments": [
+            {
+              "item_ref": "item-0001",
+              "category_key": "dev",
+              "zone_key": null,
+              "confidence": 0.9,
+              "reason": "开发工具"
+            }
+          ],
           "questions": []
         }
         """;
