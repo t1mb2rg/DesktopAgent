@@ -29,6 +29,86 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
     }
 
     [Fact]
+    public void SuccessfulWorkspacePreview_PersistsWholeImmutableRevisionHistoryAfterPreviewFormation()
+    {
+        var root = FindRepositoryRoot();
+        var service = Read(root, "src/DesktopAgent.WinUI/AiDesktopWorkspacePlanningService.cs");
+        var loop = Read(root, "src/DesktopAgent.Application/DesktopLayouts/Workspaces/DesktopWorkspaceDesignLoopCoordinator.cs");
+
+        var previewIndex = service.IndexOf("DesktopWorkspaceFrozenPreviewFactory.Create", StringComparison.Ordinal);
+        var persistCallIndex = service.IndexOf("await PersistSuccessfulBlueprintAsync(", StringComparison.Ordinal);
+        Assert.True(previewIndex >= 0);
+        Assert.True(persistCallIndex > previewIndex);
+
+        Assert.Contains("loop.BlueprintRevisions", service, StringComparison.Ordinal);
+        Assert.Contains("preparation.Request.UserGuidance", service, StringComparison.Ordinal);
+        Assert.Contains("SqliteDesktopWorkspaceBlueprintStore", service, StringComparison.Ordinal);
+        Assert.Contains("store.CreateAsync", service, StringComparison.Ordinal);
+        Assert.Contains("store.AppendRevisionAsync", service, StringComparison.Ordinal);
+        Assert.Contains("PersistenceWarning", service, StringComparison.Ordinal);
+
+        Assert.Contains("BlueprintRevisions", loop, StringComparison.Ordinal);
+        Assert.Contains("revisionHistory.Add(blueprint)", loop, StringComparison.Ordinal);
+        Assert.Contains("ValidateSuccessfulRevisionHistory", loop, StringComparison.Ordinal);
+        Assert.Contains("revision.Revision != expectedRevision", loop, StringComparison.Ordinal);
+        Assert.Contains("revision.ParentRevision != expectedParent", loop, StringComparison.Ordinal);
+
+        var persistenceStart = service.IndexOf(
+            "private static async Task PersistSuccessfulBlueprintAsync",
+            StringComparison.Ordinal);
+        var persistenceEnd = service.IndexOf(
+            "private static string BuildAssetName",
+            persistenceStart,
+            StringComparison.Ordinal);
+        Assert.True(persistenceStart >= 0);
+        Assert.True(persistenceEnd > persistenceStart);
+        var persistenceSection = service[persistenceStart..persistenceEnd];
+
+        foreach (var forbidden in new[]
+                 {
+                     "ExactPlan",
+                     "FrozenPreview",
+                     "Confirmation",
+                     "Writer",
+                 })
+        {
+            Assert.DoesNotContain(forbidden, persistenceSection, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void LayoutSurface_HydratesReadOnlyWorkspaceLibraryWithoutRestoringExecutionAuthority()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.xaml");
+        var library = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceLibrary.cs");
+
+        Assert.Contains("Workspace Library", xaml, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceBlueprintList", xaml, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceLibrarySection_Loaded", xaml, StringComparison.Ordinal);
+        Assert.Contains("RefreshWorkspaceLibrary_Click", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("SqliteDesktopWorkspaceBlueprintStore", library, StringComparison.Ordinal);
+        Assert.Contains("ListAsync", library, StringComparison.Ordinal);
+        Assert.Contains("GetCurrentRevisionAsync", library, StringComparison.Ordinal);
+        Assert.Contains("Blueprint v", library, StringComparison.Ordinal);
+        Assert.Contains("只读设计资产", library, StringComparison.Ordinal);
+
+        foreach (var forbidden in new[]
+                 {
+                     "DesktopWorkspaceFrozenPreview",
+                     "CompiledWorkspacePlan",
+                     "ApplyToDesktopButton",
+                     "DesktopShellIconPositionWriter",
+                     "IDesktopIconPositionWriter",
+                     "WriterCommand",
+                 })
+        {
+            Assert.DoesNotContain(forbidden, library, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void MultiDisplayImportButton_InvokesNewWorkspacePreviewPath_WhileLegacyPathRemainsAvailable()
     {
         var root = FindRepositoryRoot();
