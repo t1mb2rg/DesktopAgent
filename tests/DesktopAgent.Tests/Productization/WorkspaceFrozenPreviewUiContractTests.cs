@@ -30,7 +30,7 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
     }
 
     [Fact]
-    public void WorkspaceFrozenPreviewUi_ApplyTicketOpensOnlyAfterSuccessfulProductLoad_AndIsOneShot()
+    public void WorkspaceFrozenPreviewUi_ApplyTicketOpensOnlyAfterSuccessfulProductLoad_AndIsBoundToPreviewIdentity()
     {
         var root = FindRepositoryRoot();
         var mainWindow = File.ReadAllText(Path.Combine(
@@ -52,10 +52,12 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
         Assert.Contains("if (_layoutManagementView.TryLoadAiWorkspaceFrozenPreview(preview))", mainWindow, StringComparison.Ordinal);
         Assert.Contains("EnableWorkspaceFrozenPreviewApply();", mainWindow, StringComparison.Ordinal);
 
-        Assert.Contains("_workspaceFrozenPreviewApplyAvailable", apply, StringComparison.Ordinal);
+        Assert.Contains("_workspaceFrozenPreviewApplyPreviewId", apply, StringComparison.Ordinal);
+        Assert.Contains("preview.PreviewId", apply, StringComparison.Ordinal);
+        Assert.Contains("HasWorkspaceFrozenPreviewApplyTicket", apply, StringComparison.Ordinal);
         Assert.Contains("ApplyToDesktopButton.Content = \"应用这个布局\"", apply, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceApplyConfirmation.Create(preview)", apply, StringComparison.Ordinal);
-        Assert.Contains("_workspaceFrozenPreviewApplyAvailable = false", apply, StringComparison.Ordinal);
+        Assert.Contains("_workspaceFrozenPreviewApplyPreviewId = null", apply, StringComparison.Ordinal);
         Assert.Contains("WorkspaceApplyService.ApplyAsync(confirmation)", apply, StringComparison.Ordinal);
         Assert.Contains("确认并应用", apply, StringComparison.Ordinal);
         Assert.Contains("不会静默重新设计或重新编译另一份布局", apply, StringComparison.Ordinal);
