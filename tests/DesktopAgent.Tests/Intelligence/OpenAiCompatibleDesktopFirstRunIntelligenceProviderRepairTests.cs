@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.Intelligence;
 
 namespace DesktopAgent.Tests.Intelligence;
 
