@@ -8,7 +8,7 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 8;
+    internal const int CurrentVersion = 9;
 
     public static void Initialize(SqliteConnection connection, CancellationToken cancellationToken)
     {
@@ -33,6 +33,7 @@ internal static class SqliteDesktopAgentSchema
             EnsureV6Schema(connection, tx);
             EnsureV7Schema(connection, tx);
             EnsureV8Schema(connection, tx);
+            EnsureV9Schema(connection, tx);
 
             if (version < CurrentVersion)
             {
@@ -419,6 +420,80 @@ internal static class SqliteDesktopAgentSchema
             CREATE INDEX IF NOT EXISTS idx_workspace_blueprint_revisions_created
                 ON workspace_blueprint_revisions
                     (blueprint_id ASC, revision DESC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV9Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS workspace_execution_journals (
+                session_id                  TEXT PRIMARY KEY NOT NULL,
+                safety_snapshot_id          TEXT NOT NULL,
+                blueprint_id                TEXT NOT NULL CHECK(TRIM(blueprint_id) != ''),
+                blueprint_revision          INTEGER NOT NULL CHECK(blueprint_revision > 0),
+                certificate_fingerprint     TEXT NOT NULL CHECK(TRIM(certificate_fingerprint) != ''),
+                started_at_utc              TEXT NOT NULL,
+                lifecycle                   INTEGER NOT NULL CHECK(lifecycle IN (0,1,2,3,4,5)),
+                preview_fingerprint         TEXT NOT NULL CHECK(TRIM(preview_fingerprint) != ''),
+                exact_plan_fingerprint      TEXT NOT NULL CHECK(TRIM(exact_plan_fingerprint) != ''),
+                execution_plan_fingerprint  TEXT NOT NULL CHECK(TRIM(execution_plan_fingerprint) != ''),
+                execution_plan_json         TEXT NOT NULL CHECK(TRIM(execution_plan_json) != ''),
+                plan_payload_format_version INTEGER NOT NULL CHECK(plan_payload_format_version > 0),
+                completed_forward_step_indexes_json         TEXT NOT NULL,
+                completed_rollback_source_step_indexes_json TEXT NOT NULL,
+                last_failed_step_index       INTEGER NULL CHECK(last_failed_step_index IS NULL OR last_failed_step_index >= 0),
+                forward_failure_type         TEXT NULL,
+                forward_failure_message      TEXT NULL,
+                recovery_failure_type        TEXT NULL,
+                recovery_failure_message     TEXT NULL,
+                revision                     INTEGER NOT NULL CHECK(revision > 0),
+                updated_at_utc               TEXT NOT NULL,
+                forward_attempt_count        INTEGER NOT NULL CHECK(forward_attempt_count >= 0),
+                rollback_attempt_count       INTEGER NOT NULL CHECK(rollback_attempt_count >= 0),
+                FOREIGN KEY (safety_snapshot_id)
+                    REFERENCES desktop_layout_snapshots(snapshot_id)
+                    ON DELETE RESTRICT
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_execution_attempts (
+                session_id                     TEXT NOT NULL,
+                attempt_index                  INTEGER NOT NULL CHECK(attempt_index >= 0),
+                source_step_index              INTEGER NOT NULL CHECK(source_step_index >= 0),
+                phase                          INTEGER NOT NULL CHECK(phase IN (0,1)),
+                expected_stable_id             TEXT NOT NULL CHECK(expected_stable_id != ''),
+                expected_previous_display_ref  TEXT NOT NULL CHECK(TRIM(expected_previous_display_ref) != ''),
+                expected_previous_x            INTEGER NOT NULL,
+                expected_previous_y            INTEGER NOT NULL,
+                requested_display_ref          TEXT NOT NULL CHECK(TRIM(requested_display_ref) != ''),
+                requested_x                    INTEGER NOT NULL,
+                requested_y                    INTEGER NOT NULL,
+                reported_stable_id             TEXT NULL,
+                reported_previous_x            INTEGER NULL,
+                reported_previous_y            INTEGER NULL,
+                actual_x                       INTEGER NULL,
+                actual_y                       INTEGER NULL,
+                has_trusted_actual_position    INTEGER NOT NULL CHECK(has_trusted_actual_position IN (0,1)),
+                is_exact                       INTEGER NOT NULL CHECK(is_exact IN (0,1)),
+                outcome                        INTEGER NOT NULL CHECK(outcome IN (0,1,2,3,4)),
+                connection_method              INTEGER NULL,
+                exception_type                 TEXT NULL,
+                error_message                  TEXT NULL,
+                primary_path_exception_type    TEXT NULL,
+                primary_path_exception_msg     TEXT NULL,
+                PRIMARY KEY (session_id, attempt_index),
+                FOREIGN KEY (session_id)
+                    REFERENCES workspace_execution_journals(session_id)
+                    ON DELETE CASCADE,
+                CHECK((reported_previous_x IS NULL) = (reported_previous_y IS NULL)),
+                CHECK((actual_x IS NULL) = (actual_y IS NULL)),
+                CHECK(has_trusted_actual_position = CASE WHEN actual_x IS NULL THEN 0 ELSE 1 END)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workspace_execution_journals_lifecycle
+                ON workspace_execution_journals (lifecycle ASC, started_at_utc ASC, session_id ASC);
         ";
         cmd.ExecuteNonQuery();
     }
