@@ -113,8 +113,25 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
         Assert.Contains("_executeAsync(confirmation, CancellationToken.None)", service, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void WorkspaceApply_AfterTicketConsumption_KeepsFrozenPreviewInReadOnlyReviewMode()
+    {
+        var root = FindRepositoryRoot();
+        var ui = Read(root,
+            "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceApply.cs");
+
+        Assert.Contains("PreviewLayoutButton.IsEnabled = false", ui, StringComparison.Ordinal);
+        Assert.Contains("Frozen Preview 仍然留作只读审阅", ui, StringComparison.Ordinal);
+        Assert.Contains("普通 legacy Preview 不得在这里重新点亮", ui, StringComparison.Ordinal);
+    }
+
     private static string Read(string root, params string[] parts)
-        => File.ReadAllText(Path.Combine([root, .. parts]));
+    {
+        var allParts = new string[parts.Length + 1];
+        allParts[0] = root;
+        Array.Copy(parts, 0, allParts, 1, parts.Length);
+        return File.ReadAllText(Path.Combine(allParts));
+    }
 
     private static string FindRepositoryRoot()
     {
