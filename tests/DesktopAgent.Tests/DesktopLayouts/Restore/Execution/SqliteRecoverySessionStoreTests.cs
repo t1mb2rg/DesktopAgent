@@ -140,7 +140,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════
-    //  A. 全新数据库初始化为 v7
+    //  A. 全新数据库初始化为 v8
     // ═══════════════════════════════════════════════════
 
     [Fact]
@@ -155,11 +155,11 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task FreshInit_UserVersion7()
+    public async Task FreshInit_UserVersion8()
     {
         var store = CreateStore();
         await store.InitializeAsync();
-        Assert.Equal(7, ReadUserVersion());
+        Assert.Equal(8, ReadUserVersion());
     }
 
     [Fact]
@@ -171,7 +171,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════
-    //  C. v7 重复 Init 幂等
+    //  C. v8 重复 Init 幂等
     // ═══════════════════════════════════════════════════
 
     [Fact]
@@ -181,7 +181,7 @@ public sealed class SqliteRecoverySessionStoreTests : IDisposable
         await store.InitializeAsync();
         await store.InitializeAsync();
         await store.InitializeAsync();
-        Assert.Equal(7, ReadUserVersion());
+        Assert.Equal(8, ReadUserVersion());
     }
 
     [Fact]
