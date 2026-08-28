@@ -25,15 +25,33 @@ public sealed partial class LayoutManagementView
     {
         _workspaceFrozenPreviewApplyAvailable =
             _workspaceFrozenPreview is not null && _workspaceFrozenPreview.MoveCount > 0;
-        ApplyToDesktopButton.Content = "应用这个布局";
-        ApplyToDesktopButton.IsEnabled = _workspaceFrozenPreviewApplyAvailable && !_directApplyInProgress;
+        RefreshApplyButtonFromCurrentEvidence();
     }
 
     private void DisableWorkspaceFrozenPreviewApplyEvidence()
     {
         _workspaceFrozenPreviewApplyAvailable = false;
-        ApplyToDesktopButton.IsEnabled = false;
+        RefreshApplyButtonFromCurrentEvidence();
+    }
+
+    private void RefreshApplyButtonFromCurrentEvidence()
+    {
+        if (_workspaceFrozenPreview is not null)
+        {
+            ApplyToDesktopButton.Content = "应用这个布局";
+            ApplyToDesktopButton.IsEnabled =
+                !_directApplyInProgress &&
+                _workspaceFrozenPreviewApplyAvailable &&
+                _workspaceFrozenPreview.MoveCount > 0;
+            return;
+        }
+
         ApplyToDesktopButton.Content = "应用到桌面";
+        ApplyToDesktopButton.IsEnabled =
+            !_directApplyInProgress &&
+            _latestPreview is not null &&
+            _latestPreview.Plan.IsComplete &&
+            _latestPreview.Plan.MoveRequiredCount > 0;
     }
 
     private async Task ApplyWorkspaceFrozenPreviewAsync()
@@ -41,7 +59,7 @@ public sealed partial class LayoutManagementView
         var preview = _workspaceFrozenPreview;
         if (preview is null || !_workspaceFrozenPreviewApplyAvailable)
         {
-            ApplyToDesktopButton.IsEnabled = false;
+            RefreshApplyButtonFromCurrentEvidence();
             ShowInfo(
                 "请重新生成精确预览",
                 "Workspace Apply 只接受当前会话里尚未消费的 Frozen Preview。Writer 未启动。",
@@ -52,7 +70,7 @@ public sealed partial class LayoutManagementView
         if (preview.MoveCount == 0)
         {
             _workspaceFrozenPreviewApplyAvailable = false;
-            ApplyToDesktopButton.IsEnabled = false;
+            RefreshApplyButtonFromCurrentEvidence();
             ShowInfo("桌面已经就位", "这份精确预览没有需要移动的项目。", InfoBarSeverity.Success);
             return;
         }
@@ -101,7 +119,7 @@ public sealed partial class LayoutManagementView
         var confirmation = DesktopWorkspaceApplyConfirmation.Create(preview);
         _workspaceFrozenPreviewApplyAvailable = false;
         _directApplyInProgress = true;
-        ApplyToDesktopButton.IsEnabled = false;
+        RefreshApplyButtonFromCurrentEvidence();
         ReconcileRecoveryButton.IsEnabled = false;
         PreviewLayoutButton.IsEnabled = false;
         LayoutCanvasStatusText.Text = "正在检查当前桌面并准备安全执行…";
@@ -132,7 +150,7 @@ public sealed partial class LayoutManagementView
             _directApplyInProgress = false;
             ReconcileRecoveryButton.IsEnabled = true;
             PreviewLayoutButton.IsEnabled = true;
-            ApplyToDesktopButton.IsEnabled = false;
+            RefreshApplyButtonFromCurrentEvidence();
         }
     }
 
