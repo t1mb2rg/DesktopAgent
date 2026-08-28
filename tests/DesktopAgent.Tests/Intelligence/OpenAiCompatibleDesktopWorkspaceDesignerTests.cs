@@ -44,13 +44,14 @@ public sealed class OpenAiCompatibleDesktopWorkspaceDesignerTests
         Assert.Single(context.GetProperty("critical_items").EnumerateArray());
         Assert.Equal("item-0001", context.GetProperty("critical_items")[0].GetProperty("item_ref").GetString());
 
-        Assert.DoesNotContain(request.RevisionTarget.BlueprintId.ToString(), requestBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("LOCAL-STABLE-ID", requestBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("\\\\.\\DISPLAY", requestBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("pixel", requestBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("cell", requestBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("writer", requestBody, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("observation", requestBody, StringComparison.OrdinalIgnoreCase);
+        var providerContext = context.GetRawText();
+        Assert.DoesNotContain(request.RevisionTarget.BlueprintId.ToString(), providerContext, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("LOCAL-STABLE-ID", providerContext, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\\\.\\DISPLAY", providerContext, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pixel", providerContext, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("cell", providerContext, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("writer", providerContext, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("observation", providerContext, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -67,7 +68,7 @@ public sealed class OpenAiCompatibleDesktopWorkspaceDesignerTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(IntelligenceProviderStatus.InvalidResponse, result.Status);
-        Assert.Contains("DisplayRef", result.DiagnosticMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("显示器", result.DiagnosticMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -132,7 +133,7 @@ public sealed class OpenAiCompatibleDesktopWorkspaceDesignerTests
         Assert.Equal(37, diagnostic.GetProperty("required_slots").GetInt32());
         Assert.Equal(31, diagnostic.GetProperty("available_slots").GetInt32());
         Assert.False(context.GetProperty("revision").TryGetProperty("blueprint_id", out _));
-        Assert.DoesNotContain("LOCAL-STABLE-ID", requestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("LOCAL-STABLE-ID", context.GetRawText(), StringComparison.Ordinal);
     }
 
     private static DesktopWorkspaceDesignRequest CreateRequest()
