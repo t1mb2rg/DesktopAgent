@@ -61,6 +61,52 @@ public sealed class SqliteDesktopWorkspaceExecutionJournalStoreTests : IDisposab
     }
 
     [Fact]
+    public async Task Save_UntrustedActualPositionEvidence_IsPreservedWithoutBecomingCompletedStep()
+    {
+        var store = await CreateStoreWithSnapshotAsync();
+        var initial = CreatePreparedJournal();
+        var step = initial.ExecutionPlan.Steps[0];
+        var evidence = new DesktopWorkspaceExecutionAttemptEvidence(
+            0,
+            step.StepIndex,
+            DesktopWorkspaceExecutionAttemptPhase.Forward,
+            step.StableId,
+            step.FromDisplayRef,
+            step.FromPixelPosition,
+            step.ToDisplayRef,
+            step.ToPixelPosition,
+            reportedStableId: "unexpected-stable-id",
+            reportedPreviousPixelPosition: step.FromPixelPosition,
+            actualPixelPosition: new PixelPoint(step.ToPixelPosition.X + 1, step.ToPixelPosition.Y),
+            hasTrustedActualPosition: false,
+            isExact: false,
+            DesktopWorkspaceExecutionAttemptOutcome.StableIdMismatch,
+            ConnectionMethod.FindWindowSW,
+            null,
+            null,
+            null,
+            null);
+        var failedForward = initial with
+        {
+            Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.ForwardInProgress,
+            ForwardAttempts = [evidence],
+            CompletedForwardStepIndexes = [],
+            LastFailedStepIndex = 0,
+            ForwardFailureType = nameof(DesktopWorkspaceExecutionAttemptOutcome.StableIdMismatch),
+            ForwardFailureMessage = "writer stable id mismatch",
+        };
+
+        await store.SaveAsync(failedForward);
+        var loaded = Assert.IsType<DesktopWorkspaceExecutionJournal>(
+            await store.GetAsync(initial.SessionId));
+
+        var loadedEvidence = Assert.Single(loaded.ForwardAttempts);
+        Assert.False(loadedEvidence.HasTrustedActualPosition);
+        Assert.Equal(evidence.ActualPixelPosition, loadedEvidence.ActualPixelPosition);
+        Assert.Empty(loaded.CompletedForwardStepIndexes);
+    }
+
+    [Fact]
     public async Task Update_ForwardProgress_IsCasProtected_AndCommittedLeavesUnresolvedList()
     {
         var store = await CreateStoreWithSnapshotAsync();
@@ -169,6 +215,29 @@ public sealed class SqliteDesktopWorkspaceExecutionJournalStoreTests : IDisposab
         }
 
         await Assert.ThrowsAsync<InvalidDataException>(() => store.GetAsync(journal.SessionId));
+    }
+
+    [Fact]
+    public async Task Get_TamperedPlanPayload_IsRejectedByEnvelopeHash()
+    {
+        var store = await CreateStoreWithSnapshotAsync();
+        var journal = CreatePreparedJournal();
+        await store.SaveAsync(journal);
+
+        using (var connection = OpenRawConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                UPDATE workspace_execution_journals
+                SET execution_plan_json = REPLACE(execution_plan_json, 'Alpha', 'Tampered Alpha')
+                WHERE session_id = @session_id;
+            ";
+            command.Parameters.AddWithValue("@session_id", journal.SessionId.ToString("D"));
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => store.GetAsync(journal.SessionId));
+        Assert.Contains("完整性", error.Message, StringComparison.Ordinal);
     }
 
     private async Task<SqliteDesktopWorkspaceExecutionJournalStore> CreateStoreWithSnapshotAsync()
