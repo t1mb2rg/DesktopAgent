@@ -123,7 +123,7 @@ internal static class DesktopWorkspaceExecutionPlanSnapshotJsonSerializer
         string ExecutionPlanFingerprint,
         int MoveItemCount,
         bool UsesTemporaryStaging,
-        List<StepPayload?>? Steps);
+        List<StepPayload>? Steps);
 
     private sealed record StepPayload(
         int StepIndex,
