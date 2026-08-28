@@ -14,12 +14,14 @@ public sealed class WorkspaceApplyProductWiringContractTests
         Assert.Contains("ApplyWorkspaceFrozenPreviewAsync", directApply, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopLayoutDirectApplyPreparationService.CreateFromPreview(_workspaceFrozenPreview", directApply, StringComparison.Ordinal);
 
-        Assert.Contains("_workspaceFrozenPreviewApplyAvailable", workspaceApply, StringComparison.Ordinal);
+        Assert.Contains("_workspaceFrozenPreviewApplyPreviewId", workspaceApply, StringComparison.Ordinal);
+        Assert.Contains("HasWorkspaceFrozenPreviewApplyTicket", workspaceApply, StringComparison.Ordinal);
+        Assert.Contains("preview.PreviewId", workspaceApply, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceApplyConfirmation.Create(preview)", workspaceApply, StringComparison.Ordinal);
         Assert.Contains("Title = \"应用这个布局？\"", workspaceApply, StringComparison.Ordinal);
         Assert.Contains("PrimaryButtonText = \"确认并应用\"", workspaceApply, StringComparison.Ordinal);
         Assert.Contains("不会静默重新设计或重新编译另一份布局", workspaceApply, StringComparison.Ordinal);
-        Assert.Contains("_workspaceFrozenPreviewApplyAvailable = false", workspaceApply, StringComparison.Ordinal);
+        Assert.Contains("_workspaceFrozenPreviewApplyPreviewId = null", workspaceApply, StringComparison.Ordinal);
 
         Assert.Contains("if (_layoutManagementView.TryLoadAiWorkspaceFrozenPreview(preview))", mainWindow, StringComparison.Ordinal);
         Assert.Contains("EnableWorkspaceFrozenPreviewApply", mainWindow, StringComparison.Ordinal);
@@ -75,16 +77,22 @@ public sealed class WorkspaceApplyProductWiringContractTests
     }
 
     [Fact]
-    public void FrozenPreviewLifecycle_DestroysApplyAuthorityWhenPreviewIsClearedOrReplaced()
+    public void FrozenPreviewLifecycle_InvalidatesAuthorityByPreviewIdentityInsteadOfRendererMutation()
     {
         var root = FindRepositoryRoot();
-        var frozen = Read(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceFrozenPreview.cs");
+        var workspaceApply = Read(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceApply.cs");
         var replacement = Read(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.LogicalWorkspaceReplacement.cs");
         var previewGate = Read(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.PreviewGate.cs");
+        var frozen = Read(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceFrozenPreview.cs");
 
-        Assert.Contains("_workspaceFrozenPreviewApplyAvailable = false", frozen, StringComparison.Ordinal);
-        Assert.Contains("RefreshApplyButtonFromCurrentEvidence", frozen, StringComparison.Ordinal);
+        Assert.Contains("_workspaceFrozenPreviewApplyPreviewId", workspaceApply, StringComparison.Ordinal);
+        Assert.Contains("preview.PreviewId", workspaceApply, StringComparison.Ordinal);
         Assert.Contains("DisableWorkspaceFrozenPreviewApplyEvidence", replacement, StringComparison.Ordinal);
+        Assert.Contains("HasWorkspaceFrozenPreviewApplyTicket(_workspaceFrozenPreview)", previewGate, StringComparison.Ordinal);
+
+        // Renderer 只负责只读预览，不再持有/销毁产品 Apply capability。
+        Assert.DoesNotContain("_workspaceFrozenPreviewApplyPreviewId", frozen, StringComparison.Ordinal);
+        Assert.DoesNotContain("DisableWorkspaceFrozenPreviewApplyEvidence", frozen, StringComparison.Ordinal);
 
         Assert.Contains("if (_workspaceFrozenPreview is not null)", previewGate, StringComparison.Ordinal);
         Assert.Contains("RenderWorkspaceFrozenPreviewCanvas", previewGate, StringComparison.Ordinal);
