@@ -33,11 +33,11 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public async Task FreshDatabase_CreatesCompleteV7Schema()
+    public async Task FreshDatabase_CreatesCompleteV8Schema()
     {
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.Equal(8, ReadUserVersion(_dbPath));
 
         var expectedTables = new[]
         {
@@ -52,6 +52,9 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             "desktop_user_category_zone_preferences",
             "desktop_classification_evidence",
             "desktop_pending_actions",
+            "desktop_semantic_understandings",
+            "workspace_blueprints",
+            "workspace_blueprint_revisions",
         };
         foreach (var table in expectedTables)
             Assert.True(TableExists(_dbPath, table), $"缺少表 {table}");
@@ -65,13 +68,16 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             "idx_user_preferences_template_category",
             "idx_classification_evidence_observed_desc",
             "idx_pending_actions_created_at_utc",
+            "idx_semantic_understandings_created_desc",
+            "idx_workspace_blueprints_library",
+            "idx_workspace_blueprint_revisions_created",
         };
         foreach (var index in expectedIndexes)
             Assert.True(IndexExists(_dbPath, index), $"缺少索引 {index}");
     }
 
     [Fact]
-    public async Task EveryStore_UsesSharedV7Initializer_AndRepeatedInitIsIdempotent()
+    public async Task EveryStore_UsesSharedV8Initializer_AndRepeatedInitIsIdempotent()
     {
         var paths = Enumerable.Range(0, 6)
             .Select(index => Path.Combine(_tempDir, $"store-{index}.db"))
@@ -103,10 +109,13 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         foreach (var path in paths)
         {
-            Assert.Equal(7, ReadUserVersion(path));
+            Assert.Equal(8, ReadUserVersion(path));
             Assert.True(TableExists(path, "desktop_classification_rules"));
             Assert.True(TableExists(path, "desktop_classification_evidence"));
             Assert.True(TableExists(path, "desktop_pending_actions"));
+            Assert.True(TableExists(path, "desktop_semantic_understandings"));
+            Assert.True(TableExists(path, "workspace_blueprints"));
+            Assert.True(TableExists(path, "workspace_blueprint_revisions"));
         }
     }
 
@@ -132,7 +141,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.Equal(8, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -179,7 +188,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutTemplateStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.Equal(8, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -233,7 +242,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutIconRuleStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.Equal(8, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -264,6 +273,9 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
                 VALUES
                     ('00000000-0000-0000-0000-000000000051',
                      '2026-08-10T00:00:00.0000000+00:00', NULL, 1, 1, 0);
+                DROP TABLE workspace_blueprint_revisions;
+                DROP TABLE workspace_blueprints;
+                DROP TABLE desktop_semantic_understandings;
                 DROP TABLE desktop_pending_actions;
                 DROP TABLE desktop_classification_evidence;
                 DROP TABLE desktop_user_category_zone_preferences;
@@ -276,14 +288,18 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         Assert.Equal(5, ReadUserVersion(_dbPath));
         Assert.False(TableExists(_dbPath, "desktop_classification_rules"));
         Assert.False(TableExists(_dbPath, "desktop_pending_actions"));
+        Assert.False(TableExists(_dbPath, "desktop_semantic_understandings"));
 
         await new SqliteDesktopClassificationRuleStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.Equal(8, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "desktop_classification_rules"));
         Assert.True(TableExists(_dbPath, "desktop_user_category_zone_preferences"));
         Assert.True(TableExists(_dbPath, "desktop_classification_evidence"));
         Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
+        Assert.True(TableExists(_dbPath, "desktop_semantic_understandings"));
+        Assert.True(TableExists(_dbPath, "workspace_blueprints"));
+        Assert.True(TableExists(_dbPath, "workspace_blueprint_revisions"));
 
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
@@ -313,6 +329,9 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
                     ('00000000-0000-0000-0000-000000000071',
                      'keep-me', 'desktop:keep', 'Course',
                      NULL, NULL, 0, 0, 0, 1);
+                DROP TABLE workspace_blueprint_revisions;
+                DROP TABLE workspace_blueprints;
+                DROP TABLE desktop_semantic_understandings;
                 DROP TABLE desktop_pending_actions;
                 PRAGMA user_version = 6;
             ";
@@ -321,8 +340,10 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopPendingActionStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.Equal(8, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
+        Assert.True(TableExists(_dbPath, "desktop_semantic_understandings"));
+        Assert.True(TableExists(_dbPath, "workspace_blueprints"));
 
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
@@ -332,6 +353,51 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             WHERE rule_id = '00000000-0000-0000-0000-000000000071';
         ";
         Assert.Equal("keep-me", (string)select.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task V7Upgrade_CreatesWorkspaceKnowledgeTablesWithoutRewritingExistingData()
+    {
+        var bootstrap = new SqliteDesktopLayoutSnapshotStore(_dbPath);
+        await bootstrap.InitializeAsync();
+
+        using (var connection = OpenRawConnection(_dbPath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                INSERT INTO desktop_layout_snapshots
+                    (snapshot_id, created_at_utc, target_monitor_device_name,
+                     connection_method, format_version, icon_count)
+                VALUES
+                    ('00000000-0000-0000-0000-000000000081',
+                     '2026-08-28T04:00:00.0000000+00:00', NULL, 1, 1, 0);
+                DROP TABLE workspace_blueprint_revisions;
+                DROP TABLE workspace_blueprints;
+                DROP TABLE desktop_semantic_understandings;
+                PRAGMA user_version = 7;
+            ";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Equal(7, ReadUserVersion(_dbPath));
+        Assert.False(TableExists(_dbPath, "desktop_semantic_understandings"));
+        Assert.False(TableExists(_dbPath, "workspace_blueprints"));
+
+        await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
+
+        Assert.Equal(8, ReadUserVersion(_dbPath));
+        Assert.True(TableExists(_dbPath, "desktop_semantic_understandings"));
+        Assert.True(TableExists(_dbPath, "workspace_blueprints"));
+        Assert.True(TableExists(_dbPath, "workspace_blueprint_revisions"));
+
+        using var upgraded = OpenRawConnection(_dbPath);
+        using var select = upgraded.CreateCommand();
+        select.CommandText = @"
+            SELECT COUNT(*)
+            FROM desktop_layout_snapshots
+            WHERE snapshot_id = '00000000-0000-0000-0000-000000000081';
+        ";
+        Assert.Equal(1L, (long)select.ExecuteScalar()!);
     }
 
     [Fact]
@@ -349,11 +415,13 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
                 .InitializeAsync().GetAwaiter().GetResult());
 
         Assert.Contains("99", ex.Message);
-        Assert.Contains("7", ex.Message);
+        Assert.Contains("8", ex.Message);
         Assert.Equal(99, ReadUserVersion(_dbPath));
         Assert.False(TableExists(_dbPath, "desktop_layout_snapshots"));
         Assert.False(TableExists(_dbPath, "desktop_classification_rules"));
         Assert.False(TableExists(_dbPath, "desktop_pending_actions"));
+        Assert.False(TableExists(_dbPath, "desktop_semantic_understandings"));
+        Assert.False(TableExists(_dbPath, "workspace_blueprints"));
     }
 
     [Fact]
@@ -410,6 +478,21 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
                      2, NULL, NULL);
             ";
             Assert.Throws<SqliteException>(() => invalidEvidence.ExecuteNonQuery());
+        }
+
+        using (var orphanRevision = connection.CreateCommand())
+        {
+            orphanRevision.CommandText = @"
+                INSERT INTO workspace_blueprint_revisions
+                    (blueprint_id, revision, parent_revision, created_at_utc,
+                     source_understanding_id, source_user_intent, design_summary,
+                     blueprint_schema_version, payload_format_version, payload_json)
+                VALUES
+                    ('00000000-0000-0000-0000-000000000065', 1, NULL,
+                     '2026-08-28T04:00:00.0000000+00:00', NULL, NULL,
+                     'orphan', 1, 1, '{}');
+            ";
+            Assert.Throws<SqliteException>(() => orphanRevision.ExecuteNonQuery());
         }
     }
 
