@@ -163,7 +163,7 @@ internal sealed class AiDesktopUnderstandingService
         {
             throw;
         }
-        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException)
+        catch (Exception ex)
         {
             return new AiPersistedUnderstandingProductState(
                 AiPersistedUnderstandingRestoreStatus.PersistenceFailure,
@@ -286,7 +286,7 @@ internal sealed class AiDesktopUnderstandingService
         {
             throw;
         }
-        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException)
+        catch (Exception ex)
         {
             persistenceWarning = $"理解已建立，但未能写入长期记忆：{ex.Message}";
         }
