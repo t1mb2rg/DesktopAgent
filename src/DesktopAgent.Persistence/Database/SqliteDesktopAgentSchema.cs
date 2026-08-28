@@ -8,7 +8,7 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 7;
+    internal const int CurrentVersion = 8;
 
     public static void Initialize(SqliteConnection connection, CancellationToken cancellationToken)
     {
@@ -32,6 +32,7 @@ internal static class SqliteDesktopAgentSchema
             EnsureV5Schema(connection, tx);
             EnsureV6Schema(connection, tx);
             EnsureV7Schema(connection, tx);
+            EnsureV8Schema(connection, tx);
 
             if (version < CurrentVersion)
             {
@@ -356,6 +357,68 @@ internal static class SqliteDesktopAgentSchema
 
             CREATE INDEX IF NOT EXISTS idx_pending_actions_created_at_utc
                 ON desktop_pending_actions (created_at_utc ASC, pending_action_id ASC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV8Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS desktop_semantic_understandings (
+                understanding_id          TEXT PRIMARY KEY NOT NULL,
+                created_at_utc            TEXT NOT NULL,
+                source_observation_id     TEXT NOT NULL CHECK(TRIM(source_observation_id) != ''),
+                source_state_fingerprint  TEXT NOT NULL CHECK(TRIM(source_state_fingerprint) != ''),
+                source_item_count         INTEGER NOT NULL CHECK(source_item_count > 0),
+                payload_format_version    INTEGER NOT NULL CHECK(payload_format_version > 0),
+                payload_json              TEXT NOT NULL CHECK(TRIM(payload_json) != '')
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_semantic_understandings_created_desc
+                ON desktop_semantic_understandings
+                    (created_at_utc DESC, understanding_id DESC);
+
+            CREATE TABLE IF NOT EXISTS workspace_blueprints (
+                blueprint_id       TEXT PRIMARY KEY NOT NULL,
+                name               TEXT NOT NULL CHECK(TRIM(name) != ''),
+                created_at_utc     TEXT NOT NULL,
+                updated_at_utc     TEXT NOT NULL,
+                current_revision   INTEGER NOT NULL CHECK(current_revision > 0),
+                is_archived        INTEGER NOT NULL CHECK(is_archived IN (0,1)),
+                CHECK(updated_at_utc >= created_at_utc)
+            );
+
+            CREATE TABLE IF NOT EXISTS workspace_blueprint_revisions (
+                blueprint_id            TEXT NOT NULL,
+                revision                INTEGER NOT NULL CHECK(revision > 0),
+                parent_revision         INTEGER NULL CHECK(parent_revision IS NULL OR parent_revision > 0),
+                created_at_utc          TEXT NOT NULL,
+                source_understanding_id TEXT NULL,
+                source_user_intent      TEXT NULL,
+                design_summary          TEXT NOT NULL CHECK(TRIM(design_summary) != ''),
+                blueprint_schema_version INTEGER NOT NULL CHECK(blueprint_schema_version > 0),
+                payload_format_version  INTEGER NOT NULL CHECK(payload_format_version > 0),
+                payload_json            TEXT NOT NULL CHECK(TRIM(payload_json) != ''),
+                PRIMARY KEY (blueprint_id, revision),
+                FOREIGN KEY (blueprint_id)
+                    REFERENCES workspace_blueprints(blueprint_id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (source_understanding_id)
+                    REFERENCES desktop_semantic_understandings(understanding_id)
+                    ON DELETE SET NULL,
+                CHECK(parent_revision IS NULL OR parent_revision < revision),
+                CHECK(source_user_intent IS NULL OR TRIM(source_user_intent) != '')
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workspace_blueprints_library
+                ON workspace_blueprints
+                    (is_archived ASC, updated_at_utc DESC, name COLLATE BINARY ASC, blueprint_id ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_workspace_blueprint_revisions_created
+                ON workspace_blueprint_revisions
+                    (blueprint_id ASC, revision DESC);
         ";
         cmd.ExecuteNonQuery();
     }
