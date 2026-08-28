@@ -29,7 +29,8 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProvider : IDeskt
     private const string SystemPrompt = """
 You are the first-run desktop understanding component of DesktopAgent.
 Your job is to understand how this user wants their native Windows desktop organized.
-Be proactive: infer useful semantic categories, propose logical zones, assign items when reasonably confident, and ask at most 3 concise clarifying questions when user intent is still ambiguous.
+Be proactive: infer useful semantic categories, propose logical zones, and assign every supplied item exactly once. Ask at most 3 concise clarifying questions when user intent is still ambiguous.
+If an item's meaning is genuinely uncertain, still assign it to a bounded uncertainty/inbox-style category with appropriately lower confidence, and optionally ask a clarifying question. Never leave a supplied item unassigned.
 
 Return JSON only. Never output physical pixel coordinates, normalized rectangles, shell commands, file move/delete commands, scripts, or executable actions.
 Only use the temporary item_ref and existing_zone_ref values supplied in this request. They are opaque request-local references.
@@ -42,7 +43,7 @@ Hard v1 contract limits:
 - desktop_summary must be present, non-empty, and no longer than 4096 characters.
 - categories must be present with 1 to 16 entries.
 - zones must be present with 0 to 16 entries. Use [] when none are needed.
-- assignments must be present and cannot contain more entries than the supplied items. Use [] only when no assignment is justified.
+- assignments must be present with exactly one entry for every supplied item_ref. Every supplied item_ref must appear exactly once; duplicates and omissions are invalid.
 - questions must be present with 0 to 3 entries. Use [] when none are needed.
 - Keep keys, names, descriptions, reasons and questions concise. Do not create one category or zone per item.
 
@@ -82,7 +83,7 @@ Return this semantic shape:
   ]
 }
 
-Keys must be unique inside their collection. Category and zone references must refer to objects returned in the same response. It is valid to leave uncertain items unassigned and ask the user instead.
+Keys must be unique inside their collection. Category and zone references must refer to objects returned in the same response. Every supplied item_ref must be represented by exactly one assignment, including uncertain items.
 """;
 
     private readonly OpenAiCompatibleJsonChatTransport _transport;
@@ -187,9 +188,10 @@ Hard limits for this request:
 - desktop_summary: required, 1..{{MaxDesktopSummaryChars}} characters
 - categories: required, 1..{{MaxCategories}} entries
 - zones: required, 0..{{MaxZones}} entries
-- assignments: required, 0..{{itemCount}} entries
+- assignments: required, exactly {{itemCount}} entries; every supplied item_ref must appear exactly once
 - questions: required, 0..{{MaxQuestions}} entries
 All six top-level fields must be present. Empty optional collections must be [].
+If an item is uncertain, assign it to a bounded uncertainty/inbox-style category with lower confidence instead of omitting it.
 
 Original Provider-safe input JSON:
 {{contextJson}}
@@ -225,10 +227,13 @@ Your rejected previous output:
 
         var itemMap = itemRefs.ToDictionary(static entry => entry.Reference, StringComparer.Ordinal);
         var existingZoneMap = existingZoneRefs.ToDictionary(static entry => entry.Reference, StringComparer.Ordinal);
+        var assignmentCoverageIssue = ValidateAssignmentCoverage(payload!.Assignments!, itemMap);
+        if (assignmentCoverageIssue is not null)
+            return InvalidEnvelope(assignmentCoverageIssue);
 
         try
         {
-            var categories = new List<DesktopUnderstandingCategoryDraft>(payload!.Categories!.Count);
+            var categories = new List<DesktopUnderstandingCategoryDraft>(payload.Categories!.Count);
             foreach (var category in payload.Categories)
             {
                 if (category is null)
@@ -354,14 +359,44 @@ Your rejected previous output:
         if (payload.Zones.Count > MaxZones)
             return $"zones 数量为 {payload.Zones.Count}，上限为 {MaxZones}。";
         if (payload.Assignments is null)
-            return "assignments 字段缺失；没有 Assignment 时必须返回 []。";
-        if (payload.Assignments.Count > itemCount)
-            return $"assignments 数量为 {payload.Assignments.Count}，超过本次 {itemCount} 个项目。";
+            return "assignments 字段缺失；必须完整覆盖本次所有项目。";
+        if (payload.Assignments.Count != itemCount)
+            return $"assignments 数量为 {payload.Assignments.Count}，必须完整覆盖本次 {itemCount} 个项目。";
         if (payload.Questions is null)
             return "questions 字段缺失；没有问题时必须返回 []。";
         if (payload.Questions.Count > MaxQuestions)
             return $"questions 数量为 {payload.Questions.Count}，上限为 {MaxQuestions}。";
         return null;
+    }
+
+    private static string? ValidateAssignmentCoverage(
+        IReadOnlyList<AssignmentPayload?> assignments,
+        IReadOnlyDictionary<string, ItemReference> itemMap)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var assignment in assignments)
+        {
+            // 空/发明的 item_ref 继续走下方语义校验并直接 fail-closed，不进入 repair。
+            if (assignment?.ItemRef is null || !itemMap.ContainsKey(assignment.ItemRef))
+                return null;
+
+            if (!seen.Add(assignment.ItemRef))
+            {
+                return $"assignments 中 request-local item_ref {assignment.ItemRef} 重复；" +
+                       "每个 supplied item_ref 必须且只能出现一次。";
+            }
+        }
+
+        var missing = itemMap.Keys
+            .Where(itemRef => !seen.Contains(itemRef))
+            .OrderBy(static itemRef => itemRef, StringComparer.Ordinal)
+            .Take(4)
+            .ToArray();
+        if (missing.Length == 0)
+            return null;
+
+        return $"assignments 未覆盖 {missing.Length} 个 request-local item_ref" +
+               $"（例如 {string.Join(", ", missing)}）；每个 supplied item_ref 必须且只能出现一次。";
     }
 
     private static void RequireTextWithin(string? value, int maxChars, string field)
