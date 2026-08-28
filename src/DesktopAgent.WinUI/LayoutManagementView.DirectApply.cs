@@ -19,12 +19,21 @@ public sealed partial class LayoutManagementView
     private DesktopLayoutDirectApplyService DirectApplyService =>
         _directApplyService ??= new DesktopLayoutDirectApplyService(
             _directApplySnapshotStore,
-            _directApplyRecoveryStore);
+            _directApplyRecoveryStore,
+            _workspaceExecutionJournalStore);
 
     private async void ApplyToDesktop_Click(object sender, RoutedEventArgs e)
     {
         if (_directApplyInProgress)
             return;
+
+        // 新 Workspace Frozen Preview 拥有自己的 confirmation / fresh-check / journal / writer 生命周期。
+        // 这里仅做产品路由，绝不把 Workspace 重新投影回旧单屏 Direct Apply Candidate。
+        if (_workspaceFrozenPreview is not null)
+        {
+            await ApplyWorkspaceFrozenPreviewAsync();
+            return;
+        }
 
         if (_latestPreview is null)
         {
@@ -306,6 +315,7 @@ public sealed partial class LayoutManagementView
         _latestPreview = null;
         _previewItems.Clear();
         ApplyToDesktopButton.IsEnabled = false;
+        ApplyToDesktopButton.Content = "应用到桌面";
         LayoutPreviewDetails.Visibility = Visibility.Collapsed;
         ResetPreviewSummary();
         LayoutCanvasStatusText.Text = status;
