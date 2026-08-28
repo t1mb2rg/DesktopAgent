@@ -92,7 +92,7 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
     }
 
     [Fact]
-    public void WorkspaceApply_ConsumesConfirmationBeforeEnteringNonCancelableWriterBoundary()
+    public void WorkspaceApply_ConsumesPreviewBoundConfirmationBeforeEnteringNonCancelableWriterBoundary()
     {
         var root = FindRepositoryRoot();
         var ui = Read(root,
@@ -101,8 +101,12 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
             "src", "DesktopAgent.WindowsInterop", "DesktopLayouts", "Workspaces", "Execution",
             "DesktopWorkspaceApplyService.cs");
 
+        Assert.Contains("_workspaceFrozenPreviewApplyPreviewId", ui, StringComparison.Ordinal);
+        Assert.Contains("preview.PreviewId", ui, StringComparison.Ordinal);
+        Assert.Contains("HasWorkspaceFrozenPreviewApplyTicket", ui, StringComparison.Ordinal);
+
         var confirmation = ui.IndexOf("DesktopWorkspaceApplyConfirmation.Create(preview)", StringComparison.Ordinal);
-        var consumeTicket = ui.IndexOf("_workspaceFrozenPreviewApplyAvailable = false", confirmation, StringComparison.Ordinal);
+        var consumeTicket = ui.IndexOf("_workspaceFrozenPreviewApplyPreviewId = null", confirmation, StringComparison.Ordinal);
         var applyCall = ui.IndexOf("WorkspaceApplyService.ApplyAsync(confirmation)", StringComparison.Ordinal);
 
         Assert.True(confirmation >= 0);
