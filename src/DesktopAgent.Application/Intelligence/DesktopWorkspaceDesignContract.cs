@@ -145,10 +145,81 @@ public sealed record DesktopWorkspaceDesignCriticalItem
 }
 
 /// <summary>
+/// Compiler 能安全反馈给 AI Designer 的 realization 失败类别。
+/// 这里只包含设计可修复的约束，不包含 StableId、DeviceName、Pixel、Cell 或内部异常。
+/// </summary>
+public enum DesktopWorkspaceDesignRealizationDiagnosticCode
+{
+    PreserveDisplayConflict = 0,
+    NonMovableItemRequiresExplicitPolicy = 1,
+    MissingCategoryRule = 2,
+    ZoneQuantizesToEmpty = 3,
+    ReservedRegionQuantizesToEmpty = 4,
+    ZoneRelationViolated = 5,
+    ZoneOverlap = 6,
+    ZoneCapacityInsufficient = 7,
+}
+
+/// <summary>
+/// Provider-safe realization diagnostic。它只描述“为什么上一版 Blueprint 无法忠实落地”，
+/// 不包含“应该怎么改”的设计建议。ElementKey 可引用上一版 Blueprint 的 Zone / Reserved Region；
+/// ItemRef 只允许引用本次 Design Request 已显式暴露的 critical item。
+/// </summary>
+public sealed record DesktopWorkspaceDesignRealizationDiagnostic
+{
+    public const int MaxDetailChars = 1024;
+
+    public DesktopWorkspaceDesignRealizationDiagnosticCode Code { get; }
+    public string Detail { get; }
+    public string? DisplayRef { get; }
+    public string? ElementKey { get; }
+    public string? CategoryKey { get; }
+    public string? ItemRef { get; }
+    public int? RequiredSlots { get; }
+    public int? AvailableSlots { get; }
+
+    public DesktopWorkspaceDesignRealizationDiagnostic(
+        DesktopWorkspaceDesignRealizationDiagnosticCode code,
+        string detail,
+        string? displayRef = null,
+        string? elementKey = null,
+        string? categoryKey = null,
+        string? itemRef = null,
+        int? requiredSlots = null,
+        int? availableSlots = null)
+    {
+        if (!Enum.IsDefined(code))
+            throw new ArgumentOutOfRangeException(nameof(code));
+        if (string.IsNullOrWhiteSpace(detail))
+            throw new ArgumentException("Detail 不能为空。", nameof(detail));
+        if (detail.Length > MaxDetailChars)
+            throw new ArgumentOutOfRangeException(nameof(detail), $"Detail 不能超过 {MaxDetailChars} 个字符。");
+        if (requiredSlots is < 0)
+            throw new ArgumentOutOfRangeException(nameof(requiredSlots));
+        if (availableSlots is < 0)
+            throw new ArgumentOutOfRangeException(nameof(availableSlots));
+
+        Code = code;
+        Detail = detail.Trim();
+        DisplayRef = NormalizeOptional(displayRef);
+        ElementKey = NormalizeOptional(elementKey);
+        CategoryKey = NormalizeOptional(categoryKey);
+        ItemRef = NormalizeOptional(itemRef);
+        RequiredSlots = requiredSlots;
+        AvailableSlots = availableSlots;
+    }
+
+    private static string? NormalizeOptional(string? value)
+        => value is null ? null : string.IsNullOrWhiteSpace(value)
+            ? throw new ArgumentException("可选引用一旦提供就不能为空白。")
+            : value.Trim();
+}
+
+/// <summary>
 /// ADR-0005 Workspace Design 的 Provider-safe 输入。
 ///
 /// 设计阶段只得到：纯语义桌面摘要、Category 汇总、归一化多屏拓扑、用户设计要求、
-/// 少量设计关键 Item 以及（修订时）上一版 Blueprint。
+/// 少量设计关键 Item、（修订时）上一版 Blueprint，以及上一版无法忠实落地时的 provider-safe diagnostics。
 ///
 /// 这里故意不存在 StableId、ObservationId、DeviceName、Pixel、Cell、Grid、Explorer Geometry、
 /// Candidate、Execution、Recovery 或 Writer authority。
@@ -158,12 +229,14 @@ public sealed record DesktopWorkspaceDesignRequest
     public const int MaxDisplays = 16;
     public const int MaxCategories = 128;
     public const int MaxCriticalItems = 64;
+    public const int MaxRealizationDiagnostics = 64;
     public const int MaxDesktopSummaryChars = 16 * 1024;
     public const int MaxUserGuidanceChars = 16 * 1024;
 
     private readonly IReadOnlyList<DesktopWorkspaceDesignDisplay> _displays;
     private readonly IReadOnlyList<DesktopWorkspaceDesignCategorySummary> _categories;
     private readonly IReadOnlyList<DesktopWorkspaceDesignCriticalItem> _criticalItems;
+    private readonly IReadOnlyList<DesktopWorkspaceDesignRealizationDiagnostic> _realizationDiagnostics;
 
     public DesktopWorkspaceDesignRevisionTarget RevisionTarget { get; }
     public string DesktopSummary { get; }
@@ -172,6 +245,7 @@ public sealed record DesktopWorkspaceDesignRequest
     public IReadOnlyList<DesktopWorkspaceDesignCategorySummary> Categories => _categories;
     public IReadOnlyList<DesktopWorkspaceDesignCriticalItem> CriticalItems => _criticalItems;
     public DesktopWorkspaceBlueprint? PreviousBlueprint { get; }
+    public IReadOnlyList<DesktopWorkspaceDesignRealizationDiagnostic> RealizationDiagnostics => _realizationDiagnostics;
 
     public DesktopWorkspaceDesignRequest(
         DesktopWorkspaceDesignRevisionTarget revisionTarget,
@@ -180,7 +254,8 @@ public sealed record DesktopWorkspaceDesignRequest
         IEnumerable<DesktopWorkspaceDesignDisplay> displays,
         IEnumerable<DesktopWorkspaceDesignCategorySummary> categories,
         IEnumerable<DesktopWorkspaceDesignCriticalItem>? criticalItems = null,
-        DesktopWorkspaceBlueprint? previousBlueprint = null)
+        DesktopWorkspaceBlueprint? previousBlueprint = null,
+        IEnumerable<DesktopWorkspaceDesignRealizationDiagnostic>? realizationDiagnostics = null)
     {
         RevisionTarget = revisionTarget ?? throw new ArgumentNullException(nameof(revisionTarget));
         DesktopSummary = RequireBoundedText(
@@ -197,13 +272,16 @@ public sealed record DesktopWorkspaceDesignRequest
         var displayArray = displays.Take(MaxDisplays + 1).ToArray();
         var categoryArray = categories.Take(MaxCategories + 1).ToArray();
         var criticalItemArray = criticalItems?.Take(MaxCriticalItems + 1).ToArray() ?? [];
+        var diagnosticArray = realizationDiagnostics?.Take(MaxRealizationDiagnostics + 1).ToArray() ?? [];
 
         ValidateCount(displayArray, MaxDisplays, nameof(displays));
         ValidateCount(categoryArray, MaxCategories, nameof(categories));
         ValidateCount(criticalItemArray, MaxCriticalItems, nameof(criticalItems));
+        ValidateCount(diagnosticArray, MaxRealizationDiagnostics, nameof(realizationDiagnostics));
         RejectNullElements(displayArray, nameof(displays));
         RejectNullElements(categoryArray, nameof(categories));
         RejectNullElements(criticalItemArray, nameof(criticalItems));
+        RejectNullElements(diagnosticArray, nameof(realizationDiagnostics));
 
         if (displayArray.Length == 0)
             throw new ArgumentException("Workspace Design 至少需要一个显示器。", nameof(displays));
@@ -211,6 +289,8 @@ public sealed record DesktopWorkspaceDesignRequest
             throw new ArgumentException("Workspace Design 至少需要一个 Category。", nameof(categories));
         if (displayArray.Count(static display => display.IsPrimary) != 1)
             throw new ArgumentException("Workspace Design 必须且只能包含一个 Primary 显示器。", nameof(displays));
+        if (revisionTarget.Revision == 1 && diagnosticArray.Length > 0)
+            throw new ArgumentException("初始 Blueprint 设计不能携带 realization diagnostics。", nameof(realizationDiagnostics));
 
         EnsureUnique(displayArray.Select(static display => display.DisplayRef), nameof(displays));
         EnsureUnique(categoryArray.Select(static category => category.CategoryKey), nameof(categories));
@@ -221,6 +301,9 @@ public sealed record DesktopWorkspaceDesignRequest
             .ToHashSet(StringComparer.Ordinal);
         var categoryKeys = categoryArray
             .Select(static category => category.CategoryKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var itemRefs = criticalItemArray
+            .Select(static item => item.ItemRef)
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var item in criticalItemArray)
@@ -235,11 +318,22 @@ public sealed record DesktopWorkspaceDesignRequest
                     nameof(criticalItems));
         }
 
+        foreach (var diagnostic in diagnosticArray)
+        {
+            if (diagnostic.DisplayRef is not null && !displayRefs.Contains(diagnostic.DisplayRef))
+                throw new ArgumentException("RealizationDiagnostic 引用了请求之外的 DisplayRef。", nameof(realizationDiagnostics));
+            if (diagnostic.CategoryKey is not null && !categoryKeys.Contains(diagnostic.CategoryKey))
+                throw new ArgumentException("RealizationDiagnostic 引用了请求之外的 CategoryKey。", nameof(realizationDiagnostics));
+            if (diagnostic.ItemRef is not null && !itemRefs.Contains(diagnostic.ItemRef))
+                throw new ArgumentException("RealizationDiagnostic 引用了请求之外的 ItemRef。", nameof(realizationDiagnostics));
+        }
+
         ValidateRevision(previousBlueprint, revisionTarget);
 
         _displays = Array.AsReadOnly(displayArray);
         _categories = Array.AsReadOnly(categoryArray);
         _criticalItems = Array.AsReadOnly(criticalItemArray);
+        _realizationDiagnostics = Array.AsReadOnly(diagnosticArray);
         PreviousBlueprint = previousBlueprint;
     }
 
