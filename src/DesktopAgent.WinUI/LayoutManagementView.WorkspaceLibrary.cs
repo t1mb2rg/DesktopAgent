@@ -43,7 +43,7 @@ public sealed partial class LayoutManagementView
     {
         _workspaceLibraryRefreshActive = true;
         WorkspaceLibraryRefreshButton.IsEnabled = false;
-        WorkspaceLibraryStatusText.Text = "正在读取 Workspace Library…";
+        WorkspaceLibraryStatusText.Text = "正在读取工作区设计库…";
 
         try
         {
@@ -57,12 +57,12 @@ public sealed partial class LayoutManagementView
             {
                 var current = await _workspaceBlueprintStore.GetCurrentRevisionAsync(summary.BlueprintId)
                     ?? throw new InvalidDataException(
-                        $"Workspace \"{summary.Name}\" 的 current revision 缺失。");
+                        $"工作区 \"{summary.Name}\" 的当前设计版本缺失。");
 
                 if (current.Blueprint.Revision != summary.CurrentRevision)
                 {
                     throw new InvalidDataException(
-                        $"Workspace \"{summary.Name}\" 的资产指针与 immutable revision 不一致。");
+                        $"工作区 \"{summary.Name}\" 的资产指针与不可变设计版本不一致。");
                 }
 
                 items.Add(WorkspaceBlueprintLibraryItem.From(summary, current.Blueprint));
@@ -79,27 +79,27 @@ public sealed partial class LayoutManagementView
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             WorkspaceLibraryStatusText.Text = items.Count == 0
-                ? "还没有保存的 Workspace Blueprint"
-                : $"{items.Count} 个 Workspace · 点击查看详情 · 只读设计资产";
+                ? "还没有保存的工作区设计"
+                : $"{items.Count} 个工作区 · 点击查看详情 · 只读设计资产";
 
             if (showSuccess)
             {
                 ShowInfo(
-                    "Workspace Library 已刷新",
+                    "工作区设计库已刷新",
                     items.Count == 0
-                        ? "当前还没有 durable Blueprint。"
-                        : $"已读取 {items.Count} 个 Workspace Blueprint；没有恢复 Frozen Preview 或执行权限。",
+                        ? "当前还没有保存的工作区设计。"
+                        : $"已读取 {items.Count} 个工作区设计；没有恢复精确预览或执行权限。",
                     InfoBarSeverity.Success);
             }
         }
         catch (Exception ex)
         {
-            WorkspaceLibraryStatusText.Text = "Workspace Library 当前不可读取";
+            WorkspaceLibraryStatusText.Text = "工作区设计库当前不可读取";
             WorkspaceBlueprintList.Visibility = Visibility.Collapsed;
             WorkspaceLibraryEmptyText.Visibility = Visibility.Visible;
-            WorkspaceLibraryEmptyText.Text = "Library 数据未通过完整性检查。";
+            WorkspaceLibraryEmptyText.Text = "设计库数据未通过完整性检查。";
             ShowInfo(
-                "无法读取 Workspace Library",
+                "无法读取工作区设计库",
                 ex.Message,
                 InfoBarSeverity.Warning);
         }
@@ -123,11 +123,11 @@ public sealed partial class LayoutManagementView
             DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints.DesktopWorkspaceBlueprint blueprint)
             => new(
                 summary.BlueprintId,
-                summary.Name,
-                $"Blueprint v{summary.CurrentRevision}",
-                $"{blueprint.DisplayPolicies.Count} 块显示器 · {blueprint.Zones.Count} Zones · " +
-                $"{blueprint.ReservedRegions.Count} Reserved",
-                blueprint.DesignSummary,
+                FormatWorkspaceTitle(summary.Name, blueprint),
+                $"设计版本 v{summary.CurrentRevision}",
+                $"{blueprint.DisplayPolicies.Count} 块显示器 · {blueprint.Zones.Count} 个分区 · " +
+                $"{blueprint.ReservedRegions.Count} 个保留区域",
+                FormatBlueprintSummary(blueprint),
                 $"更新于 {summary.UpdatedAtUtc.ToLocalTime():g}");
     }
 }
