@@ -2,6 +2,7 @@ using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Core.DesktopIcons;
+using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Equivalence;
