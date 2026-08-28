@@ -13,12 +13,28 @@ public sealed partial class LayoutManagementView
         new(DesktopAgentDataPaths.DefaultDatabasePath);
 
     private DesktopWorkspaceApplyService? _workspaceApplyService;
+    private bool _workspaceFrozenPreviewApplyAvailable;
 
     private DesktopWorkspaceApplyService WorkspaceApplyService =>
         _workspaceApplyService ??= new DesktopWorkspaceApplyService(
             _directApplySnapshotStore,
             _workspaceExecutionJournalStore,
             _directApplyRecoveryStore);
+
+    internal void EnableWorkspaceFrozenPreviewApply()
+    {
+        _workspaceFrozenPreviewApplyAvailable =
+            _workspaceFrozenPreview is not null && _workspaceFrozenPreview.MoveCount > 0;
+        ApplyToDesktopButton.Content = "应用这个布局";
+        ApplyToDesktopButton.IsEnabled = _workspaceFrozenPreviewApplyAvailable && !_directApplyInProgress;
+    }
+
+    private void DisableWorkspaceFrozenPreviewApplyEvidence()
+    {
+        _workspaceFrozenPreviewApplyAvailable = false;
+        ApplyToDesktopButton.IsEnabled = false;
+        ApplyToDesktopButton.Content = "应用到桌面";
+    }
 
     private async Task ApplyWorkspaceFrozenPreviewAsync()
     {
