@@ -97,7 +97,7 @@ public sealed partial class LayoutManagementView
             "AI 工作区精确预览已冻结",
             $"设计版本 v{preview.Blueprint.Revision} · {preview.Displays.Count} 块显示器 · " +
             $"{preview.Items.Count} 个项目 · 移动 {preview.MoveCount} · 跨屏 {preview.CrossDisplayAssignmentCount}。" +
-            "当前只展示已经通过实现证书验证的精确结果，写入权限仍为 0。",
+            "当前只展示已经通过实现证书验证的精确结果；只有产品层成功加载后才会开放一次显式 Apply 入口。",
             InfoBarSeverity.Success);
         return true;
     }
@@ -221,48 +221,44 @@ public sealed partial class LayoutManagementView
         }
 
         _previewItems.Clear();
-        foreach (var item in preview.Items
-                     .Where(static item => item.IsCrossDisplayMove)
-                     .Take(100))
-        {
+        foreach (var item in preview.Items.Take(100))
             _previewItems.Add(CreateWorkspacePreviewListItem(item));
-        }
 
-        UpdateWorkspaceFrozenPreviewCommonSummary(preview, "多屏工作区");
+        UpdateWorkspaceFrozenPreviewCommonSummary(preview, "整体拓扑");
         RenderWorkspaceFrozenPreviewCanvas();
     }
 
     private void UpdateWorkspaceFrozenPreviewCommonSummary(
         DesktopWorkspaceFrozenPreview preview,
-        string targetDisplayText)
+        string selectedLabel)
     {
-        MoveCountText.Text = preview.MoveCount.ToString();
-        StayCountText.Text = (preview.KeepCount + preview.Items.Count(static item =>
-            item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place && !item.IsPositionChange)).ToString();
-        TargetDisplayText.Text = targetDisplayText;
+        LayoutRuleTotalCountText.Text = $"{preview.Items.Count} 项";
+        LayoutRuleMatchedCountText.Text = $"移动 {preview.MoveCount}";
+        LayoutRuleFallbackCountText.Text = $"保持 {preview.KeepCount}";
+        LayoutRuleUnassignedCountText.Text = $"跨屏 {preview.CrossDisplayAssignmentCount}";
         LayoutPreviewSummaryText.Text =
-            $"输入 {preview.Items.Count} · 移动 {preview.MoveCount} · 跨屏 {preview.CrossDisplayAssignmentCount} · " +
-            $"保持 {preview.KeepCount} · 排除 {preview.ExcludeCount} · 实现证书已验证";
-        LayoutPreviewObservationText.Text =
-            $"精确预览 {preview.PreviewId:D}\n" +
-            $"来源观察 {preview.SourceObservationId:D}\n" +
-            $"预览 {ShortFingerprint(preview.PreviewFingerprint)} · 来源 {ShortFingerprint(preview.SourceStateFingerprint)}";
-        LayoutPreviewDetails.Visibility = Visibility.Visible;
+            $"精确预览 · {selectedLabel} · 移动 {preview.MoveCount} / 保持 {preview.KeepCount} / " +
+            $"排除 {preview.ExcludeCount} / 跨屏 {preview.CrossDisplayAssignmentCount}";
+        LayoutPreviewLegendText.Text =
+            $"源点 / 精确目标点 · 分区 = Compiler 实现结果 · 保留区域 = 不可放置 · 实现证书 {ShortFingerprint(preview.RealizationCertificate.CertificateFingerprint)}";
     }
 
     private LayoutPreviewListItem CreateWorkspacePreviewListItem(DesktopWorkspaceFrozenPreviewItem item)
     {
-        var sourceDisplay = FormatWorkspacePreviewDisplayRef(item.SourceDisplayRef, isPrimary: false);
-        var targetDisplay = item.TargetDisplayRef is null
-            ? "—"
-            : FormatWorkspacePreviewDisplayRef(item.TargetDisplayRef, isPrimary: false);
         var target = item.TargetPixelPosition.HasValue
-            ? $"{targetDisplay} ({item.TargetPixelPosition.Value.X}, {item.TargetPixelPosition.Value.Y})"
+            ? $"({item.TargetPixelPosition.Value.X}, {item.TargetPixelPosition.Value.Y})"
             : "—";
+        var source = $"({item.SourcePixelPosition.X}, {item.SourcePixelPosition.Y})";
         return new LayoutPreviewListItem(
+            FormatWorkspacePreviewDisposition(item.Disposition),
             item.DisplayName,
-            $"{FormatWorkspacePreviewDisposition(item.Disposition)} / {FormatWorkspacePreviewCategory(item.CategoryKey)}",
-            $"{sourceDisplay} ({item.SourcePixelPosition.X}, {item.SourcePixelPosition.Y}) → {target}");
+            FormatWorkspacePreviewCategory(item.CategoryKey),
+            item.ZoneKey is null ? "—" : LocalizeWorkspacePreviewLabel(item.ZoneKey),
+            source,
+            target,
+            item.TargetDisplayRef is null
+                ? "—"
+                : FormatWorkspacePreviewDisplayRef(item.TargetDisplayRef, false));
     }
 
     private void RenderWorkspaceFrozenPreviewCanvas()
@@ -272,177 +268,237 @@ public sealed partial class LayoutManagementView
             return;
 
         LayoutCanvas.Children.Clear();
-        LayoutCanvasEmptyState.Visibility = Visibility.Collapsed;
-
-        var isTopology = _activeWorkspaceFrozenPreviewDisplayIndex < 0;
-        IReadOnlyList<DesktopWorkspaceFrozenPreviewDisplay> renderDisplays = isTopology
-            ? preview.Displays
-            : [preview.Displays[_activeWorkspaceFrozenPreviewDisplayIndex]];
-
-        var virtualLeft = renderDisplays.Min(static display => display.PixelBounds.Left);
-        var virtualTop = renderDisplays.Min(static display => display.PixelBounds.Top);
-        var virtualRight = renderDisplays.Max(static display => display.PixelBounds.Right);
-        var virtualBottom = renderDisplays.Max(static display => display.PixelBounds.Bottom);
-        var virtualWidth = (long)virtualRight - virtualLeft;
-        var virtualHeight = (long)virtualBottom - virtualTop;
-        if (virtualWidth <= 0 || virtualHeight <= 0)
+        var width = LayoutCanvas.ActualWidth;
+        var height = LayoutCanvas.ActualHeight;
+        if (width <= 1 || height <= 1)
             return;
 
-        var canvasWidth = Math.Max(100d, LayoutCanvas.ActualWidth);
-        var canvasHeight = Math.Max(100d, LayoutCanvas.ActualHeight);
-        var inset = isTopology ? 28d : 20d;
-        var drawableWidth = Math.Max(1d, canvasWidth - inset * 2d);
-        var drawableHeight = Math.Max(1d, canvasHeight - inset * 2d);
-        var scale = Math.Min(drawableWidth / virtualWidth, drawableHeight / virtualHeight);
-        if (!double.IsFinite(scale) || scale <= 0d)
+        if (_activeWorkspaceFrozenPreviewDisplayIndex < 0 && preview.Displays.Count > 1)
+        {
+            RenderWorkspaceFrozenPreviewTopologyCanvas(preview, width, height);
             return;
+        }
 
-        var renderedWidth = virtualWidth * scale;
-        var renderedHeight = virtualHeight * scale;
-        var originX = (canvasWidth - renderedWidth) / 2d;
-        var originY = (canvasHeight - renderedHeight) / 2d;
+        var displayIndex = Math.Clamp(
+            _activeWorkspaceFrozenPreviewDisplayIndex,
+            0,
+            preview.Displays.Count - 1);
+        RenderWorkspaceFrozenPreviewFocusedCanvas(preview, displayIndex, width, height);
+    }
 
-        double X(double globalX) => originX + (globalX - virtualLeft) * scale;
-        double Y(double globalY) => originY + (globalY - virtualTop) * scale;
-
-        var geometry = renderDisplays.ToDictionary(
+    private void RenderWorkspaceFrozenPreviewTopologyCanvas(
+        DesktopWorkspaceFrozenPreview preview,
+        double canvasWidth,
+        double canvasHeight)
+    {
+        const double padding = 20d;
+        var usableWidth = Math.Max(1d, canvasWidth - padding * 2d);
+        var usableHeight = Math.Max(1d, canvasHeight - padding * 2d);
+        var displayByRef = preview.Displays.ToDictionary(
             static display => display.DisplayRef,
-            display => new WorkspaceFrozenDisplayCanvasGeometry(
-                display,
-                X(display.PixelBounds.Left),
-                Y(display.PixelBounds.Top),
-                Math.Max(1d, display.PixelBounds.Width * scale),
-                Math.Max(1d, display.PixelBounds.Height * scale),
-                scale),
             StringComparer.Ordinal);
+        var geometries = new Dictionary<string, WorkspaceFrozenDisplayCanvasGeometry>(StringComparer.Ordinal);
 
-        foreach (var display in renderDisplays)
+        foreach (var display in preview.Displays)
         {
-            var canvasDisplay = geometry[display.DisplayRef];
-            var surface = new Border
+            var left = padding + display.TopologyBounds.Left * usableWidth;
+            var top = padding + display.TopologyBounds.Top * usableHeight;
+            var width = Math.Max(24d, display.TopologyBounds.Width * usableWidth);
+            var height = Math.Max(24d, display.TopologyBounds.Height * usableHeight);
+            var scaleX = width / Math.Max(1d, display.PixelBounds.Width);
+            var scaleY = height / Math.Max(1d, display.PixelBounds.Height);
+            var geometry = new WorkspaceFrozenDisplayCanvasGeometry(
+                display,
+                left,
+                top,
+                width,
+                height,
+                Math.Min(scaleX, scaleY));
+            geometries[display.DisplayRef] = geometry;
+
+            AddWorkspaceFrozenPreviewDisplaySurface(
+                preview,
+                geometry,
+                drawLabels: false,
+                drawItemDots: false,
+                allowClickFocus: true);
+        }
+
+        RenderWorkspaceFrozenPreviewAggregateFlows(preview, displayByRef, geometries);
+    }
+
+    private void RenderWorkspaceFrozenPreviewFocusedCanvas(
+        DesktopWorkspaceFrozenPreview preview,
+        int displayIndex,
+        double canvasWidth,
+        double canvasHeight)
+    {
+        const double padding = 22d;
+        var display = preview.Displays[displayIndex];
+        var pixelWidth = Math.Max(1d, display.PixelBounds.Width);
+        var pixelHeight = Math.Max(1d, display.PixelBounds.Height);
+        var availableWidth = Math.Max(1d, canvasWidth - padding * 2d);
+        var availableHeight = Math.Max(1d, canvasHeight - padding * 2d);
+        var scale = Math.Min(availableWidth / pixelWidth, availableHeight / pixelHeight);
+        var width = pixelWidth * scale;
+        var height = pixelHeight * scale;
+        var left = (canvasWidth - width) / 2d;
+        var top = (canvasHeight - height) / 2d;
+
+        AddWorkspaceFrozenPreviewDisplaySurface(
+            preview,
+            new WorkspaceFrozenDisplayCanvasGeometry(
+                display,
+                left,
+                top,
+                width,
+                height,
+                scale),
+            drawLabels: true,
+            drawItemDots: true,
+            allowClickFocus: false);
+    }
+
+    private void AddWorkspaceFrozenPreviewDisplaySurface(
+        DesktopWorkspaceFrozenPreview preview,
+        WorkspaceFrozenDisplayCanvasGeometry geometry,
+        bool drawLabels,
+        bool drawItemDots,
+        bool allowClickFocus)
+    {
+        var display = geometry.Display;
+        var surface = new Border
+        {
+            Width = geometry.Width,
+            Height = geometry.Height,
+            Background = Brush(20, 0x58, 0x80, 0x9A),
+            BorderBrush = display.Policy == DesktopWorkspaceDisplayPolicyKind.Preserve
+                ? Brush(210, 0x7A, 0x8A, 0x99)
+                : Brush(220, 0x33, 0xA6, 0xFF),
+            BorderThickness = new Thickness(display.IsPrimary ? 2d : 1.4d),
+            CornerRadius = new CornerRadius(6d),
+        };
+        if (allowClickFocus)
+        {
+            surface.Tapped += (_, _) =>
             {
-                Width = canvasDisplay.Width,
-                Height = canvasDisplay.Height,
-                CornerRadius = new CornerRadius(7),
-                Background = Brush(18, 0xFF, 0xFF, 0xFF),
-                BorderBrush = Brush(isTopology ? (byte)120 : (byte)230, 0x00, 0x78, 0xD4),
-                BorderThickness = new Thickness(isTopology ? 1.2d : 2.2d),
+                var index = preview.Displays
+                    .Select((candidate, index) => (candidate, index))
+                    .First(pair => string.Equals(
+                        pair.candidate.DisplayRef,
+                        display.DisplayRef,
+                        StringComparison.Ordinal)).index;
+                AiWorkspaceDisplayCombo.SelectedIndex = preview.Displays.Count > 1 ? index + 1 : index;
+                FocusAiWorkspaceFrozenPreviewDisplay(AiWorkspaceDisplayCombo.SelectedIndex);
             };
-            Canvas.SetLeft(surface, canvasDisplay.Left);
-            Canvas.SetTop(surface, canvasDisplay.Top);
-            LayoutCanvas.Children.Add(surface);
-
-            foreach (var zone in display.Zones)
-            {
-                AddWorkspaceFrozenRegion(
-                    canvasDisplay,
-                    zone.RealizedBounds,
-                    LocalizeWorkspacePreviewLabel(zone.Name),
-                    isReserved: false,
-                    outlineOnly: false,
-                    showLabel: !isTopology);
-            }
-            foreach (var region in display.ReservedRegions)
-            {
-                AddWorkspaceFrozenRegion(
-                    canvasDisplay,
-                    region.RealizedBounds,
-                    $"留白 · {LocalizeWorkspacePreviewLabel(region.Purpose)}",
-                    isReserved: true,
-                    outlineOnly: false,
-                    showLabel: true);
-            }
         }
+        ToolTipService.SetToolTip(
+            surface,
+            $"{FormatWorkspacePreviewDisplayRef(display.DisplayRef, display.IsPrimary)} · " +
+            $"{FormatWorkspacePreviewPolicy(display.Policy)} · 点击聚焦这块显示器");
+        Canvas.SetLeft(surface, geometry.Left);
+        Canvas.SetTop(surface, geometry.Top);
+        LayoutCanvas.Children.Add(surface);
 
-        if (isTopology)
+        foreach (var zone in display.Zones)
         {
-            RenderWorkspaceFrozenPreviewAggregateFlows(preview, geometry);
-        }
-        else
-        {
-            var selectedDisplayRef = renderDisplays[0].DisplayRef;
-            foreach (var item in preview.Items
-                         .Where(item => ShouldRenderFocusedWorkspacePreviewItem(item, selectedDisplayRef))
-                         .Take(MaxWorkspaceFrozenPreviewItemDots))
+            var rect = MapRelativeRect(zone.RealizedBounds, geometry);
+            var zoneBorder = new Border
             {
-                var point = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
-                            item.TargetPixelPosition.HasValue
-                    ? item.TargetPixelPosition.Value
-                    : item.SourcePixelPosition;
-                var red = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude ? (byte)0xD8 : (byte)0x00;
-                var green = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude ? (byte)0x6B : (byte)0x78;
-                var blue = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude ? (byte)0x00 : (byte)0xD4;
-                AddWorkspaceFrozenItemDot(item, X(point.X), Y(point.Y), red, green, blue);
-            }
-        }
-
-        // 最后重描结构边界。整体拓扑审阅显示器与跨屏流向，单屏聚焦审阅分区与精确落点。
-        foreach (var display in renderDisplays)
-        {
-            var canvasDisplay = geometry[display.DisplayRef];
-            foreach (var zone in display.Zones)
+                Width = rect.Width,
+                Height = rect.Height,
+                Background = Brush(26, 0x33, 0xA6, 0xFF),
+                BorderBrush = Brush(170, 0x33, 0xA6, 0xFF),
+                BorderThickness = new Thickness(1d),
+                CornerRadius = new CornerRadius(4d),
+            };
+            if (drawLabels)
             {
-                AddWorkspaceFrozenRegion(
-                    canvasDisplay,
-                    zone.RealizedBounds,
-                    LocalizeWorkspacePreviewLabel(zone.Name),
-                    isReserved: false,
-                    outlineOnly: true,
-                    showLabel: !isTopology);
+                zoneBorder.Child = new TextBlock
+                {
+                    Text = LocalizeWorkspacePreviewLabel(zone.Name),
+                    FontSize = 11,
+                    Margin = new Thickness(5),
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxLines = 2,
+                };
             }
-            foreach (var region in display.ReservedRegions)
-            {
-                AddWorkspaceFrozenRegion(
-                    canvasDisplay,
-                    region.RealizedBounds,
-                    $"留白 · {LocalizeWorkspacePreviewLabel(region.Purpose)}",
-                    isReserved: true,
-                    outlineOnly: true,
-                    showLabel: true);
-            }
+            Canvas.SetLeft(zoneBorder, rect.Left);
+            Canvas.SetTop(zoneBorder, rect.Top);
+            LayoutCanvas.Children.Add(zoneBorder);
         }
 
-        if (!isTopology)
+        foreach (var region in display.ReservedRegions)
+        {
+            var rect = MapRelativeRect(region.RealizedBounds, geometry);
+            var reserved = new Border
+            {
+                Width = rect.Width,
+                Height = rect.Height,
+                Background = Brush(34, 0xFF, 0xA0, 0x00),
+                BorderBrush = Brush(210, 0xFF, 0xA0, 0x00),
+                BorderThickness = new Thickness(1.4d),
+                CornerRadius = new CornerRadius(4d),
+            };
+            if (drawLabels || display.IsPrimary)
+            {
+                reserved.Child = new TextBlock
+                {
+                    Text = $"留白 · {LocalizeWorkspacePreviewLabel(region.Purpose)}",
+                    FontSize = 11,
+                    Margin = new Thickness(5),
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxLines = 2,
+                };
+            }
+            Canvas.SetLeft(reserved, rect.Left);
+            Canvas.SetTop(reserved, rect.Top);
+            LayoutCanvas.Children.Add(reserved);
+        }
+
+        AddWorkspaceFrozenDisplayHeader(display, geometry);
+
+        if (!drawItemDots)
             return;
 
-        foreach (var pair in preview.Displays.Select((display, index) => (display, index)))
+        var dots = preview.Items
+            .Where(item => ShouldRenderFocusedWorkspacePreviewItem(item, display.DisplayRef))
+            .Take(MaxWorkspaceFrozenPreviewItemDots)
+            .ToArray();
+        foreach (var item in dots)
         {
-            if (!geometry.TryGetValue(pair.display.DisplayRef, out var canvasDisplay))
-                continue;
-
-            var displayIndex = pair.index;
-            var hit = new Border
+            if (item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
+                item.TargetPixelPosition.HasValue &&
+                string.Equals(item.TargetDisplayRef, display.DisplayRef, StringComparison.Ordinal))
             {
-                Width = canvasDisplay.Width,
-                Height = canvasDisplay.Height,
-                Background = Brush(1, 0xFF, 0xFF, 0xFF),
-            };
-            hit.PointerPressed += (_, _) =>
+                AddWorkspaceFrozenPreviewItemDot(
+                    item,
+                    MapPixelX(item.TargetPixelPosition.Value.X, geometry),
+                    MapPixelY(item.TargetPixelPosition.Value.Y, geometry),
+                    0x33,
+                    0xA6,
+                    0xFF);
+            }
+            else if (string.Equals(item.SourceDisplayRef, display.DisplayRef, StringComparison.Ordinal))
             {
-                var selectorIndex = displayIndex + 1;
-                if (AiWorkspaceDisplayCombo.SelectedIndex != selectorIndex)
-                    AiWorkspaceDisplayCombo.SelectedIndex = selectorIndex;
-                else
-                    FocusAiWorkspaceFrozenPreviewDisplay(selectorIndex);
-            };
-            ToolTipService.SetToolTip(hit, "点击聚焦这块显示器；当前仍为只读精确预览");
-            Canvas.SetLeft(hit, canvasDisplay.Left);
-            Canvas.SetTop(hit, canvasDisplay.Top);
-            LayoutCanvas.Children.Add(hit);
-
-            AddWorkspaceFrozenDisplayBadge(canvasDisplay);
+                AddWorkspaceFrozenPreviewItemDot(
+                    item,
+                    MapPixelX(item.SourcePixelPosition.X, geometry),
+                    MapPixelY(item.SourcePixelPosition.Y, geometry),
+                    0x8A,
+                    0x9A,
+                    0xA8);
+            }
         }
     }
 
     private void RenderWorkspaceFrozenPreviewAggregateFlows(
         DesktopWorkspaceFrozenPreview preview,
-        IReadOnlyDictionary<string, WorkspaceFrozenDisplayCanvasGeometry> geometry)
+        IReadOnlyDictionary<string, DesktopWorkspaceFrozenPreviewDisplay> displayByRef,
+        IReadOnlyDictionary<string, WorkspaceFrozenDisplayCanvasGeometry> geometries)
     {
         var flows = preview.Items
-            .Where(static item =>
-                item.IsCrossDisplayMove &&
-                item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
-                item.TargetDisplayRef is not null)
+            .Where(static item => item.IsCrossDisplayMove)
             .GroupBy(item => new
             {
                 item.SourceDisplayRef,
@@ -460,8 +516,8 @@ public sealed partial class LayoutManagementView
 
         foreach (var flow in flows)
         {
-            if (!geometry.TryGetValue(flow.SourceDisplayRef, out var source) ||
-                !geometry.TryGetValue(flow.TargetDisplayRef, out var target))
+            if (!geometries.TryGetValue(flow.SourceDisplayRef, out var source) ||
+                !geometries.TryGetValue(flow.TargetDisplayRef, out var target))
             {
                 continue;
             }
@@ -470,128 +526,113 @@ public sealed partial class LayoutManagementView
             var y1 = source.Top + source.Height / 2d;
             var x2 = target.Left + target.Width / 2d;
             var y2 = target.Top + target.Height / 2d;
-            var thickness = Math.Clamp(
-                1.8d + Math.Log2(flow.Count + 1d) * 0.55d,
-                2d,
-                5d);
-
-            LayoutCanvas.Children.Add(new Line
+            var line = new Line
             {
                 X1 = x1,
                 Y1 = y1,
                 X2 = x2,
                 Y2 = y2,
-                StrokeThickness = thickness,
-                Stroke = Brush(150, 0x00, 0x78, 0xD4),
+                Stroke = Brush(190, 0x2F, 0x80, 0xED),
+                StrokeThickness = Math.Clamp(1.4d + Math.Log2(flow.Count + 1d) * 0.45d, 1.6d, 5d),
                 IsHitTestVisible = false,
-            });
+            };
+            LayoutCanvas.Children.Add(line);
 
+            var sourceName = displayByRef.TryGetValue(flow.SourceDisplayRef, out var sourceDisplay)
+                ? FormatWorkspacePreviewDisplayRef(sourceDisplay.DisplayRef, sourceDisplay.IsPrimary)
+                : FormatWorkspacePreviewDisplayRef(flow.SourceDisplayRef, false);
+            var targetName = displayByRef.TryGetValue(flow.TargetDisplayRef, out var targetDisplay)
+                ? FormatWorkspacePreviewDisplayRef(targetDisplay.DisplayRef, targetDisplay.IsPrimary)
+                : FormatWorkspacePreviewDisplayRef(flow.TargetDisplayRef, false);
             var label = new Border
             {
-                Width = 144,
-                Height = 24,
+                Background = Brush(232, 0x0D, 0x16, 0x22),
+                BorderBrush = Brush(175, 0x2F, 0x80, 0xED),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(6, 3, 6, 3),
-                CornerRadius = new CornerRadius(8),
-                Background = Brush(225, 0x20, 0x20, 0x20),
-                IsHitTestVisible = false,
                 Child = new TextBlock
                 {
-                    Text = $"{FormatWorkspacePreviewDisplayRef(flow.SourceDisplayRef, false)} → " +
-                           $"{FormatWorkspacePreviewDisplayRef(flow.TargetDisplayRef, false)} · {flow.Count}",
-                    FontSize = 10,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Text = $"{sourceName} → {targetName} · {flow.Count}",
+                    FontSize = 10.5,
                 },
+                IsHitTestVisible = false,
             };
-            Canvas.SetLeft(label, (x1 + x2) / 2d - 72d);
-            Canvas.SetTop(label, (y1 + y2) / 2d - 12d);
+            Canvas.SetLeft(label, (x1 + x2) / 2d + 6d);
+            Canvas.SetTop(label, (y1 + y2) / 2d - 10d);
             LayoutCanvas.Children.Add(label);
         }
     }
 
-    private void AddWorkspaceFrozenDisplayBadge(WorkspaceFrozenDisplayCanvasGeometry display)
+    private void AddWorkspaceFrozenDisplayHeader(
+        DesktopWorkspaceFrozenPreviewDisplay display,
+        WorkspaceFrozenDisplayCanvasGeometry geometry)
     {
-        var badge = new Border
+        var header = new Border
         {
+            Background = Brush(224, 0x0D, 0x16, 0x22),
+            CornerRadius = new CornerRadius(5),
             Padding = new Thickness(7, 4, 7, 4),
-            CornerRadius = new CornerRadius(7),
-            Background = Brush(220, 0x20, 0x20, 0x20),
-            IsHitTestVisible = false,
             Child = new TextBlock
             {
-                Text = WorkspaceFrozenPreviewDisplayLabel(display.Display),
-                FontSize = 10,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Text = $"{FormatWorkspacePreviewDisplayRef(display.DisplayRef, display.IsPrimary)} · " +
+                       $"{FormatWorkspacePreviewPolicy(display.Policy)} · " +
+                       $"源 {display.SourceItemCount} / 目标 {display.TargetPlacementCount}",
+                FontSize = 10.5,
+                MaxWidth = Math.Max(80d, geometry.Width - 12d),
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                MaxWidth = Math.Max(100d, display.Width - 16d),
             },
         };
-        Canvas.SetLeft(badge, display.Left + 6d);
-        Canvas.SetTop(badge, display.Top + 6d);
-        LayoutCanvas.Children.Add(badge);
+        Canvas.SetLeft(header, geometry.Left + 5d);
+        Canvas.SetTop(header, geometry.Top + 5d);
+        LayoutCanvas.Children.Add(header);
     }
 
     private static bool ShouldRenderFocusedWorkspacePreviewItem(
         DesktopWorkspaceFrozenPreviewItem item,
-        string selectedDisplayRef)
+        string focusedDisplayRef)
     {
         if (item.Disposition == DesktopWorkspaceCompiledItemDisposition.Place &&
-            item.TargetPixelPosition.HasValue)
+            item.TargetPixelPosition.HasValue &&
+            string.Equals(item.TargetDisplayRef, focusedDisplayRef, StringComparison.Ordinal))
         {
-            return string.Equals(item.TargetDisplayRef, selectedDisplayRef, StringComparison.Ordinal);
+            return true;
         }
 
-        return string.Equals(item.SourceDisplayRef, selectedDisplayRef, StringComparison.Ordinal);
+        return item.Disposition is DesktopWorkspaceCompiledItemDisposition.Keep
+                   or DesktopWorkspaceCompiledItemDisposition.Exclude &&
+               string.Equals(item.SourceDisplayRef, focusedDisplayRef, StringComparison.Ordinal);
     }
 
-    private void AddWorkspaceFrozenRegion(
-        WorkspaceFrozenDisplayCanvasGeometry display,
-        DesktopWorkspaceRelativeRect bounds,
-        string label,
-        bool isReserved,
-        bool outlineOnly,
-        bool showLabel)
+    private static PixelRect MapRelativeRect(
+        DesktopWorkspaceRelativeRect rect,
+        WorkspaceFrozenDisplayCanvasGeometry geometry)
     {
-        var work = display.Display.WorkArea;
-        var leftGlobal = work.Left + work.Width * bounds.Left;
-        var topGlobal = work.Top + work.Height * bounds.Top;
-        var width = Math.Max(1d, work.Width * bounds.Width * display.Scale);
-        var height = Math.Max(1d, work.Height * bounds.Height * display.Scale);
-        var left = display.Left + (leftGlobal - display.Display.PixelBounds.Left) * display.Scale;
-        var top = display.Top + (topGlobal - display.Display.PixelBounds.Top) * display.Scale;
-
-        var block = new Border
-        {
-            Width = width,
-            Height = height,
-            CornerRadius = new CornerRadius(5),
-            BorderThickness = new Thickness(outlineOnly ? (isReserved ? 2.2d : 1.8d) : (isReserved ? 1.5d : 1d)),
-            BorderBrush = isReserved
-                ? Brush(outlineOnly ? (byte)235 : (byte)190, 0xD8, 0x83, 0x00)
-                : Brush(outlineOnly ? (byte)225 : (byte)145, 0x00, 0x78, 0xD4),
-            Background = outlineOnly
-                ? Brush(0, 0x00, 0x00, 0x00)
-                : isReserved
-                    ? Brush(45, 0xD8, 0x83, 0x00)
-                    : Brush(28, 0x00, 0x78, 0xD4),
-            IsHitTestVisible = false,
-            Child = showLabel
-                ? new TextBlock
-                {
-                    Text = label,
-                    FontSize = 10,
-                    Margin = new Thickness(6, 4, 5, 4),
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    MaxWidth = Math.Max(32d, width - 12d),
-                }
-                : null,
-        };
-        Canvas.SetLeft(block, left);
-        Canvas.SetTop(block, top);
-        LayoutCanvas.Children.Add(block);
+        var left = geometry.Left + rect.Left * geometry.Width;
+        var top = geometry.Top + rect.Top * geometry.Height;
+        var right = geometry.Left + (rect.Left + rect.Width) * geometry.Width;
+        var bottom = geometry.Top + (rect.Top + rect.Height) * geometry.Height;
+        return new PixelRect(
+            (int)Math.Round(left),
+            (int)Math.Round(top),
+            (int)Math.Round(right),
+            (int)Math.Round(bottom));
     }
 
-    private void AddWorkspaceFrozenItemDot(
+    private static double MapPixelX(int pixelX, WorkspaceFrozenDisplayCanvasGeometry geometry)
+        => geometry.Left + (pixelX - geometry.Display.PixelBounds.Left) * geometry.Scale;
+
+    private static double MapPixelY(int pixelY, WorkspaceFrozenDisplayCanvasGeometry geometry)
+        => geometry.Top + (pixelY - geometry.Display.PixelBounds.Top) * geometry.Scale;
+
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush Brush(
+        byte alpha,
+        byte red,
+        byte green,
+        byte blue)
+        => new(Windows.UI.Color.FromArgb(alpha, red, green, blue));
+
+    private static void AddWorkspaceFrozenPreviewItemDot(
         DesktopWorkspaceFrozenPreviewItem item,
         double x,
         double y,
@@ -622,6 +663,8 @@ public sealed partial class LayoutManagementView
     {
         _workspaceFrozenPreview = null;
         _activeWorkspaceFrozenPreviewDisplayIndex = -1;
+        _workspaceFrozenPreviewApplyAvailable = false;
+        RefreshApplyButtonFromCurrentEvidence();
     }
 
     private static string WorkspaceFrozenPreviewDisplayLabel(DesktopWorkspaceFrozenPreviewDisplay display)
