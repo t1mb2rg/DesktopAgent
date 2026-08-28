@@ -343,7 +343,7 @@ public sealed class SqliteDesktopWorkspaceBlueprintStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task NewV8Stores_UseSharedInitializer_Idempotently()
+    public async Task NewV9Stores_UseSharedInitializer_Idempotently()
     {
         var understandingDb = Path.Combine(_tempDir, "understanding-shared.db");
         var blueprintDb = Path.Combine(_tempDir, "blueprint-shared.db");
@@ -356,8 +356,8 @@ public sealed class SqliteDesktopWorkspaceBlueprintStoreTests : IDisposable
         await blueprintStore.InitializeAsync();
         await blueprintStore.InitializeAsync();
 
-        Assert.Equal(8, ReadUserVersion(understandingDb));
-        Assert.Equal(8, ReadUserVersion(blueprintDb));
+        Assert.Equal(9, ReadUserVersion(understandingDb));
+        Assert.Equal(9, ReadUserVersion(blueprintDb));
         Assert.True(TableExists(understandingDb, "workspace_blueprints"));
         Assert.True(TableExists(blueprintDb, "desktop_semantic_understandings"));
     }
