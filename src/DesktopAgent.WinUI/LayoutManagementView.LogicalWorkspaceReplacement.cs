@@ -15,12 +15,14 @@ public sealed partial class LayoutManagementView
         if (_workspaceFrozenPreview is not null && _draft is null)
             _isLayoutEditing = false;
 
+        DisableWorkspaceFrozenPreviewApplyEvidence();
         ClearAiWorkspaceFrozenPreview();
     }
 
     /// <summary>
     /// 新 Workspace Preview 成功结果准备替换当前只读 Preview 时使用。
-    /// 这里只释放 UI editing 标记，不创建 Candidate 或 Writer authority。
+    /// 这里只释放 UI editing 标记并销毁上一份 Preview 的一次性 Apply 入口；
+    /// 新 authority 只能在新的 Frozen Preview 成功加载后重新开放。
     /// </summary>
     internal void PrepareWorkspaceFrozenPreviewReplacement()
     {
@@ -28,5 +30,7 @@ public sealed partial class LayoutManagementView
             _isLayoutEditing = false;
         if (_logicalWorkspaceSession is not null && _draft is null)
             _isLayoutEditing = false;
+
+        DisableWorkspaceFrozenPreviewApplyEvidence();
     }
 }
