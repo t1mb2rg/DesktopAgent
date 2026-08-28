@@ -490,7 +490,7 @@ public sealed partial class LayoutManagementView
             {
                 Width = 144,
                 Height = 24,
-                Padding = new Thickness(6, 3),
+                Padding = new Thickness(6, 3, 6, 3),
                 CornerRadius = new CornerRadius(8),
                 Background = Brush(225, 0x20, 0x20, 0x20),
                 IsHitTestVisible = false,
@@ -513,7 +513,7 @@ public sealed partial class LayoutManagementView
     {
         var badge = new Border
         {
-            Padding = new Thickness(7, 4),
+            Padding = new Thickness(7, 4, 7, 4),
             CornerRadius = new CornerRadius(7),
             Background = Brush(220, 0x20, 0x20, 0x20),
             IsHitTestVisible = false,
