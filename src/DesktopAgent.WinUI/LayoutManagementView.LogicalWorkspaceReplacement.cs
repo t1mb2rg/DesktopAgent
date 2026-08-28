@@ -9,7 +9,10 @@ public sealed partial class LayoutManagementView
     /// </summary>
     internal void PrepareLogicalWorkspacePreviewReplacement()
     {
-        if ((_logicalWorkspaceSession is not null || _workspaceFrozenPreview is not null) && _draft is null)
+        // 保留已经验证过的 legacy replacement 合同，同时让新 Workspace Preview 遵守同一生命周期语义。
+        if (_logicalWorkspaceSession is not null && _draft is null)
+            _isLayoutEditing = false;
+        if (_workspaceFrozenPreview is not null && _draft is null)
             _isLayoutEditing = false;
 
         ClearAiWorkspaceFrozenPreview();
@@ -21,7 +24,9 @@ public sealed partial class LayoutManagementView
     /// </summary>
     internal void PrepareWorkspaceFrozenPreviewReplacement()
     {
-        if ((_workspaceFrozenPreview is not null || _logicalWorkspaceSession is not null) && _draft is null)
+        if (_workspaceFrozenPreview is not null && _draft is null)
+            _isLayoutEditing = false;
+        if (_logicalWorkspaceSession is not null && _draft is null)
             _isLayoutEditing = false;
     }
 }
