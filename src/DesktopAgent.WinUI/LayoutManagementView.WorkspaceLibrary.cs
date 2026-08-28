@@ -20,6 +20,8 @@ public sealed partial class LayoutManagementView
         if (!_workspaceLibraryBound)
         {
             WorkspaceBlueprintList.ItemsSource = _workspaceBlueprintItems;
+            WorkspaceBlueprintList.IsItemClickEnabled = true;
+            WorkspaceBlueprintList.ItemClick += WorkspaceBlueprintList_ItemClick;
             _workspaceLibraryBound = true;
         }
 
