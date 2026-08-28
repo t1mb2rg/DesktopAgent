@@ -489,7 +489,8 @@ internal static class SqliteDesktopAgentSchema
                     ON DELETE CASCADE,
                 CHECK((reported_previous_x IS NULL) = (reported_previous_y IS NULL)),
                 CHECK((actual_x IS NULL) = (actual_y IS NULL)),
-                CHECK(has_trusted_actual_position = CASE WHEN actual_x IS NULL THEN 0 ELSE 1 END)
+                CHECK(has_trusted_actual_position = 0 OR actual_x IS NOT NULL),
+                CHECK(is_exact = 0 OR (has_trusted_actual_position = 1 AND actual_x = requested_x AND actual_y = requested_y))
             );
 
             CREATE INDEX IF NOT EXISTS idx_workspace_execution_journals_lifecycle
