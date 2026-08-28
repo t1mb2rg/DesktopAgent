@@ -17,7 +17,6 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
         Assert.Contains("TargetPixelPosition", source, StringComparison.Ordinal);
         Assert.Contains("zone.RealizedBounds", source, StringComparison.Ordinal);
         Assert.Contains("region.RealizedBounds", source, StringComparison.Ordinal);
-        Assert.Contains("MaxWorkspaceFrozenPreviewMovementLines = 32", source, StringComparison.Ordinal);
         Assert.Contains("MaxWorkspaceFrozenPreviewItemDots = 180", source, StringComparison.Ordinal);
         Assert.Contains("ApplyToDesktopButton.IsEnabled = false", source, StringComparison.Ordinal);
 
@@ -26,6 +25,53 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
         Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IDesktopIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopLayoutDirectApplyService", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkspaceFrozenPreviewUi_SeparatesTopologyFlowFromFocusedExactPlacements()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "LayoutManagementView.WorkspaceFrozenPreview.cs"));
+
+        Assert.Contains("整体拓扑", source, StringComparison.Ordinal);
+        Assert.Contains("_activeWorkspaceFrozenPreviewDisplayIndex < 0", source, StringComparison.Ordinal);
+        Assert.Contains("RenderWorkspaceFrozenPreviewTopologySummary", source, StringComparison.Ordinal);
+        Assert.Contains("RenderWorkspaceFrozenPreviewAggregateFlows", source, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceFrozenAggregateFlow", source, StringComparison.Ordinal);
+        Assert.Contains("MaxWorkspaceFrozenPreviewAggregateFlows = 8", source, StringComparison.Ordinal);
+        Assert.Contains("ShouldRenderFocusedWorkspacePreviewItem", source, StringComparison.Ordinal);
+        Assert.Contains("item.TargetPixelPosition.HasValue", source, StringComparison.Ordinal);
+        Assert.Contains("点击聚焦这块显示器", source, StringComparison.Ordinal);
+
+        // 整体拓扑不再默认绘制逐项目迁移线；跨屏变化按 display→display 聚合。
+        Assert.DoesNotContain("MaxWorkspaceFrozenPreviewMovementLines", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("X1 = X(item.SourcePixelPosition.X)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WorkspaceFrozenPreviewUi_ProductCopyIsLocalizedAndHidesRequestLocalRefs()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.WinUI",
+            "LayoutManagementView.WorkspaceFrozenPreview.cs"));
+
+        Assert.Contains("AI 工作区精确预览已冻结", source, StringComparison.Ordinal);
+        Assert.Contains("设计版本 v", source, StringComparison.Ordinal);
+        Assert.Contains("实现证书已通过", source, StringComparison.Ordinal);
+        Assert.Contains("主屏", source, StringComparison.Ordinal);
+        Assert.Contains("副屏 ", source, StringComparison.Ordinal);
+        Assert.Contains("保留区域", source, StringComparison.Ordinal);
+        Assert.Contains("FormatWorkspacePreviewCategory", source, StringComparison.Ordinal);
+        Assert.Contains("LocalizeWorkspacePreviewLabel", source, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("item.ItemRef", source, StringComparison.Ordinal);
     }
 
     [Fact]
