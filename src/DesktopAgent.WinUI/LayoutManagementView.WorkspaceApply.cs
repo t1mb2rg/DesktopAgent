@@ -149,7 +149,9 @@ public sealed partial class LayoutManagementView
         {
             _directApplyInProgress = false;
             ReconcileRecoveryButton.IsEnabled = true;
-            PreviewLayoutButton.IsEnabled = true;
+            // Frozen Preview 仍然留作只读审阅，但当前 Apply ticket 已消费。
+            // 普通 legacy Preview 不得在这里重新点亮，否则会把两套 Preview 生命周期串线。
+            PreviewLayoutButton.IsEnabled = false;
             RefreshApplyButtonFromCurrentEvidence();
         }
     }
