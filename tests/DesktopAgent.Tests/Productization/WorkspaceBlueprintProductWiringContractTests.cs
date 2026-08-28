@@ -109,6 +109,42 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
     }
 
     [Fact]
+    public void WorkspaceLibraryDetail_LoadsWholeImmutableHistory_WithoutExecutionAuthority()
+    {
+        var root = FindRepositoryRoot();
+        var library = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceLibrary.cs");
+        var detail = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceDetail.cs");
+
+        Assert.Contains("IsItemClickEnabled = true", library, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceBlueprintList_ItemClick", library, StringComparison.Ordinal);
+
+        Assert.Contains("GetAssetAsync", detail, StringComparison.Ordinal);
+        Assert.Contains("GetRevisionAsync", detail, StringComparison.Ordinal);
+        Assert.Contains("revision <= asset.CurrentRevision", detail, StringComparison.Ordinal);
+        Assert.Contains("revision chain 不连续", detail, StringComparison.Ordinal);
+        Assert.Contains("设计来源", detail, StringComparison.Ordinal);
+        Assert.Contains("显示器策略", detail, StringComparison.Ordinal);
+        Assert.Contains("Reserved Regions", detail, StringComparison.Ordinal);
+        Assert.Contains("Category → Zone", detail, StringComparison.Ordinal);
+        Assert.Contains("版本历史", detail, StringComparison.Ordinal);
+        Assert.Contains("ContentDialog", detail, StringComparison.Ordinal);
+
+        foreach (var forbidden in new[]
+                 {
+                     "DesktopWorkspaceFrozenPreview",
+                     "CompiledWorkspacePlan",
+                     "ApplyToDesktopButton",
+                     "DesktopShellIconPositionWriter",
+                     "IDesktopIconPositionWriter",
+                     "WriterCommand",
+                     "TargetDisplayLayoutExecutionCoordinator",
+                 })
+        {
+            Assert.DoesNotContain(forbidden, detail, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void MultiDisplayImportButton_InvokesNewWorkspacePreviewPath_WhileLegacyPathRemainsAvailable()
     {
         var root = FindRepositoryRoot();
