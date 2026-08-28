@@ -48,7 +48,9 @@ internal sealed record AiDesktopWorkspacePlanningProductResult(
 /// ADR-0005 Workspace Blueprint 产品级只读入口。
 /// 使用已有同一次 Full Understanding + Observation，生成 Explorer-native Frozen Preview；
 /// 成功且通过独立 equivalence 后，把本轮完整 immutable Blueprint revision history 写入 Workspace Library。
-/// Library persistence 从不保存 Exact Plan / Frozen Preview / Confirmation，也不授予 Candidate、Recovery 或 Writer authority。
+/// Provider-safe design guidance 与 durable SourceUserIntent 明确分离：前者可包含 request-local item refs，
+/// 后者只保存用户实际表达过的布局要求。Library persistence 从不保存 Exact Plan / Frozen Preview /
+/// Confirmation，也不授予 Candidate、Recovery 或 Writer authority。
 /// </summary>
 internal sealed class AiDesktopWorkspacePlanningService
 {
@@ -58,6 +60,7 @@ internal sealed class AiDesktopWorkspacePlanningService
         DesktopUnderstandingDraft understanding,
         DesktopObservation observation,
         DesktopLayoutConversationState conversationState,
+        string? sourceUserIntent,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(understanding);
@@ -143,7 +146,7 @@ internal sealed class AiDesktopWorkspacePlanningService
             {
                 await PersistSuccessfulBlueprintAsync(
                     loop.BlueprintRevisions,
-                    preparation.Request.UserGuidance,
+                    sourceUserIntent,
                     cancellationToken);
             }
             catch (OperationCanceledException)
@@ -183,17 +186,17 @@ internal sealed class AiDesktopWorkspacePlanningService
 
     private static async Task PersistSuccessfulBlueprintAsync(
         IReadOnlyList<DesktopWorkspaceBlueprint> revisions,
-        string sourceUserIntent,
+        string? sourceUserIntent,
         CancellationToken cancellationToken)
     {
         if (revisions.Count == 0)
             throw new InvalidDataException("成功的 Workspace Design 没有可持久化 revision history。");
-        if (string.IsNullOrWhiteSpace(sourceUserIntent))
-            throw new InvalidDataException("成功的 Workspace Design 缺少可持久化的设计来源意图。");
 
         var finalBlueprint = revisions[^1];
-        var compactIntent = CollapseWhitespace(sourceUserIntent);
-        var name = BuildAssetName(compactIntent, finalBlueprint);
+        var durableUserIntent = string.IsNullOrWhiteSpace(sourceUserIntent)
+            ? null
+            : sourceUserIntent.Trim();
+        var name = BuildAssetName(durableUserIntent, finalBlueprint);
         var createdAt = DateTimeOffset.UtcNow;
 
         var store = new SqliteDesktopWorkspaceBlueprintStore(
@@ -204,7 +207,7 @@ internal sealed class AiDesktopWorkspacePlanningService
             revisions[0],
             createdAt,
             sourceUnderstandingId: null,
-            sourceUserIntent: compactIntent);
+            sourceUserIntent: durableUserIntent);
         await store.CreateAsync(name, first, cancellationToken);
 
         foreach (var blueprint in revisions.Skip(1))
@@ -215,13 +218,13 @@ internal sealed class AiDesktopWorkspacePlanningService
                     blueprint,
                     createdAt,
                     sourceUnderstandingId: null,
-                    sourceUserIntent: compactIntent),
+                    sourceUserIntent: durableUserIntent),
                 cancellationToken);
         }
     }
 
     private static string BuildAssetName(
-        string sourceUserIntent,
+        string? sourceUserIntent,
         DesktopWorkspaceBlueprint blueprint)
     {
         var source = string.IsNullOrWhiteSpace(sourceUserIntent)
