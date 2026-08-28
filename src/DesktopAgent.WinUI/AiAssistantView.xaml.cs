@@ -12,6 +12,7 @@ public sealed partial class AiAssistantView : UserControl
     private readonly AiDesktopUnderstandingService _understandingService = new();
     private readonly AiDesktopLayoutConversationService _layoutConversationService = new();
     private readonly AiDesktopLogicalWorkspacePlanningService _logicalWorkspacePlanningService = new();
+    private readonly List<string> _workspaceUserIntentHistory = [];
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _probeCts;
     private AiDesktopUnderstandingProductResult? _latestSuccessfulUnderstanding;
@@ -164,6 +165,8 @@ public sealed partial class AiAssistantView : UserControl
                 _latestSuccessfulUnderstanding = result;
                 _persistedUnderstandingState = null;
                 _conversationState = DesktopLayoutConversationState.Empty;
+                _workspaceUserIntentHistory.Clear();
+                RememberWorkspaceUserIntent(guidance);
                 RenderDraft(result);
                 AiGuidanceTextBox.Text = string.Empty;
                 AiAnalyzeButton.Content = "应用这条修正";
@@ -253,6 +256,7 @@ public sealed partial class AiAssistantView : UserControl
             }
 
             _conversationState = _conversationState.Apply(result.Delta);
+            RememberWorkspaceUserIntent(guidance);
             RenderConversationState();
             AiGuidanceTextBox.Text = string.Empty;
             AiStatusBar.Severity = InfoBarSeverity.Success;
@@ -410,6 +414,26 @@ public sealed partial class AiAssistantView : UserControl
                 reserved.Purpose));
         }
     }
+
+    private void RememberWorkspaceUserIntent(string? guidance)
+    {
+        if (string.IsNullOrWhiteSpace(guidance))
+            return;
+
+        var trimmed = guidance.Trim();
+        if (_workspaceUserIntentHistory.Count > 0 &&
+            string.Equals(_workspaceUserIntentHistory[^1], trimmed, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _workspaceUserIntentHistory.Add(trimmed);
+    }
+
+    private string? BuildWorkspaceSourceUserIntent()
+        => _workspaceUserIntentHistory.Count == 0
+            ? null
+            : string.Join(Environment.NewLine, _workspaceUserIntentHistory);
 
     private static string BuildDeltaSummary(DesktopLayoutConversationDelta delta)
     {
