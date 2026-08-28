@@ -4,6 +4,7 @@ using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Core.DesktopLayouts.Templates.Execution;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Execution;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopObservations;
 using DesktopAgent.WindowsInterop.Displays;
@@ -93,21 +94,58 @@ public sealed class DesktopLayoutDirectApplyService
     private readonly IDesktopObservationSource _observationSource;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
     private readonly IRecoverySessionStore _recoveryStore;
+    private readonly IDesktopWorkspaceExecutionJournalStore? _workspaceExecutionJournalStore;
     private readonly Func<TargetDisplayLayoutRestorePlan, bool, CancellationToken,
         Task<TargetDisplayLayoutExecutionRunResult>> _executeAuthorizedAsync;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _applyLock = new(1, 1);
 
     /// <summary>
-    /// 产品构造器。调用方只提供持久化接口；真实 Shell Writer 和 Coordinator 在 WindowsInterop 内部组装。
+    /// 兼容旧组合入口。若产品同时启用了 Workspace Apply，应使用带 workspaceJournalStore 的重载，
+    /// 让两代 execution/recovery 互相 fail-closed。
     /// </summary>
     public DesktopLayoutDirectApplyService(
         IDesktopLayoutSnapshotStore snapshotStore,
         IRecoverySessionStore recoveryStore,
         TimeProvider? timeProvider = null)
+        : this(
+            snapshotStore,
+            recoveryStore,
+            workspaceExecutionJournalStore: null,
+            timeProvider,
+            productionMarker: true)
     {
+    }
+
+    /// <summary>
+    /// 产品构造器。调用方只提供持久化接口；真实 Shell Writer 和 Coordinator 在 WindowsInterop 内部组装。
+    /// Workspace journal 仅用于跨代 unresolved interlock，不授予旧 Direct Apply 新的 Workspace authority。
+    /// </summary>
+    public DesktopLayoutDirectApplyService(
+        IDesktopLayoutSnapshotStore snapshotStore,
+        IRecoverySessionStore recoveryStore,
+        IDesktopWorkspaceExecutionJournalStore workspaceExecutionJournalStore,
+        TimeProvider? timeProvider = null)
+        : this(
+            snapshotStore,
+            recoveryStore,
+            workspaceExecutionJournalStore ?? throw new ArgumentNullException(nameof(workspaceExecutionJournalStore)),
+            timeProvider,
+            productionMarker: true)
+    {
+    }
+
+    private DesktopLayoutDirectApplyService(
+        IDesktopLayoutSnapshotStore snapshotStore,
+        IRecoverySessionStore recoveryStore,
+        IDesktopWorkspaceExecutionJournalStore? workspaceExecutionJournalStore,
+        TimeProvider? timeProvider,
+        bool productionMarker)
+    {
+        _ = productionMarker;
         _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
         _recoveryStore = recoveryStore ?? throw new ArgumentNullException(nameof(recoveryStore));
+        _workspaceExecutionJournalStore = workspaceExecutionJournalStore;
         _timeProvider = timeProvider ?? TimeProvider.System;
 
         var topologyReader = new NativeDisplayTopologyReader();
@@ -150,7 +188,8 @@ public sealed class DesktopLayoutDirectApplyService
         IRecoverySessionStore recoveryStore,
         Func<TargetDisplayLayoutRestorePlan, bool, CancellationToken,
             Task<TargetDisplayLayoutExecutionRunResult>> executeAuthorizedAsync,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IDesktopWorkspaceExecutionJournalStore? workspaceExecutionJournalStore = null)
     {
         _observationSource = observationSource
             ?? throw new ArgumentNullException(nameof(observationSource));
@@ -158,6 +197,7 @@ public sealed class DesktopLayoutDirectApplyService
             ?? throw new ArgumentNullException(nameof(snapshotStore));
         _recoveryStore = recoveryStore
             ?? throw new ArgumentNullException(nameof(recoveryStore));
+        _workspaceExecutionJournalStore = workspaceExecutionJournalStore;
         _executeAuthorizedAsync = executeAuthorizedAsync
             ?? throw new ArgumentNullException(nameof(executeAuthorizedAsync));
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -194,6 +234,20 @@ public sealed class DesktopLayoutDirectApplyService
                 return DesktopLayoutDirectApplyResult.Rejected(
                     DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked,
                     $"检测到未解决恢复会话 {unresolved[0].SessionId:D}，新的真实桌面写入已暂停。");
+            }
+
+            // 新 Workspace execution journal 与旧 Direct Apply 共享同一 Explorer 桌面。
+            // 任意 Workspace journal 未收敛时，旧 Writer 也必须停住，不能绕过新恢复锁。
+            if (_workspaceExecutionJournalStore is not null)
+            {
+                await _workspaceExecutionJournalStore.InitializeAsync(cancellationToken);
+                var unresolvedWorkspace = await _workspaceExecutionJournalStore.ListUnresolvedAsync(cancellationToken);
+                if (unresolvedWorkspace.Count != 0)
+                {
+                    return DesktopLayoutDirectApplyResult.Rejected(
+                        DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked,
+                        $"检测到未解决 Workspace execution journal {unresolvedWorkspace[0].SessionId:D}，旧布局写入已暂停。");
+                }
             }
 
             var confirmedCandidate = confirmedPreparation.Candidate;
