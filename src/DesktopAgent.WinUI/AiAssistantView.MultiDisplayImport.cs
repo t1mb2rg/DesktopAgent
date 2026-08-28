@@ -60,14 +60,22 @@ public sealed partial class AiAssistantView
                 throw new InvalidOperationException("布局工作台当前没有挂载 Workspace Frozen Preview 入口。");
 
             WorkspaceFrozenPreviewRequested.Invoke(result.Preview);
-            AiStatusBar.Severity = InfoBarSeverity.Success;
-            AiStatusBar.Title = "已生成 Workspace Frozen Preview";
+            AiStatusBar.Severity = result.PersistenceWarning is null
+                ? InfoBarSeverity.Success
+                : InfoBarSeverity.Warning;
+            AiStatusBar.Title = result.PersistenceWarning is null
+                ? "已生成并保存 Workspace Frozen Preview"
+                : "Workspace Frozen Preview 已生成，但 Library 保存失败";
             AiStatusBar.Message =
                 $"Blueprint v{result.Preview.Blueprint.Revision} · " +
                 $"{result.Preview.Displays.Count} 块显示器 · " +
                 $"{result.Preview.Items.Count} 个项目 · " +
                 $"移动 {result.Preview.MoveCount} · 跨屏 {result.Preview.CrossDisplayAssignmentCount} · " +
-                $"AI 设计尝试 {result.DesignAttempts} 次。当前仍是 0 Writer。";
+                $"AI 设计尝试 {result.DesignAttempts} 次。" +
+                (result.PersistenceWarning is null
+                    ? "Blueprint immutable revision history 已写入 Workspace Library。"
+                    : result.PersistenceWarning) +
+                " 当前仍是 0 Writer。";
             AiStatusBar.IsOpen = true;
         }
         catch (OperationCanceledException)
