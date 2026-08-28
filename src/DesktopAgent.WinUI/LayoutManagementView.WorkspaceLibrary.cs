@@ -80,7 +80,7 @@ public sealed partial class LayoutManagementView
                 : Visibility.Collapsed;
             WorkspaceLibraryStatusText.Text = items.Count == 0
                 ? "还没有保存的 Workspace Blueprint"
-                : $"{items.Count} 个 Workspace · 只读设计资产";
+                : $"{items.Count} 个 Workspace · 点击查看详情 · 只读设计资产";
 
             if (showSuccess)
             {
