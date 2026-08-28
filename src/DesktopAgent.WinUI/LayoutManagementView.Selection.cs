@@ -17,7 +17,8 @@ public sealed partial class LayoutManagementView
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
             return;
 
-        if (_isLayoutEditing && (_draft is not null || _logicalWorkspaceSession is not null))
+        if (_isLayoutEditing &&
+            (_draft is not null || _logicalWorkspaceSession is not null || _workspaceFrozenPreview is not null))
         {
             if (_draft is not null && _draft.TemplateId == selected.TemplateId)
                 return;
@@ -88,6 +89,8 @@ public sealed partial class LayoutManagementView
             return;
         }
 
+        ClearAiLogicalWorkspacePreview();
+        ClearAiWorkspaceFrozenPreview();
         ClearAiMultiDisplayWorkspace();
         SetSelectedTemplateWithoutNotification(null);
         NewLayout_Click(sender, e);
@@ -98,6 +101,8 @@ public sealed partial class LayoutManagementView
     private void CancelLayoutEditWithMode_Click(object sender, RoutedEventArgs e)
     {
         CancelLayoutEdit_Click(sender, e);
+        ClearAiLogicalWorkspacePreview();
+        ClearAiWorkspaceFrozenPreview();
         ClearAiMultiDisplayWorkspace();
         SetSelectedTemplateWithoutNotification(null);
         SetLayoutInteractionMode(isEditing: false);
@@ -119,6 +124,8 @@ public sealed partial class LayoutManagementView
             return false;
         }
 
+        ClearAiLogicalWorkspacePreview();
+        ClearAiWorkspaceFrozenPreview();
         ClearAiMultiDisplayWorkspace();
         _draft = DesktopLayoutEditDraft.FromPersisted(template, rules);
         LoadDraftIntoEditor(_draft);
@@ -131,20 +138,22 @@ public sealed partial class LayoutManagementView
         ConfigureTargetDisplayUx();
 
         _isLayoutEditing = isEditing;
-        var isLogicalWorkspacePreview = _logicalWorkspaceSession is not null;
+        var isLegacyLogicalWorkspacePreview = _logicalWorkspaceSession is not null;
+        var isWorkspaceFrozenPreview = _workspaceFrozenPreview is not null;
+        var isAnyFrozenWorkspacePreview = isLegacyLogicalWorkspacePreview || isWorkspaceFrozenPreview;
         var isAiMultiDisplayWorkspace = _activeAiWorkspaceIndex >= 0;
         EditingBadge.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
-        LayoutNameTextBox.IsReadOnly = !isEditing || isLogicalWorkspacePreview;
-        LayoutTargetBindingCombo.IsEnabled = isEditing && !isAiMultiDisplayWorkspace && !isLogicalWorkspacePreview;
-        LayoutDeviceNameTextBox.IsReadOnly = !isEditing || isAiMultiDisplayWorkspace || isLogicalWorkspacePreview;
-        LayoutPresetCombo.IsEnabled = isEditing && !isLogicalWorkspacePreview;
-        ApplyPresetButton.IsEnabled = isEditing && !isLogicalWorkspacePreview;
-        SaveLayoutButton.IsEnabled = isEditing && !isLogicalWorkspacePreview;
-        OverlayToggleButton.IsEnabled = !isLogicalWorkspacePreview;
-        PreviewLayoutButton.IsEnabled = true;
+        LayoutNameTextBox.IsReadOnly = !isEditing || isAnyFrozenWorkspacePreview;
+        LayoutTargetBindingCombo.IsEnabled = isEditing && !isAiMultiDisplayWorkspace && !isAnyFrozenWorkspacePreview;
+        LayoutDeviceNameTextBox.IsReadOnly = !isEditing || isAiMultiDisplayWorkspace || isAnyFrozenWorkspacePreview;
+        LayoutPresetCombo.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview;
+        ApplyPresetButton.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview;
+        SaveLayoutButton.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview;
+        OverlayToggleButton.IsEnabled = !isAnyFrozenWorkspacePreview;
+        PreviewLayoutButton.IsEnabled = !isAnyFrozenWorkspacePreview;
         CancelLayoutEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
         EditLayoutButton.Content = isEditing ? "桌面编辑" : "编辑";
-        EditLayoutButton.IsEnabled = !isLogicalWorkspacePreview && (isEditing
+        EditLayoutButton.IsEnabled = !isAnyFrozenWorkspacePreview && (isEditing
             ? _draft is not null
             : LayoutTemplateList.SelectedItem is LayoutTemplateListItem);
     }
