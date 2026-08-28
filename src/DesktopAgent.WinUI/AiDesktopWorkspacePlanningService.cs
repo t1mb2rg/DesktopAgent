@@ -143,7 +143,7 @@ internal sealed class AiDesktopWorkspacePlanningService
             {
                 await PersistSuccessfulBlueprintAsync(
                     loop.BlueprintRevisions,
-                    conversationState,
+                    preparation.Request.UserGuidance,
                     cancellationToken);
             }
             catch (OperationCanceledException)
@@ -183,17 +183,17 @@ internal sealed class AiDesktopWorkspacePlanningService
 
     private static async Task PersistSuccessfulBlueprintAsync(
         IReadOnlyList<DesktopWorkspaceBlueprint> revisions,
-        DesktopLayoutConversationState conversationState,
+        string sourceUserIntent,
         CancellationToken cancellationToken)
     {
         if (revisions.Count == 0)
             throw new InvalidDataException("成功的 Workspace Design 没有可持久化 revision history。");
+        if (string.IsNullOrWhiteSpace(sourceUserIntent))
+            throw new InvalidDataException("成功的 Workspace Design 缺少可持久化的设计来源意图。");
 
         var finalBlueprint = revisions[^1];
-        var name = BuildAssetName(conversationState, finalBlueprint);
-        var sourceIntent = string.IsNullOrWhiteSpace(conversationState.IntentSummary)
-            ? null
-            : conversationState.IntentSummary.Trim();
+        var compactIntent = CollapseWhitespace(sourceUserIntent);
+        var name = BuildAssetName(compactIntent, finalBlueprint);
         var createdAt = DateTimeOffset.UtcNow;
 
         var store = new SqliteDesktopWorkspaceBlueprintStore(
@@ -204,7 +204,7 @@ internal sealed class AiDesktopWorkspacePlanningService
             revisions[0],
             createdAt,
             sourceUnderstandingId: null,
-            sourceUserIntent: sourceIntent);
+            sourceUserIntent: compactIntent);
         await store.CreateAsync(name, first, cancellationToken);
 
         foreach (var blueprint in revisions.Skip(1))
@@ -215,18 +215,18 @@ internal sealed class AiDesktopWorkspacePlanningService
                     blueprint,
                     createdAt,
                     sourceUnderstandingId: null,
-                    sourceUserIntent: sourceIntent),
+                    sourceUserIntent: compactIntent),
                 cancellationToken);
         }
     }
 
     private static string BuildAssetName(
-        DesktopLayoutConversationState conversationState,
+        string sourceUserIntent,
         DesktopWorkspaceBlueprint blueprint)
     {
-        var source = string.IsNullOrWhiteSpace(conversationState.IntentSummary)
+        var source = string.IsNullOrWhiteSpace(sourceUserIntent)
             ? blueprint.DesignSummary
-            : conversationState.IntentSummary;
+            : sourceUserIntent;
         var compact = CollapseWhitespace(source);
         if (compact.Length == 0)
             return "AI Workspace";
