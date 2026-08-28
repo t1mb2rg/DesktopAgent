@@ -29,6 +29,64 @@ public sealed record DesktopWorkspacePreviewItemPresentation
 }
 
 /// <summary>
+/// Frozen Preview 的源侧本地事实快照。ObservationId 把用户看到的起点位置与同一次 Explorer Geometry 绑定，
+/// 防止拿旧 item positions 与新 geometry 拼成伪造 Preview。
+/// </summary>
+public sealed record DesktopWorkspacePreviewSourceSnapshot
+{
+    private readonly IReadOnlyList<DesktopWorkspaceCompilationItemFact> _itemFacts;
+    private readonly IReadOnlyList<DesktopWorkspacePreviewItemPresentation> _itemPresentations;
+
+    public Guid ObservationId { get; }
+    public IReadOnlyList<DesktopWorkspaceCompilationItemFact> ItemFacts => _itemFacts;
+    public IReadOnlyList<DesktopWorkspacePreviewItemPresentation> ItemPresentations => _itemPresentations;
+
+    public DesktopWorkspacePreviewSourceSnapshot(
+        Guid observationId,
+        IEnumerable<DesktopWorkspaceCompilationItemFact> itemFacts,
+        IEnumerable<DesktopWorkspacePreviewItemPresentation> itemPresentations)
+    {
+        if (observationId == Guid.Empty)
+            throw new ArgumentException("ObservationId 不能为 Guid.Empty。", nameof(observationId));
+        ArgumentNullException.ThrowIfNull(itemFacts);
+        ArgumentNullException.ThrowIfNull(itemPresentations);
+
+        var factArray = itemFacts.ToArray();
+        var presentationArray = itemPresentations.ToArray();
+        RejectNullElements(factArray, nameof(itemFacts));
+        RejectNullElements(presentationArray, nameof(itemPresentations));
+        EnsureUnique(factArray.Select(static item => item.StableId), nameof(itemFacts));
+        EnsureUnique(presentationArray.Select(static item => item.StableId), nameof(itemPresentations));
+
+        var factIds = factArray.Select(static item => item.StableId).ToHashSet(StringComparer.Ordinal);
+        var presentationIds = presentationArray.Select(static item => item.StableId).ToHashSet(StringComparer.Ordinal);
+        if (!factIds.SetEquals(presentationIds))
+            throw new ArgumentException("ItemPresentations 必须完整覆盖源 ItemFacts。", nameof(itemPresentations));
+
+        ObservationId = observationId;
+        _itemFacts = Array.AsReadOnly(factArray);
+        _itemPresentations = Array.AsReadOnly(presentationArray);
+    }
+
+    private static void RejectNullElements<T>(IEnumerable<T> values, string parameterName)
+        where T : class
+    {
+        if (values.Any(static value => value is null))
+            throw new ArgumentException("集合不能包含 null。", parameterName);
+    }
+
+    private static void EnsureUnique(IEnumerable<string> values, string parameterName)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in values)
+        {
+            if (!seen.Add(value))
+                throw new ArgumentException($"集合包含重复键：{value}。", parameterName);
+        }
+    }
+}
+
+/// <summary>
 /// 整个多屏桌面拓扑中的归一化显示器矩形。它只用于 Preview 画布，不参与 Blueprint 设计或 Compiler 决策。
 /// </summary>
 public readonly record struct DesktopWorkspacePreviewNormalizedRect
@@ -47,23 +105,28 @@ public readonly record struct DesktopWorkspacePreviewNormalizedRect
         RequireFinite(width, nameof(width));
         RequireFinite(height, nameof(height));
 
+        var right = left + width;
+        var bottom = top + height;
         if (left < -Epsilon || left > 1d + Epsilon)
             throw new ArgumentOutOfRangeException(nameof(left));
         if (top < -Epsilon || top > 1d + Epsilon)
             throw new ArgumentOutOfRangeException(nameof(top));
-        if (width <= 0d || width > 1d + Epsilon)
+        if (width <= 0d || right > 1d + Epsilon)
             throw new ArgumentOutOfRangeException(nameof(width));
-        if (height <= 0d || height > 1d + Epsilon)
-            throw new ArgumentOutOfRangeException(nameof(height));
-        if (left + width > 1d + Epsilon)
-            throw new ArgumentOutOfRangeException(nameof(width));
-        if (top + height > 1d + Epsilon)
+        if (height <= 0d || bottom > 1d + Epsilon)
             throw new ArgumentOutOfRangeException(nameof(height));
 
-        Left = Math.Clamp(left, 0d, 1d);
-        Top = Math.Clamp(top, 0d, 1d);
-        Width = Math.Min(width, 1d - Left);
-        Height = Math.Min(height, 1d - Top);
+        var normalizedLeft = Math.Clamp(left, 0d, 1d);
+        var normalizedTop = Math.Clamp(top, 0d, 1d);
+        var normalizedRight = Math.Clamp(right, 0d, 1d);
+        var normalizedBottom = Math.Clamp(bottom, 0d, 1d);
+        if (normalizedRight <= normalizedLeft || normalizedBottom <= normalizedTop)
+            throw new ArgumentException("Preview 拓扑矩形必须具有正面积。");
+
+        Left = normalizedLeft;
+        Top = normalizedTop;
+        Width = normalizedRight - normalizedLeft;
+        Height = normalizedBottom - normalizedTop;
     }
 
     private static void RequireFinite(double value, string parameterName)
@@ -189,12 +252,8 @@ public sealed record DesktopWorkspaceFrozenPreviewDisplay
 /// <summary>
 /// ADR-0005 Frozen Workspace Preview。
 ///
-/// 它冻结并绑定：
-/// - immutable Blueprint revision；
-/// - 当前 Observation / Explorer geometry identity；
-/// - 用户可见的 source-state snapshot；
-/// - exact CompiledWorkspacePlan；
-/// - 独立 semantic-equivalence Realization Certificate。
+/// 它冻结并绑定：immutable Blueprint revision、当前 Observation / Explorer geometry identity、
+/// 用户可见 source-state snapshot、exact CompiledWorkspacePlan，以及独立 semantic-equivalence Certificate。
 ///
 /// Preview 只是一份“用户看到了什么”的只读签名对象。它不是 Confirmed Candidate，
 /// 不授予 Execution / Recovery / Writer authority。
@@ -221,6 +280,7 @@ public sealed record DesktopWorkspaceFrozenPreview
     internal DesktopWorkspaceFrozenPreview(
         string previewFingerprint,
         string sourceStateFingerprint,
+        Guid sourceObservationId,
         DesktopWorkspaceBlueprint blueprint,
         CompiledWorkspacePlan exactPlan,
         WorkspaceRealizationCertificate realizationCertificate,
@@ -231,6 +291,8 @@ public sealed record DesktopWorkspaceFrozenPreview
             throw new ArgumentException("PreviewFingerprint 不能为空。", nameof(previewFingerprint));
         if (string.IsNullOrWhiteSpace(sourceStateFingerprint))
             throw new ArgumentException("SourceStateFingerprint 不能为空。", nameof(sourceStateFingerprint));
+        if (sourceObservationId == Guid.Empty)
+            throw new ArgumentException("SourceObservationId 不能为 Guid.Empty。", nameof(sourceObservationId));
         Blueprint = blueprint ?? throw new ArgumentNullException(nameof(blueprint));
         ExactPlan = exactPlan ?? throw new ArgumentNullException(nameof(exactPlan));
         RealizationCertificate = realizationCertificate ?? throw new ArgumentNullException(nameof(realizationCertificate));
@@ -249,7 +311,7 @@ public sealed record DesktopWorkspaceFrozenPreview
         PreviewId = Guid.NewGuid();
         PreviewFingerprint = previewFingerprint.Trim();
         SourceStateFingerprint = sourceStateFingerprint.Trim();
-        SourceObservationId = exactPlan.ObservationId;
+        SourceObservationId = sourceObservationId;
         _displays = Array.AsReadOnly(displayArray);
         _items = Array.AsReadOnly(itemArray);
         CrossDisplayAssignmentCount = itemArray.Count(static item => item.IsCrossDisplayMove);
@@ -263,32 +325,34 @@ public static class DesktopWorkspaceFrozenPreviewFactory
 {
     /// <summary>
     /// 只有已经通过独立 semantic-equivalence 的 exact plan 才能被冻结成 Preview。
-    /// Factory 会再次复算 Certificate 并与传入 Certificate 对齐，拒绝伪造或陈旧证明。
+    /// Factory 会再次复算 Certificate 并与传入 Certificate 对齐，拒绝伪造、陈旧证明或跨 Observation 拼接。
     /// </summary>
     public static DesktopWorkspaceFrozenPreview Create(
         DesktopWorkspaceBlueprint blueprint,
         ExplorerWorkspaceGeometry geometry,
         CompiledWorkspacePlan exactPlan,
         WorkspaceRealizationCertificate certificate,
-        IEnumerable<DesktopWorkspaceCompilationItemFact> itemFacts,
-        IEnumerable<DesktopWorkspacePreviewItemPresentation> itemPresentations,
+        DesktopWorkspacePreviewSourceSnapshot sourceSnapshot,
         IEnumerable<DesktopWorkspaceCompilationItemRefBinding>? itemRefBindings = null)
     {
         ArgumentNullException.ThrowIfNull(blueprint);
         ArgumentNullException.ThrowIfNull(geometry);
         ArgumentNullException.ThrowIfNull(exactPlan);
         ArgumentNullException.ThrowIfNull(certificate);
-        ArgumentNullException.ThrowIfNull(itemFacts);
-        ArgumentNullException.ThrowIfNull(itemPresentations);
+        ArgumentNullException.ThrowIfNull(sourceSnapshot);
 
-        var factArray = itemFacts.ToArray();
-        var presentationArray = itemPresentations.ToArray();
+        if (sourceSnapshot.ObservationId != geometry.ObservationId ||
+            sourceSnapshot.ObservationId != exactPlan.ObservationId)
+        {
+            throw new ArgumentException(
+                "Frozen Preview 的 source snapshot / geometry / exact plan 必须绑定同一次 Observation。",
+                nameof(sourceSnapshot));
+        }
+
+        var factArray = sourceSnapshot.ItemFacts.ToArray();
+        var presentationArray = sourceSnapshot.ItemPresentations.ToArray();
         var bindingArray = itemRefBindings?.ToArray() ?? [];
-        RejectNullElements(factArray, nameof(itemFacts));
-        RejectNullElements(presentationArray, nameof(itemPresentations));
         RejectNullElements(bindingArray, nameof(itemRefBindings));
-        EnsureUnique(factArray.Select(static fact => fact.StableId), nameof(itemFacts));
-        EnsureUnique(presentationArray.Select(static item => item.StableId), nameof(itemPresentations));
 
         var planStableIds = exactPlan.Items
             .Select(static item => item.StableId)
@@ -296,13 +360,8 @@ public static class DesktopWorkspaceFrozenPreviewFactory
         var factStableIds = factArray
             .Select(static item => item.StableId)
             .ToHashSet(StringComparer.Ordinal);
-        var presentationStableIds = presentationArray
-            .Select(static item => item.StableId)
-            .ToHashSet(StringComparer.Ordinal);
         if (!planStableIds.SetEquals(factStableIds))
-            throw new ArgumentException("ItemFacts 必须完整覆盖 ExactPlan 项目集合。", nameof(itemFacts));
-        if (!factStableIds.SetEquals(presentationStableIds))
-            throw new ArgumentException("ItemPresentations 必须完整覆盖 Frozen Preview 项目集合。", nameof(itemPresentations));
+            throw new ArgumentException("SourceSnapshot 必须完整覆盖 ExactPlan 项目集合。", nameof(sourceSnapshot));
 
         var equivalence = DesktopWorkspaceSemanticEquivalenceChecker.Check(
             blueprint,
@@ -352,16 +411,17 @@ public static class DesktopWorkspaceFrozenPreviewFactory
             blueprint,
             geometry,
             exactPlan,
-            certificate,
+            recomputedCertificate,
             sourceStateFingerprint,
             presentationArray);
 
         return new DesktopWorkspaceFrozenPreview(
             previewFingerprint,
             sourceStateFingerprint,
+            sourceSnapshot.ObservationId,
             blueprint,
             exactPlan,
-            certificate,
+            recomputedCertificate,
             displays,
             items);
     }
@@ -433,6 +493,7 @@ public static class DesktopWorkspaceFrozenPreviewFactory
             .Append(sourceStateFingerprint)
             .AppendLine();
 
+        AppendBlueprintMaterial(builder, blueprint);
         foreach (var presentation in presentations.OrderBy(static item => item.StableId, StringComparer.Ordinal))
         {
             builder.Append("p|")
@@ -445,20 +506,47 @@ public static class DesktopWorkspaceFrozenPreviewFactory
                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
     }
 
+    private static void AppendBlueprintMaterial(StringBuilder builder, DesktopWorkspaceBlueprint blueprint)
+    {
+        builder.Append("summary|").Append(blueprint.DesignSummary).AppendLine();
+        foreach (var policy in blueprint.DisplayPolicies.OrderBy(static item => item.DisplayRef, StringComparer.Ordinal))
+            builder.Append("dp|").Append(policy.DisplayRef).Append('|').Append((int)policy.Policy).AppendLine();
+        foreach (var zone in blueprint.Zones.OrderBy(static item => item.ZoneKey, StringComparer.Ordinal))
+        {
+            builder.Append("z|").Append(zone.ZoneKey).Append('|').Append(zone.Name).Append('|').Append(zone.DisplayRef).Append('|')
+                .Append(zone.Bounds.Left).Append('|').Append(zone.Bounds.Top).Append('|')
+                .Append(zone.Bounds.Width).Append('|').Append(zone.Bounds.Height).Append('|')
+                .Append((int)zone.Anchor).Append('|').Append((int)zone.PackingOrder).AppendLine();
+        }
+        foreach (var relation in blueprint.ZoneRelations
+                     .OrderBy(static item => item.ZoneKey, StringComparer.Ordinal)
+                     .ThenBy(static item => item.Relation)
+                     .ThenBy(static item => item.OtherZoneKey, StringComparer.Ordinal))
+        {
+            builder.Append("rel|").Append(relation.ZoneKey).Append('|').Append((int)relation.Relation).Append('|')
+                .Append(relation.OtherZoneKey).AppendLine();
+        }
+        foreach (var rule in blueprint.CategoryRules.OrderBy(static item => item.CategoryKey, StringComparer.Ordinal))
+            builder.Append("cr|").Append(rule.CategoryKey).Append('|').Append(rule.ZoneKey).AppendLine();
+        foreach (var itemOverride in blueprint.ItemOverrides.OrderBy(static item => item.ItemRef, StringComparer.Ordinal))
+        {
+            builder.Append("io|").Append(itemOverride.ItemRef).Append('|').Append((int)itemOverride.Kind).Append('|')
+                .Append(itemOverride.ZoneKey ?? string.Empty).Append('|')
+                .Append(itemOverride.Anchor.HasValue ? ((int)itemOverride.Anchor.Value).ToString() : string.Empty)
+                .AppendLine();
+        }
+        foreach (var region in blueprint.ReservedRegions.OrderBy(static item => item.RegionKey, StringComparer.Ordinal))
+        {
+            builder.Append("rr|").Append(region.RegionKey).Append('|').Append(region.Purpose).Append('|').Append(region.DisplayRef).Append('|')
+                .Append(region.Bounds.Left).Append('|').Append(region.Bounds.Top).Append('|')
+                .Append(region.Bounds.Width).Append('|').Append(region.Bounds.Height).AppendLine();
+        }
+    }
+
     private static void RejectNullElements<T>(IEnumerable<T> values, string parameterName)
         where T : class
     {
         if (values.Any(static value => value is null))
             throw new ArgumentException("集合不能包含 null。", parameterName);
-    }
-
-    private static void EnsureUnique(IEnumerable<string> values, string parameterName)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var value in values)
-        {
-            if (!seen.Add(value))
-                throw new ArgumentException($"集合包含重复键：{value}。", parameterName);
-        }
     }
 }
