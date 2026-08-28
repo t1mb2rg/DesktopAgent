@@ -104,7 +104,7 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         var xaml = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.xaml");
         var library = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceLibrary.cs");
 
-        Assert.Contains("Workspace Library", xaml, StringComparison.Ordinal);
+        Assert.Contains("工作区设计库", xaml, StringComparison.Ordinal);
         Assert.Contains("WorkspaceBlueprintList", xaml, StringComparison.Ordinal);
         Assert.Contains("WorkspaceLibrarySection_Loaded", xaml, StringComparison.Ordinal);
         Assert.Contains("RefreshWorkspaceLibrary_Click", xaml, StringComparison.Ordinal);
@@ -112,7 +112,7 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         Assert.Contains("SqliteDesktopWorkspaceBlueprintStore", library, StringComparison.Ordinal);
         Assert.Contains("ListAsync", library, StringComparison.Ordinal);
         Assert.Contains("GetCurrentRevisionAsync", library, StringComparison.Ordinal);
-        Assert.Contains("Blueprint v", library, StringComparison.Ordinal);
+        Assert.Contains("设计版本 v", library, StringComparison.Ordinal);
         Assert.Contains("只读设计资产", library, StringComparison.Ordinal);
 
         foreach (var forbidden in new[]
@@ -144,14 +144,14 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         Assert.Contains("WorkspaceRevisionList", xaml, StringComparison.Ordinal);
         Assert.Contains("WorkspaceDetailBack_Click", xaml, StringComparison.Ordinal);
         Assert.Contains("WorkspaceRevisionList_SelectionChanged", xaml, StringComparison.Ordinal);
-        Assert.Contains("Category → Zone", xaml, StringComparison.Ordinal);
-        Assert.Contains("Item Overrides", xaml, StringComparison.Ordinal);
+        Assert.Contains("分类 → 分区", xaml, StringComparison.Ordinal);
+        Assert.Contains("项目例外", xaml, StringComparison.Ordinal);
         Assert.Contains("IsExpanded=\"False\"", xaml, StringComparison.Ordinal);
 
         Assert.Contains("GetAssetAsync", detail, StringComparison.Ordinal);
         Assert.Contains("GetRevisionAsync", detail, StringComparison.Ordinal);
         Assert.Contains("revision <= asset.CurrentRevision", detail, StringComparison.Ordinal);
-        Assert.Contains("revision chain 不连续", detail, StringComparison.Ordinal);
+        Assert.Contains("版本链不连续", detail, StringComparison.Ordinal);
         Assert.Contains("WorkspaceDetailSurface.Visibility = Visibility.Visible", detail, StringComparison.Ordinal);
         Assert.Contains("WorkspaceRevisionList.SelectedIndex = 0", detail, StringComparison.Ordinal);
         Assert.Contains("历史版本 · 只读", detail, StringComparison.Ordinal);
@@ -171,6 +171,34 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         {
             Assert.DoesNotContain(forbidden, detail, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void WorkspaceDetail_LocalizesProductLanguageAndHidesRequestLocalRefs()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.xaml");
+        var detail = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceDetail.cs");
+        var library = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceLibrary.cs");
+
+        Assert.Contains("工作区设计库", xaml, StringComparison.Ordinal);
+        Assert.Contains("分区", xaml, StringComparison.Ordinal);
+        Assert.Contains("保留区域", xaml, StringComparison.Ordinal);
+        Assert.Contains("来源用户要求", xaml, StringComparison.Ordinal);
+        Assert.Contains("选择一个设计版本查看当时的方案", xaml, StringComparison.Ordinal);
+
+        Assert.Contains("FormatWorkspaceTitle", detail, StringComparison.Ordinal);
+        Assert.Contains("FormatBlueprintSummary", detail, StringComparison.Ordinal);
+        Assert.Contains("FormatDisplayRef", detail, StringComparison.Ordinal);
+        Assert.Contains("LocalizeUserFacingLabel", detail, StringComparison.Ordinal);
+        Assert.Contains("FormatCategoryKey", detail, StringComparison.Ordinal);
+        Assert.Contains("例外项目 {index + 1}", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateDetailEntry(item.ItemRef", detail, StringComparison.Ordinal);
+
+        Assert.Contains("FormatWorkspaceTitle(summary.Name, blueprint)", library, StringComparison.Ordinal);
+        Assert.Contains("FormatBlueprintSummary(blueprint)", library, StringComparison.Ordinal);
+        Assert.Contains("个分区", library, StringComparison.Ordinal);
+        Assert.Contains("个保留区域", library, StringComparison.Ordinal);
     }
 
     [Fact]
