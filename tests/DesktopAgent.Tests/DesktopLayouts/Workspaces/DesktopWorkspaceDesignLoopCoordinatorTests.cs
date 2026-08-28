@@ -116,6 +116,9 @@ public sealed class DesktopWorkspaceDesignLoopCoordinatorTests
         var request = CreateRequest(
             blueprintId,
             itemCount: 1,
+            categoryKey: "system",
+            categoryName: "系统项目",
+            categoryDescription: "Windows 系统桌面项目",
             criticalItems:
             [
                 new DesktopWorkspaceDesignCriticalItem(
@@ -222,6 +225,9 @@ public sealed class DesktopWorkspaceDesignLoopCoordinatorTests
     private static DesktopWorkspaceDesignRequest CreateRequest(
         Guid blueprintId,
         int itemCount,
+        string categoryKey = "dev",
+        string categoryName = "开发工具",
+        string categoryDescription = "IDE、终端和工程工具",
         IEnumerable<DesktopWorkspaceDesignCriticalItem>? criticalItems = null)
         => new(
             new DesktopWorkspaceDesignRevisionTarget(blueprintId, 1),
@@ -235,7 +241,7 @@ public sealed class DesktopWorkspaceDesignLoopCoordinatorTests
                     new DesktopWorkspaceRelativeRect(0, 0, 1, 1),
                     2.0),
             ],
-            [new DesktopWorkspaceDesignCategorySummary("dev", "开发工具", "IDE、终端和工程工具", itemCount)],
+            [new DesktopWorkspaceDesignCategorySummary(categoryKey, categoryName, categoryDescription, itemCount)],
             criticalItems);
 
     private static DesktopWorkspaceBlueprint CreateBlueprint(
