@@ -14,7 +14,7 @@ public sealed partial class LayoutManagementView
             RefreshApplyButtonFromCurrentEvidence();
             ShowInfo(
                 "工作区精确预览仍然冻结",
-                _workspaceFrozenPreviewApplyAvailable
+                HasWorkspaceFrozenPreviewApplyTicket(_workspaceFrozenPreview)
                     ? "这份 Frozen Preview 仍是你刚刚看过的精确结果。这里不会重新读取桌面；真正点击“应用这个布局”后才会先做 fresh check。"
                     : "这份 Frozen Preview 只保留作审阅参考；它的一次性 Apply 入口已经消费或失效。请回到 AI 助手重新生成精确预览。",
                 InfoBarSeverity.Informational);
