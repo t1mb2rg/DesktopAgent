@@ -11,6 +11,7 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         Assert.Contains("DesktopExplorerWorkspaceGeometryAdapter.Build", service, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceDesignPreparationFactory.Create", service, StringComparison.Ordinal);
         Assert.Contains("OpenAiCompatibleDesktopWorkspaceDesigner", service, StringComparison.Ordinal);
+        Assert.Contains("ContractRepairingDesktopWorkspaceDesigner", service, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceDesignLoopCoordinator", service, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceFrozenPreviewFactory.Create", service, StringComparison.Ordinal);
 
