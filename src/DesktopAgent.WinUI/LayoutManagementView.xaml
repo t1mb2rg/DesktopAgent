@@ -6,6 +6,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -17,7 +18,42 @@
 
         <InfoBar x:Name="LayoutStatusBar" Grid.Row="1" IsOpen="False" IsClosable="True" />
 
-        <Grid Grid.Row="2" MinWidth="980" MinHeight="0" VerticalAlignment="Stretch" ColumnSpacing="12">
+        <Border x:Name="WorkspaceLibrarySection" Grid.Row="2" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Loaded="WorkspaceLibrarySection_Loaded">
+            <Grid RowSpacing="10">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Workspace Library" FontSize="17" FontWeight="SemiBold" />
+                        <TextBlock x:Name="WorkspaceLibraryStatusText" Text="正在读取 Workspace Library…" FontSize="12" Opacity="0.58" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button x:Name="WorkspaceLibraryRefreshButton" Grid.Column="1" Content="↻" Width="38" ToolTipService.ToolTip="刷新 Workspace Blueprint Library" Click="RefreshWorkspaceLibrary_Click" />
+                </Grid>
+                <Grid Grid.Row="1">
+                    <TextBlock x:Name="WorkspaceLibraryEmptyText" Text="正在读取…" FontSize="12" Opacity="0.52" VerticalAlignment="Center" />
+                    <ListView x:Name="WorkspaceBlueprintList" Visibility="Collapsed" MaxHeight="160" SelectionMode="None">
+                        <ListView.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Padding="6,6" ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="2*" /><ColumnDefinition Width="1.2*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding DesignSummary}" FontSize="11" Opacity="0.58" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="{Binding RevisionText}" FontSize="12" FontWeight="SemiBold" />
+                                        <TextBlock Text="{Binding StructureText}" FontSize="11" Opacity="0.52" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding UpdatedText}" FontSize="11" Opacity="0.48" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" MinWidth="980" MinHeight="0" VerticalAlignment="Stretch" ColumnSpacing="12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" MinWidth="420" /><ColumnDefinition Width="300" /></Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" MinHeight="0" VerticalAlignment="Stretch" Padding="12" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
