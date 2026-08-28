@@ -17,6 +17,7 @@ public sealed partial class LayoutManagementView
 
         DisableWorkspaceFrozenPreviewApplyEvidence();
         ClearAiWorkspaceFrozenPreview();
+        RefreshApplyButtonFromCurrentEvidence();
     }
 
     /// <summary>
