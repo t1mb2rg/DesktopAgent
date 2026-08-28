@@ -62,6 +62,13 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
                       "zone_key": "development-zone",
                       "confidence": 0.95,
                       "reason": "这是开发工具快捷入口。"
+                    },
+                    {
+                      "item_ref": "item-0002",
+                      "category_key": "course",
+                      "zone_key": null,
+                      "confidence": 0.92,
+                      "reason": "这是课程实验报告。"
                     }
                   ],
                   "questions": [
@@ -86,7 +93,9 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
 
         Assert.Equal(IntelligenceProviderStatus.Success, result.Status);
         var draft = Assert.IsType<DesktopUnderstandingDraft>(result.Draft);
-        Assert.Equal("stable-secret-vscode", Assert.Single(draft.Assignments).StableId);
+        Assert.Equal(2, draft.Assignments.Count);
+        Assert.Contains(draft.Assignments, assignment => assignment.StableId == "stable-secret-vscode");
+        Assert.Contains(draft.Assignments, assignment => assignment.StableId == "stable-secret-report");
         Assert.Equal(existingZoneId, Assert.Single(draft.Zones).ExistingZoneId);
         Assert.Equal(DesktopZonePlacementHint.Right, draft.Zones[0].PlacementHint);
         Assert.Equal(DesktopZoneSizeHint.Large, draft.Zones[0].SizeHint);
@@ -123,6 +132,129 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
     }
 
     [Fact]
+    public async Task Provider_MissingAssignment_IsRepairedOnce_AndReturnsCompleteDraft()
+    {
+        var responses = new Queue<string>(new[]
+        {
+            """
+            {
+              "intent_summary": "按用途整理。",
+              "desktop_summary": "两个项目。",
+              "categories": [
+                { "key": "development", "name": "开发", "description": "开发工具" },
+                { "key": "course", "name": "课程", "description": "课程资料" }
+              ],
+              "zones": [],
+              "assignments": [
+                {
+                  "item_ref": "item-0001",
+                  "category_key": "development",
+                  "zone_key": null,
+                  "confidence": 0.95,
+                  "reason": "开发工具"
+                }
+              ],
+              "questions": []
+            }
+            """,
+            """
+            {
+              "intent_summary": "按用途整理。",
+              "desktop_summary": "两个项目。",
+              "categories": [
+                { "key": "development", "name": "开发", "description": "开发工具" },
+                { "key": "course", "name": "课程", "description": "课程资料" }
+              ],
+              "zones": [],
+              "assignments": [
+                {
+                  "item_ref": "item-0001",
+                  "category_key": "development",
+                  "zone_key": null,
+                  "confidence": 0.95,
+                  "reason": "开发工具"
+                },
+                {
+                  "item_ref": "item-0002",
+                  "category_key": "course",
+                  "zone_key": null,
+                  "confidence": 0.65,
+                  "reason": "课程资料"
+                }
+              ],
+              "questions": []
+            }
+            """,
+        });
+        var requestBodies = new List<string>();
+        using var httpClient = CreateClient(async (request, cancellationToken) =>
+        {
+            requestBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+            return CompletionResponse(responses.Dequeue());
+        });
+        var provider = CreateProvider(httpClient);
+        var request = new DesktopFirstRunUnderstandingRequest(new[]
+        {
+            CreateFacts("stable-dev", "Visual Studio Code.lnk", ItemKind.Shortcut, ".lnk"),
+            CreateFacts("stable-course", "实验报告.pdf"),
+        });
+
+        var result = await provider.UnderstandAsync(request);
+
+        Assert.Equal(IntelligenceProviderStatus.Success, result.Status);
+        var draft = Assert.IsType<DesktopUnderstandingDraft>(result.Draft);
+        Assert.Equal(2, draft.Assignments.Count);
+        Assert.Equal(2, requestBodies.Count);
+        Assert.Contains("exactly 2 entries", requestBodies[1], StringComparison.Ordinal);
+        Assert.Contains("item-0002", requestBodies[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("stable-course", requestBodies[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Provider_MissingAssignment_AfterSingleRepair_IsRejected()
+    {
+        const string incomplete = """
+            {
+              "intent_summary": "按用途整理。",
+              "desktop_summary": "两个项目。",
+              "categories": [
+                { "key": "development", "name": "开发", "description": "开发工具" }
+              ],
+              "zones": [],
+              "assignments": [
+                {
+                  "item_ref": "item-0001",
+                  "category_key": "development",
+                  "zone_key": null,
+                  "confidence": 0.9,
+                  "reason": "开发工具"
+                }
+              ],
+              "questions": []
+            }
+            """;
+        var callCount = 0;
+        using var httpClient = CreateClient((_, _) =>
+        {
+            callCount++;
+            return Task.FromResult(CompletionResponse(incomplete));
+        });
+        var provider = CreateProvider(httpClient);
+        var request = new DesktopFirstRunUnderstandingRequest(new[]
+        {
+            CreateFacts("stable-dev", "Visual Studio Code.lnk", ItemKind.Shortcut, ".lnk"),
+            CreateFacts("stable-course", "实验报告.pdf"),
+        });
+
+        var result = await provider.UnderstandAsync(request);
+
+        Assert.Equal(IntelligenceProviderStatus.InvalidResponse, result.Status);
+        Assert.Null(result.Draft);
+        Assert.Equal(2, callCount);
+        Assert.Contains("必须完整覆盖本次 2 个项目", result.DiagnosticMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Provider_BrokenSemanticPayloads_AreRejectedTogether()
     {
         var responses = new Queue<string>(new[]
@@ -145,7 +277,15 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderTests
               "desktop_summary": "桌面主要是开发项目。",
               "categories": [null],
               "zones": [],
-              "assignments": [],
+              "assignments": [
+                {
+                  "item_ref": "item-0001",
+                  "category_key": "development",
+                  "zone_key": null,
+                  "confidence": 0.5,
+                  "reason": "等待语义校验"
+                }
+              ],
               "questions": []
             }
             """,
