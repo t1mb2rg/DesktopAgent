@@ -162,14 +162,26 @@ public sealed partial class AiAssistantView : UserControl
             if (result.Succeeded && result.Draft is not null && result.Observation is not null)
             {
                 _latestSuccessfulUnderstanding = result;
+                _persistedUnderstandingState = null;
                 _conversationState = DesktopLayoutConversationState.Empty;
                 RenderDraft(result);
                 AiGuidanceTextBox.Text = string.Empty;
                 AiAnalyzeButton.Content = "应用这条修正";
                 AiRefreshUnderstandingButton.Visibility = Visibility.Visible;
-                AiStatusBar.Severity = InfoBarSeverity.Success;
-                AiStatusBar.Title = "桌面语义模型已建立";
-                AiStatusBar.Message = $"已完整理解 {result.ObservedItemCount} 个项目。之后的对话不会重新跑这批项目，除非你明确点击“重新理解桌面”。";
+
+                if (string.IsNullOrWhiteSpace(result.PersistenceWarning))
+                {
+                    AiStatusBar.Severity = InfoBarSeverity.Success;
+                    AiStatusBar.Title = "桌面语义模型已建立";
+                    AiStatusBar.Message = $"已完整理解 {result.ObservedItemCount} 个项目，并保存为长期语义记忆。之后的对话不会重新跑这批项目，除非你明确点击“重新理解桌面”。";
+                }
+                else
+                {
+                    AiStatusBar.Severity = InfoBarSeverity.Warning;
+                    AiStatusBar.Title = "桌面语义模型已建立，但长期记忆未保存";
+                    AiStatusBar.Message = $"已完整理解 {result.ObservedItemCount} 个项目，本次会话可以继续使用；{result.PersistenceWarning}";
+                }
+
                 AiStatusBar.IsOpen = true;
                 return;
             }
