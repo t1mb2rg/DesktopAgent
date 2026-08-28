@@ -1,7 +1,6 @@
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Preview;
-using DesktopAgent.Core.Geometry;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Shapes;
@@ -15,6 +14,7 @@ public sealed partial class LayoutManagementView
 
     private DesktopWorkspaceFrozenPreview? _workspaceFrozenPreview;
     private int _activeWorkspaceFrozenPreviewDisplayIndex = -1;
+    private bool _workspaceFrozenPreviewHandlersAttached;
 
     internal bool TryLoadAiWorkspaceFrozenPreview(DesktopWorkspaceFrozenPreview preview)
     {
@@ -50,6 +50,7 @@ public sealed partial class LayoutManagementView
         _workspaceFrozenPreview = preview;
         _activeWorkspaceFrozenPreviewDisplayIndex = 0;
         SetSelectedTemplateWithoutNotification(null);
+        EnsureWorkspaceFrozenPreviewUiHandlers();
 
         _suppressAiWorkspaceSelectionChanged = true;
         try
@@ -89,6 +90,30 @@ public sealed partial class LayoutManagementView
             "当前只展示已经通过 Realization Certificate 的精确结果，Writer authority 仍为 0。",
             InfoBarSeverity.Success);
         return true;
+    }
+
+    private void EnsureWorkspaceFrozenPreviewUiHandlers()
+    {
+        if (_workspaceFrozenPreviewHandlersAttached)
+            return;
+
+        AiWorkspaceDisplayCombo.SelectionChanged += AiWorkspaceFrozenPreviewDisplayCombo_SelectionChanged;
+        LayoutCanvas.SizeChanged += WorkspaceFrozenPreviewCanvas_SizeChanged;
+        _workspaceFrozenPreviewHandlersAttached = true;
+    }
+
+    private void AiWorkspaceFrozenPreviewDisplayCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressAiWorkspaceSelectionChanged || _workspaceFrozenPreview is null)
+            return;
+
+        FocusAiWorkspaceFrozenPreviewDisplay(AiWorkspaceDisplayCombo.SelectedIndex);
+    }
+
+    private void WorkspaceFrozenPreviewCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_workspaceFrozenPreview is not null)
+            RenderWorkspaceFrozenPreviewCanvas();
     }
 
     private void FocusAiWorkspaceFrozenPreviewDisplay(int index)
@@ -155,14 +180,17 @@ public sealed partial class LayoutManagementView
             $"Observation {preview.SourceObservationId:D}\n" +
             $"Preview {ShortFingerprint(preview.PreviewFingerprint)} · Source {ShortFingerprint(preview.SourceStateFingerprint)}";
         LayoutPreviewDetails.Visibility = Visibility.Visible;
-        RenderLayoutCanvas();
+        RenderWorkspaceFrozenPreviewCanvas();
     }
 
-    private void RenderAiWorkspaceFrozenPreview()
+    private void RenderWorkspaceFrozenPreviewCanvas()
     {
         var preview = _workspaceFrozenPreview;
         if (preview is null)
             return;
+
+        LayoutCanvas.Children.Clear();
+        LayoutCanvasEmptyState.Visibility = Visibility.Collapsed;
 
         var virtualLeft = preview.Displays.Min(static display => display.PixelBounds.Left);
         var virtualTop = preview.Displays.Min(static display => display.PixelBounds.Top);
