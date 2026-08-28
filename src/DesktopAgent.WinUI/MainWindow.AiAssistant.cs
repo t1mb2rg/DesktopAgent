@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Preview;
 using Microsoft.UI.Xaml.Controls;
 
 namespace DesktopAgent.WinUI;
@@ -16,6 +17,7 @@ public sealed partial class MainWindow
         _aiAssistantView = new AiAssistantView();
         _aiAssistantView.LayoutDraftImportRequested += AiAssistantView_LayoutDraftImportRequested;
         _aiAssistantView.LogicalWorkspacePreviewRequested += AiAssistantView_LogicalWorkspacePreviewRequested;
+        _aiAssistantView.WorkspaceFrozenPreviewRequested += AiAssistantView_WorkspaceFrozenPreviewRequested;
         AiView.Children.Clear();
         Grid.SetRow(_aiAssistantView, 0);
         Grid.SetRowSpan(_aiAssistantView, 3);
@@ -35,6 +37,14 @@ public sealed partial class MainWindow
         NavigateToLayouts();
         _layoutManagementView!.PrepareLogicalWorkspacePreviewReplacement();
         _layoutManagementView.TryLoadAiLogicalWorkspacePreview(session);
+    }
+
+    private void AiAssistantView_WorkspaceFrozenPreviewRequested(
+        DesktopWorkspaceFrozenPreview preview)
+    {
+        NavigateToLayouts();
+        _layoutManagementView!.PrepareWorkspaceFrozenPreviewReplacement();
+        _layoutManagementView.TryLoadAiWorkspaceFrozenPreview(preview);
     }
 
     private void NavigateToLayouts()
@@ -65,6 +75,7 @@ public sealed partial class MainWindow
         _aiAssistantView.CancelActiveRequest();
         _aiAssistantView.LayoutDraftImportRequested -= AiAssistantView_LayoutDraftImportRequested;
         _aiAssistantView.LogicalWorkspacePreviewRequested -= AiAssistantView_LogicalWorkspacePreviewRequested;
+        _aiAssistantView.WorkspaceFrozenPreviewRequested -= AiAssistantView_WorkspaceFrozenPreviewRequested;
         AiView.Children.Remove(_aiAssistantView);
         _aiAssistantView = null;
     }
