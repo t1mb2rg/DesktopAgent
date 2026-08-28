@@ -27,7 +27,15 @@ public sealed class OpenAiCompatibleDesktopFirstRunIntelligenceProviderRepairTes
                         { "key": "dev", "name": "开发", "description": "开发工具" }
                       ],
                       "zones": [],
-                      "assignments": []
+                      "assignments": [
+                        {
+                          "item_ref": "item-0001",
+                          "category_key": "dev",
+                          "zone_key": null,
+                          "confidence": 0.9,
+                          "reason": "开发工具"
+                        }
+                      ]
                     }
                     """)
                 : CompletionResponse(ValidUnderstandingJson());
