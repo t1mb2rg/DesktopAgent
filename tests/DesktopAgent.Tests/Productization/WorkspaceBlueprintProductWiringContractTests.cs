@@ -41,7 +41,8 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         Assert.True(persistCallIndex > previewIndex);
 
         Assert.Contains("loop.BlueprintRevisions", service, StringComparison.Ordinal);
-        Assert.Contains("preparation.Request.UserGuidance", service, StringComparison.Ordinal);
+        Assert.Contains("sourceUserIntent", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("preparation.Request.UserGuidance,\n                    cancellationToken", service, StringComparison.Ordinal);
         Assert.Contains("SqliteDesktopWorkspaceBlueprintStore", service, StringComparison.Ordinal);
         Assert.Contains("store.CreateAsync", service, StringComparison.Ordinal);
         Assert.Contains("store.AppendRevisionAsync", service, StringComparison.Ordinal);
@@ -77,6 +78,26 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
     }
 
     [Fact]
+    public void WorkspaceSourceIntent_TracksOnlyUserAuthoredGuidance()
+    {
+        var root = FindRepositoryRoot();
+        var aiView = Read(root, "src/DesktopAgent.WinUI/AiAssistantView.xaml.cs");
+        var import = Read(root, "src/DesktopAgent.WinUI/AiAssistantView.MultiDisplayImport.cs");
+        var service = Read(root, "src/DesktopAgent.WinUI/AiDesktopWorkspacePlanningService.cs");
+
+        Assert.Contains("_workspaceUserIntentHistory", aiView, StringComparison.Ordinal);
+        Assert.Contains("RememberWorkspaceUserIntent(guidance)", aiView, StringComparison.Ordinal);
+        Assert.Contains("BuildWorkspaceSourceUserIntent()", aiView, StringComparison.Ordinal);
+        Assert.Contains("BuildWorkspaceSourceUserIntent(),", import, StringComparison.Ordinal);
+        Assert.Contains("string? sourceUserIntent", service, StringComparison.Ordinal);
+        Assert.Contains("sourceUserIntent: durableUserIntent", service, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "PersistSuccessfulBlueprintAsync(\n                    loop.BlueprintRevisions,\n                    preparation.Request.UserGuidance",
+            service,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LayoutSurface_HydratesReadOnlyWorkspaceLibraryWithoutRestoringExecutionAuthority()
     {
         var root = FindRepositoryRoot();
@@ -109,25 +130,33 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
     }
 
     [Fact]
-    public void WorkspaceLibraryDetail_LoadsWholeImmutableHistory_WithoutExecutionAuthority()
+    public void WorkspaceLibraryDetail_UsesDedicatedSurfaceAndSelectableImmutableHistory_WithoutExecutionAuthority()
     {
         var root = FindRepositoryRoot();
+        var xaml = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.xaml");
         var library = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceLibrary.cs");
         var detail = Read(root, "src/DesktopAgent.WinUI/LayoutManagementView.WorkspaceDetail.cs");
 
         Assert.Contains("IsItemClickEnabled = true", library, StringComparison.Ordinal);
         Assert.Contains("WorkspaceBlueprintList_ItemClick", library, StringComparison.Ordinal);
 
+        Assert.Contains("WorkspaceDetailSurface", xaml, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceRevisionList", xaml, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceDetailBack_Click", xaml, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceRevisionList_SelectionChanged", xaml, StringComparison.Ordinal);
+        Assert.Contains("Category → Zone", xaml, StringComparison.Ordinal);
+        Assert.Contains("Item Overrides", xaml, StringComparison.Ordinal);
+        Assert.Contains("IsExpanded=\"False\"", xaml, StringComparison.Ordinal);
+
         Assert.Contains("GetAssetAsync", detail, StringComparison.Ordinal);
         Assert.Contains("GetRevisionAsync", detail, StringComparison.Ordinal);
         Assert.Contains("revision <= asset.CurrentRevision", detail, StringComparison.Ordinal);
         Assert.Contains("revision chain 不连续", detail, StringComparison.Ordinal);
-        Assert.Contains("设计来源", detail, StringComparison.Ordinal);
-        Assert.Contains("显示器策略", detail, StringComparison.Ordinal);
-        Assert.Contains("Reserved Regions", detail, StringComparison.Ordinal);
-        Assert.Contains("Category → Zone", detail, StringComparison.Ordinal);
-        Assert.Contains("版本历史", detail, StringComparison.Ordinal);
-        Assert.Contains("ContentDialog", detail, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceDetailSurface.Visibility = Visibility.Visible", detail, StringComparison.Ordinal);
+        Assert.Contains("WorkspaceRevisionList.SelectedIndex = 0", detail, StringComparison.Ordinal);
+        Assert.Contains("历史版本 · 只读", detail, StringComparison.Ordinal);
+        Assert.Contains("LooksLikeLegacyPreparationGuidance", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("ContentDialog", detail, StringComparison.Ordinal);
 
         foreach (var forbidden in new[]
                  {
