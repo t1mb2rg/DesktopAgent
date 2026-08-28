@@ -100,7 +100,9 @@ public sealed partial class AiAssistantView
         }
 
         AiImportLayoutButton.IsEnabled = false;
-        AiRefreshUnderstandingButton.Visibility = Visibility.Visible;
+        // Persisted pure semantics do not create a legacy Draft. Keep exactly one explicit
+        // full re-understanding action instead of surfacing two equivalent buttons.
+        AiRefreshUnderstandingButton.Visibility = Visibility.Collapsed;
         AiAnalyzeButton.Content = "重新理解桌面";
 
         if (state.Status == AiPersistedUnderstandingRestoreStatus.DesktopUnavailable)
