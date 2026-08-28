@@ -209,7 +209,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         ";
         using var reader = select.ExecuteReader();
         Assert.True(reader.Read());
-        Assert.Equal("V2 Template", reader.GetInt32(0) is int ? reader.GetString(0) : reader.GetString(0));
+        Assert.Equal("V2 Template", reader.GetString(0));
         Assert.Equal(2, reader.GetInt32(1));
         Assert.Equal("00000000-0000-0000-0000-000000000022", reader.GetString(2));
         Assert.Equal("Main", reader.GetString(3));
