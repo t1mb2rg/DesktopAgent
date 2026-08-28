@@ -13,7 +13,7 @@ public sealed partial class LayoutManagementView
         new(DesktopAgentDataPaths.DefaultDatabasePath);
 
     private DesktopWorkspaceApplyService? _workspaceApplyService;
-    private bool _workspaceFrozenPreviewApplyAvailable;
+    private Guid? _workspaceFrozenPreviewApplyPreviewId;
 
     private DesktopWorkspaceApplyService WorkspaceApplyService =>
         _workspaceApplyService ??= new DesktopWorkspaceApplyService(
@@ -23,14 +23,19 @@ public sealed partial class LayoutManagementView
 
     internal void EnableWorkspaceFrozenPreviewApply()
     {
-        _workspaceFrozenPreviewApplyAvailable =
-            _workspaceFrozenPreview is not null && _workspaceFrozenPreview.MoveCount > 0;
+        _workspaceFrozenPreviewApplyPreviewId =
+            _workspaceFrozenPreview is { MoveCount: > 0 } preview
+                ? preview.PreviewId
+                : null;
         RefreshApplyButtonFromCurrentEvidence();
     }
 
+    private bool HasWorkspaceFrozenPreviewApplyTicket(DesktopWorkspaceFrozenPreview preview)
+        => _workspaceFrozenPreviewApplyPreviewId == preview.PreviewId;
+
     private void DisableWorkspaceFrozenPreviewApplyEvidence()
     {
-        _workspaceFrozenPreviewApplyAvailable = false;
+        _workspaceFrozenPreviewApplyPreviewId = null;
         RefreshApplyButtonFromCurrentEvidence();
     }
 
@@ -41,7 +46,7 @@ public sealed partial class LayoutManagementView
             ApplyToDesktopButton.Content = "应用这个布局";
             ApplyToDesktopButton.IsEnabled =
                 !_directApplyInProgress &&
-                _workspaceFrozenPreviewApplyAvailable &&
+                HasWorkspaceFrozenPreviewApplyTicket(_workspaceFrozenPreview) &&
                 _workspaceFrozenPreview.MoveCount > 0;
             return;
         }
@@ -57,7 +62,7 @@ public sealed partial class LayoutManagementView
     private async Task ApplyWorkspaceFrozenPreviewAsync()
     {
         var preview = _workspaceFrozenPreview;
-        if (preview is null || !_workspaceFrozenPreviewApplyAvailable)
+        if (preview is null || !HasWorkspaceFrozenPreviewApplyTicket(preview))
         {
             RefreshApplyButtonFromCurrentEvidence();
             ShowInfo(
@@ -69,7 +74,7 @@ public sealed partial class LayoutManagementView
 
         if (preview.MoveCount == 0)
         {
-            _workspaceFrozenPreviewApplyAvailable = false;
+            _workspaceFrozenPreviewApplyPreviewId = null;
             RefreshApplyButtonFromCurrentEvidence();
             ShowInfo("桌面已经就位", "这份精确预览没有需要移动的项目。", InfoBarSeverity.Success);
             return;
@@ -115,9 +120,9 @@ public sealed partial class LayoutManagementView
             return;
         }
 
-        // Confirmation 只在用户真正点下“确认并应用”后生成，并且一次性消费当前 Preview 的执行入口。
+        // Confirmation 只在用户真正点下“确认并应用”后生成，并且一次性消费当前 PreviewId 的执行入口。
         var confirmation = DesktopWorkspaceApplyConfirmation.Create(preview);
-        _workspaceFrozenPreviewApplyAvailable = false;
+        _workspaceFrozenPreviewApplyPreviewId = null;
         _directApplyInProgress = true;
         RefreshApplyButtonFromCurrentEvidence();
         ReconcileRecoveryButton.IsEnabled = false;
