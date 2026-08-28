@@ -377,14 +377,16 @@ public sealed class DesktopWorkspaceExecutionCoordinator
 
             var step = plan.Steps[stepIndex];
             DesktopIconMoveResult moveResult;
-            onWriterStarting();
-            writerStarted = true;
             try
             {
-                moveResult = await _staExecutor.RunAsync(
-                    () => _positionWriter.MoveDesktopIcon(
+                moveResult = await _staExecutor.RunAsync(() =>
+                {
+                    onWriterStarting();
+                    writerStarted = true;
+                    return _positionWriter.MoveDesktopIcon(
                         step.StableId,
-                        step.ToPixelPosition));
+                        step.ToPixelPosition);
+                });
             }
             catch (Exception ex)
             {
