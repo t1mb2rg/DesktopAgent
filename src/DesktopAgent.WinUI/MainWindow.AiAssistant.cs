@@ -44,7 +44,8 @@ public sealed partial class MainWindow
     {
         NavigateToLayouts();
         _layoutManagementView!.PrepareWorkspaceFrozenPreviewReplacement();
-        _layoutManagementView.TryLoadAiWorkspaceFrozenPreview(preview);
+        if (_layoutManagementView.TryLoadAiWorkspaceFrozenPreview(preview))
+            _layoutManagementView.EnableWorkspaceFrozenPreviewApply();
     }
 
     private void NavigateToLayouts()
