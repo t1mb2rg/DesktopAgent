@@ -37,6 +37,7 @@ public sealed partial class AiAssistantView
                 latest.Draft,
                 latest.Observation,
                 _conversationState,
+                BuildWorkspaceSourceUserIntent(),
                 cts.Token);
             if (cts.IsCancellationRequested)
             {
