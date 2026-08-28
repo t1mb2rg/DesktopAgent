@@ -32,6 +32,14 @@ internal sealed class OpenAiCompatibleJsonChatTransport
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _secretResolver = secretResolver ?? throw new ArgumentNullException(nameof(secretResolver));
+
+        // Timeout authority belongs to this transport through _options.Timeout + linked CTS.
+        // HttpClient's built-in default timeout is 100 seconds and would otherwise silently
+        // pre-empt longer product/provider timeouts while the diagnostic still reports _options.Timeout.
+        // Shared provider clients are supported: the first transport disables the built-in timer;
+        // later transports observe InfiniteTimeSpan and do not mutate an already-used client.
+        if (_httpClient.Timeout != Timeout.InfiniteTimeSpan)
+            _httpClient.Timeout = Timeout.InfiniteTimeSpan;
     }
 
     public async Task<OpenAiCompatibleJsonChatResult> CompleteJsonAsync(
