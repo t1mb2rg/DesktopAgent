@@ -20,11 +20,14 @@ public enum DesktopWorkspaceDesignLoopStatus
 /// 一次有界 Workspace Design loop 的终态。
 /// Success 才同时携带 Blueprint + Exact Plan + Realization Certificate；
 /// 其他状态只返回本地诊断，不授予 Preview / Candidate / Writer authority。
+/// Success 额外保留本轮已经形成的完整 immutable Blueprint revision history，
+/// 只用于 durable Workspace Library 持久化，不改变 Preview / Execution authority。
 /// </summary>
 public sealed class DesktopWorkspaceDesignLoopResult
 {
     private readonly IReadOnlyList<DesktopWorkspaceCompileIssue> _compileIssues;
     private readonly IReadOnlyList<DesktopWorkspaceEquivalenceIssue> _equivalenceIssues;
+    private readonly IReadOnlyList<DesktopWorkspaceBlueprint> _blueprintRevisions;
 
     public DesktopWorkspaceDesignLoopStatus Status { get; }
     public int DesignAttempts { get; }
@@ -35,6 +38,7 @@ public sealed class DesktopWorkspaceDesignLoopResult
     public string? DiagnosticMessage { get; }
     public IReadOnlyList<DesktopWorkspaceCompileIssue> CompileIssues => _compileIssues;
     public IReadOnlyList<DesktopWorkspaceEquivalenceIssue> EquivalenceIssues => _equivalenceIssues;
+    public IReadOnlyList<DesktopWorkspaceBlueprint> BlueprintRevisions => _blueprintRevisions;
     public bool Succeeded => Status == DesktopWorkspaceDesignLoopStatus.Success &&
                              Blueprint is not null &&
                              Plan is not null &&
@@ -49,7 +53,8 @@ public sealed class DesktopWorkspaceDesignLoopResult
         IntelligenceProviderStatus? providerStatus = null,
         string? diagnosticMessage = null,
         IEnumerable<DesktopWorkspaceCompileIssue>? compileIssues = null,
-        IEnumerable<DesktopWorkspaceEquivalenceIssue>? equivalenceIssues = null)
+        IEnumerable<DesktopWorkspaceEquivalenceIssue>? equivalenceIssues = null,
+        IEnumerable<DesktopWorkspaceBlueprint>? blueprintRevisions = null)
     {
         if (!Enum.IsDefined(status))
             throw new ArgumentOutOfRangeException(nameof(status));
@@ -58,10 +63,13 @@ public sealed class DesktopWorkspaceDesignLoopResult
 
         var compileArray = compileIssues?.ToArray() ?? [];
         var equivalenceArray = equivalenceIssues?.ToArray() ?? [];
+        var revisionArray = blueprintRevisions?.ToArray() ?? [];
         if (compileArray.Any(static issue => issue is null))
             throw new ArgumentException("CompileIssues 不能包含 null。", nameof(compileIssues));
         if (equivalenceArray.Any(static issue => issue is null))
             throw new ArgumentException("EquivalenceIssues 不能包含 null。", nameof(equivalenceIssues));
+        if (revisionArray.Any(static revision => revision is null))
+            throw new ArgumentException("BlueprintRevisions 不能包含 null。", nameof(blueprintRevisions));
 
         if (status == DesktopWorkspaceDesignLoopStatus.Success)
         {
@@ -70,10 +78,15 @@ public sealed class DesktopWorkspaceDesignLoopResult
             {
                 throw new ArgumentException("Success 必须完整携带 Blueprint / Plan / Certificate 且不能携带失败状态。 ");
             }
+
+            ValidateSuccessfulRevisionHistory(blueprint, revisionArray);
         }
-        else if (plan is not null || certificate is not null)
+        else
         {
-            throw new ArgumentException("非 Success 状态不能携带可执行 Exact Plan 或 Certificate。 ");
+            if (plan is not null || certificate is not null)
+                throw new ArgumentException("非 Success 状态不能携带可执行 Exact Plan 或 Certificate。 ");
+            if (revisionArray.Length > 0)
+                throw new ArgumentException("非 Success 状态不公开可持久化 Blueprint revision history。 ");
         }
 
         Status = status;
@@ -85,19 +98,50 @@ public sealed class DesktopWorkspaceDesignLoopResult
         DiagnosticMessage = diagnosticMessage;
         _compileIssues = Array.AsReadOnly(compileArray);
         _equivalenceIssues = Array.AsReadOnly(equivalenceArray);
+        _blueprintRevisions = Array.AsReadOnly(revisionArray);
+    }
+
+    private static void ValidateSuccessfulRevisionHistory(
+        DesktopWorkspaceBlueprint finalBlueprint,
+        IReadOnlyList<DesktopWorkspaceBlueprint> revisions)
+    {
+        if (revisions.Count == 0)
+            throw new ArgumentException("Success 必须携带至少一个 Blueprint revision。", nameof(revisions));
+
+        for (var index = 0; index < revisions.Count; index++)
+        {
+            var revision = revisions[index];
+            var expectedRevision = index + 1;
+            var expectedParent = expectedRevision == 1 ? (int?)null : expectedRevision - 1;
+
+            if (revision.BlueprintId != finalBlueprint.BlueprintId)
+                throw new ArgumentException("Blueprint revision history 必须共享同一个 BlueprintId。", nameof(revisions));
+            if (revision.Revision != expectedRevision || revision.ParentRevision != expectedParent)
+            {
+                throw new ArgumentException(
+                    "Blueprint revision history 必须从 v1 开始严格连续，并保持 ParentRevision 链。",
+                    nameof(revisions));
+            }
+        }
+
+        var last = revisions[^1];
+        if (last.BlueprintId != finalBlueprint.BlueprintId || last.Revision != finalBlueprint.Revision)
+            throw new ArgumentException("Blueprint revision history 末项必须等于 Success 的最终 revision。", nameof(revisions));
     }
 
     internal static DesktopWorkspaceDesignLoopResult Success(
         int attempts,
         DesktopWorkspaceBlueprint blueprint,
         CompiledWorkspacePlan plan,
-        WorkspaceRealizationCertificate certificate)
+        WorkspaceRealizationCertificate certificate,
+        IEnumerable<DesktopWorkspaceBlueprint> blueprintRevisions)
         => new(
             DesktopWorkspaceDesignLoopStatus.Success,
             attempts,
             blueprint ?? throw new ArgumentNullException(nameof(blueprint)),
             plan ?? throw new ArgumentNullException(nameof(plan)),
-            certificate ?? throw new ArgumentNullException(nameof(certificate)));
+            certificate ?? throw new ArgumentNullException(nameof(certificate)),
+            blueprintRevisions: blueprintRevisions ?? throw new ArgumentNullException(nameof(blueprintRevisions)));
 
     internal static DesktopWorkspaceDesignLoopResult ProviderFailed(
         int attempts,
@@ -186,6 +230,7 @@ public sealed class DesktopWorkspaceDesignLoopCoordinator
             throw new ArgumentException("ItemRefBindings 不能包含 null。", nameof(itemRefBindings));
 
         var request = initialRequest;
+        var revisionHistory = new List<DesktopWorkspaceBlueprint>();
         for (var attempt = 1; attempt <= _maxDesignAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -202,6 +247,7 @@ public sealed class DesktopWorkspaceDesignLoopCoordinator
             }
 
             var blueprint = providerResult.Blueprint!;
+            revisionHistory.Add(blueprint);
             var compileResult = DesktopWorkspaceCompiler.Compile(
                 blueprint,
                 semanticUnderstanding,
@@ -229,7 +275,8 @@ public sealed class DesktopWorkspaceDesignLoopCoordinator
                     attempt,
                     blueprint,
                     compileResult.Plan!,
-                    equivalence.Certificate!);
+                    equivalence.Certificate!,
+                    revisionHistory);
             }
 
             if (!AllIssuesAreDesignFixable(compileResult.Issues))
