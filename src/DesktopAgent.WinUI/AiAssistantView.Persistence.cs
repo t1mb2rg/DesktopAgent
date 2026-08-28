@@ -15,15 +15,21 @@ public sealed partial class AiAssistantView
             return;
 
         _persistenceHydrated = true;
+        var cts = new CancellationTokenSource();
+        _analysisCts = cts;
         SetBusy(true);
         try
         {
-            var state = await _understandingService.RestoreLatestAsync();
+            var state = await _understandingService.RestoreLatestAsync(cts.Token);
+            if (cts.IsCancellationRequested)
+                return;
+
             _persistedUnderstandingState = state;
             RenderPersistedUnderstanding(state);
         }
         catch (OperationCanceledException)
         {
+            _persistenceHydrated = false;
             // View lifetime / app shutdown cancellation is not a persistence failure.
         }
         catch (Exception ex)
@@ -35,6 +41,9 @@ public sealed partial class AiAssistantView
         }
         finally
         {
+            if (ReferenceEquals(_analysisCts, cts))
+                _analysisCts = null;
+            cts.Dispose();
             SetBusy(false);
         }
     }
@@ -121,7 +130,7 @@ public sealed partial class AiAssistantView
                 AiStatusBar.Severity = InfoBarSeverity.Informational;
                 AiStatusBar.Title = "已恢复上一次桌面理解 · 可能已过期";
                 AiStatusBar.Message =
-                    $"桌面语义来源发生了变化，但大多数已分类项目仍然存在。" +
+                    "桌面语义来源发生了变化，但大多数已分类项目仍然存在。" +
                     $"当前 {freshness.CurrentItemCount} 项；建议检查变化后再继续设计。";
                 break;
 
