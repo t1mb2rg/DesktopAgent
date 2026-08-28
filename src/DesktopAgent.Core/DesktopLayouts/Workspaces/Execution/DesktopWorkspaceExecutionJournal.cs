@@ -183,8 +183,10 @@ public sealed record DesktopWorkspaceExecutionAttemptEvidence
             throw new ArgumentException("IsExact=true 必须对应 ExactSuccess。", nameof(isExact));
         if (outcome == DesktopWorkspaceExecutionAttemptOutcome.ExactSuccess && !isExact)
             throw new ArgumentException("ExactSuccess 必须 IsExact=true。", nameof(outcome));
-        if (hasTrustedActualPosition != actualPixelPosition.HasValue)
-            throw new ArgumentException("HasTrustedActualPosition 必须与 ActualPixelPosition 是否存在一致。", nameof(hasTrustedActualPosition));
+        if (hasTrustedActualPosition && !actualPixelPosition.HasValue)
+            throw new ArgumentException("可信 ActualPosition 必须提供 ActualPixelPosition。", nameof(actualPixelPosition));
+        if (isExact && !hasTrustedActualPosition)
+            throw new ArgumentException("ExactSuccess 必须具有可信 ActualPosition。", nameof(hasTrustedActualPosition));
         if (isExact && actualPixelPosition != requestedPixelPosition)
             throw new ArgumentException("ExactSuccess 的 ActualPixelPosition 必须等于 RequestedPixelPosition。", nameof(actualPixelPosition));
 
