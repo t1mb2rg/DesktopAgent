@@ -1,4 +1,3 @@
-using System.Text;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -7,6 +6,9 @@ namespace DesktopAgent.WinUI;
 
 public sealed partial class LayoutManagementView
 {
+    private DesktopWorkspaceBlueprintAssetSummary? _workspaceDetailAsset;
+    private IReadOnlyList<DesktopWorkspaceBlueprintRevisionRecord> _workspaceDetailRevisions = [];
+
     private async void WorkspaceBlueprintList_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is not WorkspaceBlueprintLibraryItem item)
@@ -14,7 +16,7 @@ public sealed partial class LayoutManagementView
 
         try
         {
-            await ShowWorkspaceBlueprintDetailAsync(item);
+            await OpenWorkspaceBlueprintDetailAsync(item);
         }
         catch (Exception ex)
         {
@@ -25,7 +27,7 @@ public sealed partial class LayoutManagementView
         }
     }
 
-    private async Task ShowWorkspaceBlueprintDetailAsync(WorkspaceBlueprintLibraryItem item)
+    private async Task OpenWorkspaceBlueprintDetailAsync(WorkspaceBlueprintLibraryItem item)
     {
         await _workspaceBlueprintStore.InitializeAsync();
         var asset = await _workspaceBlueprintStore.GetAssetAsync(item.BlueprintId)
@@ -55,218 +57,228 @@ public sealed partial class LayoutManagementView
             revisions.Add(record);
         }
 
-        var current = revisions[^1];
-        if (current.Blueprint.Revision != asset.CurrentRevision)
+        if (revisions[^1].Blueprint.Revision != asset.CurrentRevision)
         {
             throw new InvalidDataException(
                 $"Workspace \"{asset.Name}\" 的 current revision 指针不一致。");
         }
 
-        var dialog = new ContentDialog
-        {
-            Title = $"Workspace · {asset.Name}",
-            CloseButtonText = "关闭",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = WorkspaceLibrarySection.XamlRoot,
-            Content = BuildWorkspaceBlueprintDetailContent(asset, current, revisions),
-        };
+        _workspaceDetailAsset = asset;
+        _workspaceDetailRevisions = revisions.AsReadOnly();
 
-        await dialog.ShowAsync();
+        WorkspaceDetailTitleText.Text = asset.Name;
+        WorkspaceRevisionList.ItemsSource = revisions
+            .OrderByDescending(static record => record.Blueprint.Revision)
+            .Select(record => WorkspaceRevisionListItem.From(record, asset.CurrentRevision))
+            .ToArray();
+
+        WorkspaceLibrarySection.Visibility = Visibility.Collapsed;
+        LayoutWorkbenchSurface.Visibility = Visibility.Collapsed;
+        WorkspaceDetailSurface.Visibility = Visibility.Visible;
+        WorkspaceRevisionList.SelectedIndex = 0;
+
+        RenderWorkspaceRevision(revisions[^1]);
     }
 
-    private static ScrollViewer BuildWorkspaceBlueprintDetailContent(
-        DesktopWorkspaceBlueprintAssetSummary asset,
-        DesktopWorkspaceBlueprintRevisionRecord current,
-        IReadOnlyList<DesktopWorkspaceBlueprintRevisionRecord> revisions)
+    private void WorkspaceDetailBack_Click(object sender, RoutedEventArgs e)
     {
-        var blueprint = current.Blueprint;
-        var content = new StackPanel
-        {
-            Spacing = 14,
-            MinWidth = 620,
-            MaxWidth = 820,
-        };
-
-        content.Children.Add(CreateWorkspaceDetailLead(
-            $"Blueprint v{blueprint.Revision} · 当前",
-            blueprint.DesignSummary));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "显示器策略",
-            FormatDisplayPolicies(blueprint)));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "Zones",
-            FormatZones(blueprint)));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "Reserved Regions",
-            FormatReservedRegions(blueprint)));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "Category → Zone",
-            FormatCategoryRules(blueprint)));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "空间关系与例外",
-            FormatRelationsAndOverrides(blueprint)));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "设计来源",
-            current.SourceUserIntent ?? "这版 Blueprint 没有记录来源用户意图。"));
-        content.Children.Add(CreateWorkspaceDetailSection(
-            "版本历史",
-            FormatRevisionHistory(asset, revisions)));
-
-        return new ScrollViewer
-        {
-            MaxHeight = 620,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollMode = ScrollMode.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            HorizontalScrollMode = ScrollMode.Disabled,
-            Content = content,
-        };
+        WorkspaceDetailSurface.Visibility = Visibility.Collapsed;
+        WorkspaceLibrarySection.Visibility = Visibility.Visible;
+        LayoutWorkbenchSurface.Visibility = Visibility.Visible;
+        WorkspaceRevisionList.ItemsSource = null;
+        _workspaceDetailAsset = null;
+        _workspaceDetailRevisions = [];
     }
 
-    private static Border CreateWorkspaceDetailLead(string title, string summary)
+    private void WorkspaceRevisionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        var panel = new StackPanel { Spacing = 4 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 17,
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = summary,
-            FontSize = 13,
-            Opacity = 0.72,
-            TextWrapping = TextWrapping.Wrap,
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = "这是 durable design asset。打开详情不会恢复 Frozen Preview，也不会获得执行权限。",
-            FontSize = 11,
-            Opacity = 0.52,
-            TextWrapping = TextWrapping.Wrap,
-        });
+        if (WorkspaceRevisionList.SelectedItem is not WorkspaceRevisionListItem selected)
+            return;
 
-        return new Border
-        {
-            Padding = new Thickness(12),
-            CornerRadius = new CornerRadius(10),
-            Child = panel,
-        };
+        RenderWorkspaceRevision(selected.Record);
     }
 
-    private static StackPanel CreateWorkspaceDetailSection(string title, string body)
+    private void RenderWorkspaceRevision(DesktopWorkspaceBlueprintRevisionRecord record)
     {
-        var panel = new StackPanel { Spacing = 4 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = title,
-            FontSize = 14,
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = body,
-            FontSize = 12,
-            Opacity = 0.68,
-            TextWrapping = TextWrapping.Wrap,
-        });
-        return panel;
+        var asset = _workspaceDetailAsset
+            ?? throw new InvalidOperationException("Workspace Detail 尚未加载资产。 ");
+        var blueprint = record.Blueprint;
+        var isCurrent = blueprint.Revision == asset.CurrentRevision;
+
+        WorkspaceDetailRevisionText.Text = isCurrent
+            ? $"Blueprint v{blueprint.Revision} · 当前"
+            : $"Blueprint v{blueprint.Revision} · 历史版本 · 只读";
+        WorkspaceDetailMetaText.Text =
+            $"{blueprint.DisplayPolicies.Count} 块显示器 · {blueprint.Zones.Count} Zones · " +
+            $"{blueprint.ReservedRegions.Count} Reserved · 只读设计资产";
+        WorkspaceDetailSummaryText.Text = blueprint.DesignSummary;
+
+        RenderDisplayPolicies(blueprint);
+        RenderZones(blueprint);
+        RenderReservedRegions(blueprint);
+        RenderCategoryRules(blueprint);
+        RenderRelations(blueprint);
+        RenderItemOverrides(blueprint);
+        WorkspaceDetailSourceIntentText.Text = FormatSourceUserIntent(record.SourceUserIntent);
     }
 
-    private static string FormatDisplayPolicies(DesktopWorkspaceBlueprint blueprint)
-        => string.Join(
-            Environment.NewLine,
-            blueprint.DisplayPolicies.Select(policy =>
-                $"{policy.DisplayRef} · {FormatDisplayPolicy(policy.Policy)}"));
-
-    private static string FormatZones(DesktopWorkspaceBlueprint blueprint)
+    private void RenderDisplayPolicies(DesktopWorkspaceBlueprint blueprint)
     {
+        WorkspaceDetailDisplayPoliciesPanel.Children.Clear();
+        if (blueprint.DisplayPolicies.Count == 0)
+        {
+            WorkspaceDetailDisplayPoliciesPanel.Children.Add(CreateDetailMutedText("没有声明显示器策略。"));
+            return;
+        }
+
+        foreach (var policy in blueprint.DisplayPolicies)
+        {
+            WorkspaceDetailDisplayPoliciesPanel.Children.Add(CreateDetailEntry(
+                policy.DisplayRef,
+                FormatDisplayPolicy(policy.Policy)));
+        }
+    }
+
+    private void RenderZones(DesktopWorkspaceBlueprint blueprint)
+    {
+        WorkspaceDetailZonesPanel.Children.Clear();
         if (blueprint.Zones.Count == 0)
-            return "无 Zone";
+        {
+            WorkspaceDetailZonesPanel.Children.Add(CreateDetailMutedText("没有 Zone。"));
+            return;
+        }
 
-        return string.Join(
-            Environment.NewLine,
-            blueprint.Zones.Select(zone =>
-                $"{zone.Name} · {zone.DisplayRef} · {FormatAnchor(zone.Anchor)} / {FormatPacking(zone.PackingOrder)}"));
+        foreach (var zone in blueprint.Zones)
+        {
+            WorkspaceDetailZonesPanel.Children.Add(CreateDetailEntry(
+                zone.Name,
+                $"{zone.DisplayRef} · {FormatAnchor(zone.Anchor)} / {FormatPacking(zone.PackingOrder)}"));
+        }
     }
 
-    private static string FormatReservedRegions(DesktopWorkspaceBlueprint blueprint)
+    private void RenderReservedRegions(DesktopWorkspaceBlueprint blueprint)
     {
+        WorkspaceDetailReservedPanel.Children.Clear();
         if (blueprint.ReservedRegions.Count == 0)
-            return "无 Reserved Region";
+        {
+            WorkspaceDetailReservedPanel.Children.Add(CreateDetailMutedText("没有 Reserved Region。"));
+            return;
+        }
 
-        return string.Join(
-            Environment.NewLine,
-            blueprint.ReservedRegions.Select(region =>
-                $"{region.Purpose} · {region.DisplayRef}"));
+        foreach (var region in blueprint.ReservedRegions)
+        {
+            WorkspaceDetailReservedPanel.Children.Add(CreateDetailEntry(
+                region.Purpose,
+                region.DisplayRef));
+        }
     }
 
-    private static string FormatCategoryRules(DesktopWorkspaceBlueprint blueprint)
+    private void RenderCategoryRules(DesktopWorkspaceBlueprint blueprint)
     {
+        WorkspaceDetailCategoryRulesPanel.Children.Clear();
         if (blueprint.CategoryRules.Count == 0)
-            return "没有 Category → Zone 规则";
+        {
+            WorkspaceDetailCategoryRulesPanel.Children.Add(CreateDetailMutedText("没有 Category → Zone 规则。"));
+            return;
+        }
 
         var zones = blueprint.Zones.ToDictionary(static zone => zone.ZoneKey, StringComparer.Ordinal);
-        return string.Join(
-            Environment.NewLine,
-            blueprint.CategoryRules.Select(rule =>
-                $"{rule.CategoryKey} → {(zones.TryGetValue(rule.ZoneKey, out var zone) ? zone.Name : rule.ZoneKey)}"));
+        foreach (var rule in blueprint.CategoryRules)
+        {
+            var zoneName = zones.TryGetValue(rule.ZoneKey, out var zone)
+                ? zone.Name
+                : rule.ZoneKey;
+            WorkspaceDetailCategoryRulesPanel.Children.Add(CreateDetailEntry(rule.CategoryKey, zoneName));
+        }
     }
 
-    private static string FormatRelationsAndOverrides(DesktopWorkspaceBlueprint blueprint)
+    private void RenderRelations(DesktopWorkspaceBlueprint blueprint)
     {
-        var builder = new StringBuilder();
         if (blueprint.ZoneRelations.Count == 0)
         {
-            builder.Append("空间关系：无显式硬关系");
-        }
-        else
-        {
-            builder.AppendLine("空间关系：");
-            foreach (var relation in blueprint.ZoneRelations)
-            {
-                builder.Append("  ")
-                    .Append(relation.ZoneKey)
-                    .Append(' ')
-                    .Append(FormatRelation(relation.Relation))
-                    .Append(' ')
-                    .AppendLine(relation.OtherZoneKey);
-            }
+            WorkspaceDetailRelationsText.Text = "无显式硬空间关系。";
+            return;
         }
 
+        WorkspaceDetailRelationsText.Text = string.Join(
+            Environment.NewLine,
+            blueprint.ZoneRelations.Select(relation =>
+                $"{relation.ZoneKey} {FormatRelation(relation.Relation)} {relation.OtherZoneKey}"));
+    }
+
+    private void RenderItemOverrides(DesktopWorkspaceBlueprint blueprint)
+    {
         var placeInZone = blueprint.ItemOverrides.Count(static item =>
             item.Kind == DesktopWorkspaceItemOverrideKind.PlaceInZone);
         var keep = blueprint.ItemOverrides.Count(static item =>
             item.Kind == DesktopWorkspaceItemOverrideKind.Keep);
         var exclude = blueprint.ItemOverrides.Count(static item =>
             item.Kind == DesktopWorkspaceItemOverrideKind.Exclude);
+        WorkspaceDetailOverridesSummaryText.Text =
+            $"PlaceInZone {placeInZone} · Keep {keep} · Exclude {exclude}";
 
-        if (builder.Length > 0 && builder[^1] != '\n')
-            builder.AppendLine();
-        builder.Append($"Item Overrides：PlaceInZone {placeInZone} · Keep {keep} · Exclude {exclude}");
-        return builder.ToString().TrimEnd();
-    }
-
-    private static string FormatRevisionHistory(
-        DesktopWorkspaceBlueprintAssetSummary asset,
-        IReadOnlyList<DesktopWorkspaceBlueprintRevisionRecord> revisions)
-    {
-        var builder = new StringBuilder();
-        foreach (var revision in revisions.OrderByDescending(static record => record.Blueprint.Revision))
+        WorkspaceDetailOverridesPanel.Children.Clear();
+        if (blueprint.ItemOverrides.Count == 0)
         {
-            var blueprint = revision.Blueprint;
-            builder.Append('v').Append(blueprint.Revision);
-            if (blueprint.Revision == asset.CurrentRevision)
-                builder.Append(" · 当前");
-            builder.Append(" · ")
-                .AppendLine(revision.CreatedAtUtc.ToLocalTime().ToString("g"));
-            builder.Append("  ").AppendLine(blueprint.DesignSummary);
-            builder.Append("  ").AppendLine(
-                blueprint.ParentRevision is int parent
-                    ? $"基于 v{parent}"
-                    : "初始版本");
+            WorkspaceDetailOverridesPanel.Children.Add(CreateDetailMutedText("没有 item-level 例外。"));
+            return;
         }
-        return builder.ToString().TrimEnd();
+
+        foreach (var item in blueprint.ItemOverrides)
+        {
+            var detail = item.Kind == DesktopWorkspaceItemOverrideKind.PlaceInZone
+                ? $"PlaceInZone → {item.ZoneKey}"
+                : item.Kind.ToString();
+            WorkspaceDetailOverridesPanel.Children.Add(CreateDetailEntry(item.ItemRef, detail));
+        }
     }
+
+    private static StackPanel CreateDetailEntry(string title, string detail)
+    {
+        var panel = new StackPanel { Spacing = 1 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = detail,
+            FontSize = 11,
+            Opacity = 0.56,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        return panel;
+    }
+
+    private static TextBlock CreateDetailMutedText(string text)
+        => new()
+        {
+            Text = text,
+            FontSize = 11,
+            Opacity = 0.56,
+            TextWrapping = TextWrapping.Wrap,
+        };
+
+    private static string FormatSourceUserIntent(string? sourceUserIntent)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUserIntent))
+            return "这版 Blueprint 没有记录来源用户意图。";
+
+        if (LooksLikeLegacyPreparationGuidance(sourceUserIntent))
+        {
+            return "这份开发期资产由旧版持久化逻辑创建，来源字段包含 Provider 编排上下文，" +
+                   "因此不再把它当作用户原话展示。重新生成 Workspace 后这里只会保存用户实际输入的布局要求。";
+        }
+
+        return sourceUserIntent.Trim();
+    }
+
+    private static bool LooksLikeLegacyPreparationGuidance(string value)
+        => value.Contains("项目 item-", StringComparison.Ordinal) &&
+           value.Contains("目标屏", StringComparison.Ordinal);
 
     private static string FormatDisplayPolicy(DesktopWorkspaceDisplayPolicyKind policy) => policy switch
     {
@@ -300,4 +312,22 @@ public sealed partial class LayoutManagementView
         DesktopWorkspaceZoneRelationKind.Below => "位于下方",
         _ => relation.ToString(),
     };
+
+    private sealed record WorkspaceRevisionListItem(
+        DesktopWorkspaceBlueprintRevisionRecord Record,
+        string RevisionText,
+        string StateText,
+        string CreatedText,
+        string Summary)
+    {
+        internal static WorkspaceRevisionListItem From(
+            DesktopWorkspaceBlueprintRevisionRecord record,
+            int currentRevision)
+            => new(
+                record,
+                $"Blueprint v{record.Blueprint.Revision}",
+                record.Blueprint.Revision == currentRevision ? "当前" : "历史",
+                record.CreatedAtUtc.ToLocalTime().ToString("g"),
+                record.Blueprint.DesignSummary);
+    }
 }
