@@ -65,6 +65,17 @@ public sealed record DesktopWorkspaceDynamicExecutionRunResult
             errorMessage,
             verificationIssues);
 
+    public static DesktopWorkspaceDynamicExecutionRunResult NoOp()
+        => new(
+            DesktopWorkspaceExecutionRunStatus.NoOp,
+            false,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
     public static DesktopWorkspaceDynamicExecutionRunResult FromJournal(
         DesktopWorkspaceExecutionRunStatus status,
         bool writerStarted,
@@ -94,7 +105,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
     private readonly IDesktopObservationSource _observationSource;
     private readonly IDesktopIconPositionWriter _positionWriter;
     private readonly StaThreadExecutor _staExecutor;
-    private readonly ISafetySnapshotFactory _snapshotFactory;
+    private readonly IDesktopLayoutSafetySnapshotFactory _snapshotFactory;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
     private readonly IDesktopWorkspaceExecutionJournalStore _staticJournalStore;
     private readonly IDesktopWorkspaceDynamicExecutionJournalStore _dynamicJournalStore;
@@ -104,7 +115,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         IDesktopObservationSource observationSource,
         IDesktopIconPositionWriter positionWriter,
         StaThreadExecutor staExecutor,
-        ISafetySnapshotFactory snapshotFactory,
+        IDesktopLayoutSafetySnapshotFactory snapshotFactory,
         IDesktopLayoutSnapshotStore snapshotStore,
         IDesktopWorkspaceExecutionJournalStore staticJournalStore,
         IDesktopWorkspaceDynamicExecutionJournalStore dynamicJournalStore,
@@ -201,22 +212,15 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
 
         var authority = DesktopWorkspaceDynamicExecutionAuthoritySnapshot.FromConfirmation(confirmation);
         if (authority.MoveGoalCount == 0)
-        {
-            return new DesktopWorkspaceDynamicExecutionRunResult(
-                DesktopWorkspaceExecutionRunStatus.NoOp,
-                false,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null);
-        }
+            return DesktopWorkspaceDynamicExecutionRunResult.NoOp();
 
         DesktopLayoutSnapshot safetySnapshot;
         try
         {
-            safetySnapshot = _snapshotFactory.Create(initialObservation);
+            safetySnapshot = _snapshotFactory.Create(
+                initialObservation.Icons,
+                targetMonitorDeviceName: null,
+                connectionMethod: initialObservation.IconReadConnectionMethod);
             await _snapshotStore.InitializeAsync(cancellationToken);
             await _snapshotStore.SaveAsync(safetySnapshot, cancellationToken);
             var snapshotReadBack = await _snapshotStore.GetAsync(safetySnapshot.SnapshotId, cancellationToken);
