@@ -5,6 +5,7 @@ using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Execution;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
@@ -36,7 +37,7 @@ public sealed record DesktopWorkspaceDynamicExecutionRunResult
         DesktopWorkspaceDynamicExecutionJournal? journal,
         string? errorType,
         string? errorMessage,
-        IEnumerable<string>? verificationIssues = null)
+        IEnumerable<string>? verificationIssues)
     {
         Status = status;
         WriterStarted = writerStarted;
@@ -45,34 +46,26 @@ public sealed record DesktopWorkspaceDynamicExecutionRunResult
         Journal = journal;
         ErrorType = errorType;
         ErrorMessage = errorMessage;
-        _verificationIssues = Array.AsReadOnly((verificationIssues ?? []).ToArray());
+        _verificationIssues = Array.AsReadOnly((verificationIssues ?? Array.Empty<string>()).ToArray());
     }
 
-    internal static DesktopWorkspaceDynamicExecutionRunResult FailedBeforeWrite(
+    public static DesktopWorkspaceDynamicExecutionRunResult FailedBeforeWrite(
         string errorType,
         string errorMessage,
         Guid? safetySnapshotId = null,
-        DesktopWorkspaceDynamicExecutionJournal? journal = null)
+        DesktopWorkspaceDynamicExecutionJournal? journal = null,
+        IEnumerable<string>? verificationIssues = null)
         => new(
             DesktopWorkspaceExecutionRunStatus.FailedBeforeWrite,
-            writerStarted: false,
+            false,
             safetySnapshotId,
             journal?.SessionId,
             journal,
             errorType,
-            errorMessage);
+            errorMessage,
+            verificationIssues);
 
-    internal static DesktopWorkspaceDynamicExecutionRunResult NoOp()
-        => new(
-            DesktopWorkspaceExecutionRunStatus.NoOp,
-            writerStarted: false,
-            safetySnapshotId: null,
-            sessionId: null,
-            journal: null,
-            errorType: null,
-            errorMessage: null);
-
-    internal static DesktopWorkspaceDynamicExecutionRunResult FromJournal(
+    public static DesktopWorkspaceDynamicExecutionRunResult FromJournal(
         DesktopWorkspaceExecutionRunStatus status,
         bool writerStarted,
         DesktopWorkspaceDynamicExecutionJournal journal,
@@ -91,18 +84,17 @@ public sealed record DesktopWorkspaceDynamicExecutionRunResult
 }
 
 /// <summary>
-/// 用户确认 Frozen Preview 后的 fresh-driven Workspace 执行器。
-///
-/// 第一次 Writer 前仍执行严格 FreshCheck；进入 Writer boundary 后只冻结最终目标 authority，
-/// 每次 Writer 前重新观察当前 Windows facts，并由 DynamicNextStepPlanner 只决定下一刀。
-/// AI / redesign / compile 均不在此类型中。
+/// 新的 Workspace dynamic execution coordinator。
+/// 第一次 Writer 前仍使用严格 Frozen Preview FreshCheck；Writer boundary 之后，
+/// 每一刀都 fresh capture，再由 DynamicNextStepPlanner 只决定一个 move。
+/// Frozen final targets 永远来自用户确认过的 Preview，From 则始终以当前 Windows 事实为准。
 /// </summary>
 public sealed class DesktopWorkspaceDynamicExecutionCoordinator
 {
     private readonly IDesktopObservationSource _observationSource;
     private readonly IDesktopIconPositionWriter _positionWriter;
     private readonly StaThreadExecutor _staExecutor;
-    private readonly IDesktopLayoutSafetySnapshotFactory _snapshotFactory;
+    private readonly ISafetySnapshotFactory _snapshotFactory;
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
     private readonly IDesktopWorkspaceExecutionJournalStore _staticJournalStore;
     private readonly IDesktopWorkspaceDynamicExecutionJournalStore _dynamicJournalStore;
@@ -112,7 +104,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         IDesktopObservationSource observationSource,
         IDesktopIconPositionWriter positionWriter,
         StaThreadExecutor staExecutor,
-        IDesktopLayoutSafetySnapshotFactory snapshotFactory,
+        ISafetySnapshotFactory snapshotFactory,
         IDesktopLayoutSnapshotStore snapshotStore,
         IDesktopWorkspaceExecutionJournalStore staticJournalStore,
         IDesktopWorkspaceDynamicExecutionJournalStore dynamicJournalStore,
@@ -133,320 +125,299 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(confirmation);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        DesktopLayoutSnapshot? safetySnapshot = null;
-        DesktopWorkspaceDynamicExecutionJournal? journal = null;
-        var writerStarted = false;
+        await _staticJournalStore.InitializeAsync(cancellationToken);
+        var unresolvedStatic = await _staticJournalStore.ListUnresolvedAsync(cancellationToken);
+        if (unresolvedStatic.Count != 0)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "UnresolvedWorkspaceExecution",
+                $"检测到未解决 V9 Workspace execution journal {unresolvedStatic[0].SessionId:D}，Dynamic Writer 未启动。");
+        }
 
+        await _dynamicJournalStore.InitializeAsync(cancellationToken);
+        var unresolvedDynamic = await _dynamicJournalStore.ListUnresolvedAsync(cancellationToken);
+        if (unresolvedDynamic.Count != 0)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "UnresolvedDynamicWorkspaceExecution",
+                $"检测到未解决 Dynamic Workspace execution journal {unresolvedDynamic[0].SessionId:D}，新的 Writer 未启动。");
+        }
+
+        DesktopObservationCaptureResult initialCapture;
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            initialCapture = await _observationSource.CaptureAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "InitialObservationFailed",
+                $"Fresh Observation 异常：{ex.GetType().Name}: {ex.Message}");
+        }
+
+        if (!initialCapture.IsCaptured)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "InitialObservationIncomplete",
+                "无法取得完整 fresh DesktopObservation：" +
+                string.Join("；", initialCapture.Issues.Select(static issue => issue.Message)));
+        }
+
+        var initialObservation = initialCapture.Observation!;
+        var initialGeometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(initialObservation);
+        if (!initialGeometryResult.Succeeded)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "InitialGeometryFailed",
+                string.Join("；", initialGeometryResult.Issues.Select(static issue => issue.Message)));
+        }
+
+        IReadOnlyList<DesktopWorkspaceCompilationItemFact> initialFacts;
+        try
+        {
+            initialFacts = DesktopWorkspaceLocalItemFactProjector.Project(
+                initialObservation,
+                initialGeometryResult.Geometry!);
+        }
+        catch (Exception ex)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "InitialRealityProjectionFailed",
+                $"无法建立 local reality：{ex.GetType().Name}: {ex.Message}");
+        }
+
+        var freshCheck = DesktopWorkspaceApplyFreshCheck.Evaluate(
+            confirmation,
+            initialGeometryResult.Geometry!,
+            initialFacts);
+        if (!freshCheck.IsReady)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "WorkspaceFreshCheckRejected",
+                string.Join("；", freshCheck.Issues));
+        }
+
+        var authority = DesktopWorkspaceDynamicExecutionAuthoritySnapshot.FromConfirmation(confirmation);
+        if (authority.MoveGoalCount == 0)
+        {
+            return new DesktopWorkspaceDynamicExecutionRunResult(
+                DesktopWorkspaceExecutionRunStatus.NoOp,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+        }
+
+        DesktopLayoutSnapshot safetySnapshot;
+        try
+        {
+            safetySnapshot = _snapshotFactory.Create(initialObservation);
             await _snapshotStore.InitializeAsync(cancellationToken);
-            await _staticJournalStore.InitializeAsync(cancellationToken);
-            await _dynamicJournalStore.InitializeAsync(cancellationToken);
-
-            var unresolvedStatic = await _staticJournalStore.ListUnresolvedAsync(cancellationToken);
-            if (unresolvedStatic.Count > 0)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "UnresolvedStaticWorkspaceExecution",
-                    $"存在 {unresolvedStatic.Count} 个尚未收敛的 V9 Workspace execution journal，拒绝开始新的 Dynamic Writer。 ");
-            }
-
-            var unresolvedDynamic = await _dynamicJournalStore.ListUnresolvedAsync(cancellationToken);
-            if (unresolvedDynamic.Count > 0)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "UnresolvedDynamicWorkspaceExecution",
-                    $"存在 {unresolvedDynamic.Count} 个尚未收敛的 Dynamic Workspace execution journal，拒绝开始新的 Writer。 ");
-            }
-
-            var initialFresh = await CaptureFreshFactsAsync(cancellationToken);
-            if (!initialFresh.Succeeded)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    initialFresh.ErrorType!,
-                    initialFresh.ErrorMessage!);
-            }
-
-            var strictFreshCheck = DesktopWorkspaceApplyFreshCheck.Evaluate(
-                confirmation,
-                initialFresh.Geometry!,
-                initialFresh.Facts!);
-            if (!strictFreshCheck.IsReady)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "WorkspaceFreshCheckRejected",
-                    $"Strict FreshCheck={strictFreshCheck.Status}：{string.Join("；", strictFreshCheck.Issues)}");
-            }
-
-            var initialDecision = DesktopWorkspaceDynamicNextStepPlanner.Decide(
-                confirmation.FrozenPreview,
-                initialFresh.Geometry!,
-                initialFresh.Facts!,
-                decisionIndex: 0);
-            if (initialDecision.Status == DesktopWorkspaceDynamicNextStepStatus.Blocked)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "DynamicPlanningBlockedBeforeWrite",
-                    DescribePlanningIssues(initialDecision));
-            }
-            if (initialDecision.IsComplete)
-                return DesktopWorkspaceDynamicExecutionRunResult.NoOp();
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            safetySnapshot = _snapshotFactory.Create(
-                initialFresh.Observation!.Icons,
-                targetMonitorDeviceName: null,
-                initialFresh.Observation.IconReadConnectionMethod);
             await _snapshotStore.SaveAsync(safetySnapshot, cancellationToken);
-
-            var snapshotReadBack = await _snapshotStore.GetAsync(
-                safetySnapshot.SnapshotId,
-                cancellationToken);
+            var snapshotReadBack = await _snapshotStore.GetAsync(safetySnapshot.SnapshotId, cancellationToken);
             var snapshotIssue = VerifySnapshotReadBack(safetySnapshot, snapshotReadBack);
             if (snapshotIssue is not null)
             {
                 return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "SafetySnapshotVerificationFailed",
+                    "SafetySnapshotReadBackFailed",
                     snapshotIssue,
                     safetySnapshot.SnapshotId);
             }
-
-            var authority = DesktopWorkspaceDynamicExecutionAuthoritySnapshot.FromConfirmation(confirmation);
-            journal = DesktopWorkspaceDynamicExecutionJournal.CreatePrepared(
-                safetySnapshot.SnapshotId,
-                confirmation,
-                authority,
-                _timeProvider);
-            await _dynamicJournalStore.SaveAsync(journal, cancellationToken);
-
-            var journalReadBack = await _dynamicJournalStore.GetAsync(journal.SessionId, cancellationToken);
-            var journalIssue = VerifyPreparedJournalReadBack(journal, journalReadBack);
-            if (journalIssue is not null)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "PreparedDynamicJournalVerificationFailed",
-                    journalIssue,
-                    safetySnapshot.SnapshotId,
-                    journal);
-            }
-            journal = journalReadBack!;
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                var restored = await TryTransitionAsync(
-                    journal,
-                    journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored });
-                if (restored is not null)
-                    journal = restored;
-
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "OperationCanceledBeforeWrite",
-                    "Dynamic Prepared Journal 已建立，但第一次 Writer 前检测到取消。 ",
-                    safetySnapshot.SnapshotId,
-                    journal);
-            }
-
-            var forwardStarted = await TryTransitionAsync(
-                journal,
-                journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.ForwardInProgress });
-            if (forwardStarted is null)
-            {
-                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                    "ForwardStartCheckpointFailed",
-                    "无法在第一次 Dynamic Writer 前持久化 ForwardInProgress checkpoint。 ",
-                    safetySnapshot.SnapshotId,
-                    journal);
-            }
-            journal = forwardStarted;
-
-            return await ExecuteDynamicLoopAsync(
-                confirmation,
-                journal,
-                () => writerStarted = true,
-                cancellationToken);
         }
-        catch (OperationCanceledException ex) when (!writerStarted)
+        catch (Exception ex)
         {
-            if (journal is not null && !journal.IsResolved)
-            {
-                var restored = await TryTransitionAsync(
-                    journal,
-                    journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored });
-                if (restored is not null)
-                    journal = restored;
-            }
-
             return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                "OperationCanceledBeforeWrite",
-                $"Writer 未启动前操作取消：{ex.Message}",
-                safetySnapshot?.SnapshotId,
-                journal);
+                "SafetySnapshotPersistFailed",
+                $"Safety Snapshot 保存/回读失败：{ex.GetType().Name}: {ex.Message}");
+        }
+
+        var prepared = DesktopWorkspaceDynamicExecutionJournal.CreatePrepared(
+            safetySnapshot.SnapshotId,
+            confirmation,
+            authority,
+            _timeProvider);
+        try
+        {
+            await _dynamicJournalStore.SaveAsync(prepared, cancellationToken);
+            var preparedReadBack = await _dynamicJournalStore.GetAsync(prepared.SessionId, cancellationToken);
+            if (preparedReadBack is null || preparedReadBack.Revision != prepared.Revision ||
+                preparedReadBack.Lifecycle != DesktopWorkspaceExecutionJournalLifecycle.Prepared ||
+                preparedReadBack.Authority.PreviewId != authority.PreviewId ||
+                preparedReadBack.Authority.ConfirmationId != authority.ConfirmationId)
+            {
+                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                    "DynamicPreparedJournalReadBackFailed",
+                    "Dynamic Prepared journal 保存后回读 identity 不一致。",
+                    safetySnapshot.SnapshotId,
+                    prepared);
+            }
+            prepared = preparedReadBack;
+        }
+        catch (Exception ex)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "DynamicPreparedJournalPersistFailed",
+                $"Dynamic Prepared journal 保存/回读失败：{ex.GetType().Name}: {ex.Message}",
+                safetySnapshot.SnapshotId);
+        }
+
+        var journal = await TryTransitionAsync(
+            prepared,
+            prepared with
+            {
+                Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.ForwardInProgress,
+            });
+        if (journal is null)
+        {
+            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
+                "DynamicForwardStartCheckpointFailed",
+                "第一次 Writer 前无法持久化 ForwardInProgress checkpoint。",
+                safetySnapshot.SnapshotId,
+                prepared);
+        }
+
+        var writerStarted = false;
+        try
+        {
+            return await ExecuteForwardLoopAsync(
+                confirmation,
+                journal,
+                writerStarted,
+                CancellationToken.None);
         }
         catch (Exception ex)
         {
             return await ContainUnexpectedExecutionExceptionAsync(
                 journal,
-                safetySnapshot?.SnapshotId,
                 writerStarted,
                 ex);
         }
     }
 
-    private async Task<DesktopWorkspaceDynamicExecutionRunResult> ExecuteDynamicLoopAsync(
+    private async Task<DesktopWorkspaceDynamicExecutionRunResult> ExecuteForwardLoopAsync(
         DesktopWorkspaceApplyConfirmation confirmation,
-        DesktopWorkspaceDynamicExecutionJournal journal,
-        Action onWriterStarting,
+        DesktopWorkspaceDynamicExecutionJournal startingJournal,
+        bool writerStarted,
         CancellationToken cancellationToken)
     {
+        var journal = startingJournal;
         var attempts = journal.ForwardAttempts.ToList();
-        var writerStarted = attempts.Count > 0;
-        var maxDecisionCount = Math.Max(32, checked(journal.Authority.MoveGoalCount * 4));
+        var maxDecisions = Math.Max(32, journal.Authority.MoveGoalCount * 4);
 
-        while (true)
+        for (var decisionIndex = attempts.Count; decisionIndex < maxDecisions; decisionIndex++)
         {
-            if (cancellationToken.IsCancellationRequested)
+            var capture = await _observationSource.CaptureAsync(cancellationToken);
+            if (!capture.IsCaptured)
             {
-                if (!writerStarted)
-                {
-                    var restored = await TryTransitionAsync(
-                        journal,
-                        journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored });
-                    if (restored is not null)
-                        journal = restored;
-                    return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                        "OperationCanceledBeforeWrite",
-                        "第一次 Dynamic Writer 前检测到取消。",
-                        journal.SafetySnapshotId,
-                        journal);
-                }
-
-                return await PersistNeedsAttentionResultAsync(
+                return await FailAfterBoundaryAsync(
                     journal,
+                    writerStarted,
                     attempts,
-                    lastFailedDecisionIndex: attempts.Count,
-                    "OperationCanceledAfterWrite",
-                    "至少一次 Writer 已完成后检测到取消；Dynamic execution 不盲目反演旧路线，已停止新的 Writer。 ");
+                    decisionIndex,
+                    "DynamicObservationIncomplete",
+                    "Dynamic decision 前无法取得完整 DesktopObservation：" +
+                    string.Join("；", capture.Issues.Select(static issue => issue.Message)));
             }
 
-            if (attempts.Count >= maxDecisionCount)
+            var observation = capture.Observation!;
+            var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(observation);
+            if (!geometryResult.Succeeded)
             {
-                return await PersistNeedsAttentionResultAsync(
+                return await FailAfterBoundaryAsync(
                     journal,
+                    writerStarted,
                     attempts,
-                    lastFailedDecisionIndex: attempts.Count,
-                    "DynamicMoveBudgetExceeded",
-                    $"Dynamic execution 已达到 {maxDecisionCount} 次 Writer 决策上限，仍未稳定收敛。 ");
+                    decisionIndex,
+                    "DynamicGeometryFailed",
+                    string.Join("；", geometryResult.Issues.Select(static issue => issue.Message)));
             }
 
-            var fresh = await CaptureFreshFactsAsync(CancellationToken.None);
-            if (!fresh.Succeeded)
+            IReadOnlyList<DesktopWorkspaceCompilationItemFact> facts;
+            try
             {
-                if (!writerStarted)
-                {
-                    var restored = await TryTransitionAsync(
-                        journal,
-                        journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored });
-                    if (restored is not null)
-                        journal = restored;
-                    return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                        fresh.ErrorType!,
-                        fresh.ErrorMessage!,
-                        journal.SafetySnapshotId,
-                        journal);
-                }
-
-                return await PersistNeedsAttentionResultAsync(
+                facts = DesktopWorkspaceLocalItemFactProjector.Project(observation, geometryResult.Geometry!);
+            }
+            catch (Exception ex)
+            {
+                return await FailAfterBoundaryAsync(
                     journal,
+                    writerStarted,
                     attempts,
-                    attempts.Count,
-                    fresh.ErrorType!,
-                    fresh.ErrorMessage!);
+                    decisionIndex,
+                    "DynamicRealityProjectionFailed",
+                    $"Dynamic local reality 失败：{ex.GetType().Name}: {ex.Message}");
             }
 
             var decision = DesktopWorkspaceDynamicNextStepPlanner.Decide(
                 confirmation.FrozenPreview,
-                fresh.Geometry!,
-                fresh.Facts!,
-                attempts.Count);
+                geometryResult.Geometry!,
+                facts,
+                decisionIndex);
 
             if (decision.Status == DesktopWorkspaceDynamicNextStepStatus.Blocked)
             {
-                if (!writerStarted)
-                {
-                    var restored = await TryTransitionAsync(
-                        journal,
-                        journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored });
-                    if (restored is not null)
-                        journal = restored;
-                    return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                        "DynamicPlanningBlockedBeforeWrite",
-                        DescribePlanningIssues(decision),
-                        journal.SafetySnapshotId,
-                        journal);
-                }
-
-                return await PersistNeedsAttentionResultAsync(
+                return await FailAfterBoundaryAsync(
                     journal,
+                    writerStarted,
                     attempts,
-                    attempts.Count,
-                    "DynamicPlanningBlockedAfterWrite",
-                    DescribePlanningIssues(decision));
+                    decisionIndex,
+                    "DynamicPlannerBlocked",
+                    string.Join("；", decision.Issues.Select(static issue => issue.Message)),
+                    decision.SatisfiedMovingGoalCount);
             }
 
             if (decision.IsComplete)
             {
-                var verification = await VerifyFinalStateAsync(
+                var verificationIssues = await VerifyCompleteAsync(
                     confirmation,
-                    attempts.Count,
-                    CancellationToken.None);
-                if (verification.Status == DynamicFinalVerificationStatus.Complete)
+                    cancellationToken);
+                if (verificationIssues.Count != 0)
                 {
-                    var committed = await TryTransitionAsync(
+                    return await FailAfterBoundaryAsync(
                         journal,
-                        journal with
-                        {
-                            Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Committed,
-                            ForwardAttempts = attempts,
-                            LastObservedSatisfiedGoalCount = journal.Authority.MoveGoalCount,
-                            LastFailedDecisionIndex = null,
-                            ForwardFailureType = null,
-                            ForwardFailureMessage = null,
-                            RecoveryFailureType = null,
-                            RecoveryFailureMessage = null,
-                            FinalVerifiedAtUtc = _timeProvider.GetUtcNow(),
-                        });
-                    if (committed is null)
-                    {
-                        return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
-                            DesktopWorkspaceExecutionRunStatus.NeedsAttention,
-                            writerStarted,
-                            journal,
-                            "CommitCheckpointPersistFailed",
-                            "最终独立验证已通过，但 Dynamic Committed 终态持久化失败。 ");
-                    }
-
-                    return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
-                        DesktopWorkspaceExecutionRunStatus.Committed,
                         writerStarted,
-                        committed);
+                        attempts,
+                        decisionIndex,
+                        "DynamicFinalVerificationFailed",
+                        string.Join("；", verificationIssues),
+                        decision.SatisfiedMovingGoalCount,
+                        verificationIssues);
                 }
 
-                if (verification.Status == DynamicFinalVerificationStatus.MoveReady)
-                {
-                    // Explorer 在两次独立 fresh capture 之间再次改变了已获授权项目的位置。
-                    // 不使用上一份 observation，回到循环顶部重新读取事实。
-                    continue;
-                }
-
-                return await PersistNeedsAttentionResultAsync(
+                var committed = await TryTransitionAsync(
                     journal,
-                    attempts,
-                    attempts.Count,
-                    "FinalVerificationBlocked",
-                    verification.Message ?? "最终独立验证被本地安全门阻断。");
+                    journal with
+                    {
+                        Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Committed,
+                        ForwardAttempts = attempts,
+                        LastObservedSatisfiedGoalCount = journal.Authority.MoveGoalCount,
+                        LastFailedDecisionIndex = null,
+                        ForwardFailureType = null,
+                        ForwardFailureMessage = null,
+                        RecoveryFailureType = null,
+                        RecoveryFailureMessage = null,
+                        FinalVerifiedAtUtc = _timeProvider.GetUtcNow(),
+                    });
+                if (committed is null)
+                {
+                    return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
+                        DesktopWorkspaceExecutionRunStatus.NeedsAttention,
+                        writerStarted,
+                        journal,
+                        "DynamicCommitCheckpointFailed",
+                        "最终 fresh verification 已通过，但 Committed checkpoint 持久化失败。",
+                        verificationIssues);
+                }
+
+                return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
+                    DesktopWorkspaceExecutionRunStatus.Committed,
+                    writerStarted,
+                    committed);
             }
 
             var move = decision.Move!;
@@ -455,7 +426,6 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             {
                 moveResult = await _staExecutor.RunAsync(() =>
                 {
-                    onWriterStarting();
                     writerStarted = true;
                     return _positionWriter.MoveDesktopIcon(
                         move.StableId,
@@ -464,38 +434,45 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             }
             catch (Exception ex)
             {
-                attempts.Add(CreateWriterExceptionEvidence(
+                var evidence = CreateWriterExceptionEvidence(
                     attempts.Count,
-                    fresh.Observation!.ObservationId,
+                    observation.ObservationId,
                     move,
                     decision.SatisfiedMovingGoalCount,
-                    ex));
-
-                return await PersistNeedsAttentionResultAsync(
+                    ex);
+                attempts.Add(evidence);
+                return await FailAfterBoundaryAsync(
                     journal,
+                    writerStarted,
                     attempts,
-                    move.DecisionIndex,
-                    ex.GetType().Name,
-                    $"Dynamic decision #{move.DecisionIndex} Writer 异常：{ex.Message}；是否产生副作用未知，已停止新的 Writer。 ");
+                    decisionIndex,
+                    "DynamicWriterException",
+                    $"Decision #{decisionIndex} Writer 异常：{ex.GetType().Name}: {ex.Message}",
+                    decision.SatisfiedMovingGoalCount);
             }
 
-            var evidence = ClassifyMoveResult(
+            var classified = ClassifyMoveResult(
                 attempts.Count,
-                fresh.Observation!.ObservationId,
+                observation.ObservationId,
                 move,
                 decision.SatisfiedMovingGoalCount,
                 moveResult);
-            attempts.Add(evidence);
+            attempts.Add(classified);
 
-            if (evidence.Outcome != DesktopWorkspaceExecutionAttemptOutcome.ExactSuccess)
+            if (classified.Outcome != DesktopWorkspaceExecutionAttemptOutcome.ExactSuccess)
             {
-                var (errorType, errorMessage) = DescribeInexactEvidence(move, evidence, moveResult);
-                return await PersistNeedsAttentionResultAsync(
+                var (errorType, errorMessage) = DescribeInexactEvidence(
+                    decisionIndex,
+                    classified,
+                    moveResult);
+                return await FailAfterBoundaryAsync(
                     journal,
+                    writerStarted,
                     attempts,
-                    move.DecisionIndex,
+                    decisionIndex,
                     errorType,
-                    errorMessage);
+                    errorMessage,
+                    decision.SatisfiedMovingGoalCount);
             }
 
             var checkpoint = await TryTransitionAsync(
@@ -508,89 +485,69 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
                     LastFailedDecisionIndex = null,
                     ForwardFailureType = null,
                     ForwardFailureMessage = null,
-                    RecoveryFailureType = null,
-                    RecoveryFailureMessage = null,
                 });
             if (checkpoint is null)
             {
                 return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
                     DesktopWorkspaceExecutionRunStatus.NeedsAttention,
-                    writerStarted: true,
+                    true,
                     journal,
-                    "ForwardCheckpointPersistFailed",
-                    $"Dynamic decision #{move.DecisionIndex} 已精确完成，但 checkpoint 持久化失败。已停止新的 Writer。 ");
+                    "DynamicForwardCheckpointFailed",
+                    $"Decision #{decisionIndex} 已 ExactSuccess，但 checkpoint 持久化失败。已停止新的 Writer。");
             }
             journal = checkpoint;
         }
-    }
 
-    private async Task<DynamicFinalVerification> VerifyFinalStateAsync(
-        DesktopWorkspaceApplyConfirmation confirmation,
-        int decisionIndex,
-        CancellationToken cancellationToken)
-    {
-        var fresh = await CaptureFreshFactsAsync(cancellationToken);
-        if (!fresh.Succeeded)
-            return DynamicFinalVerification.Blocked(fresh.ErrorMessage!);
-
-        var decision = DesktopWorkspaceDynamicNextStepPlanner.Decide(
-            confirmation.FrozenPreview,
-            fresh.Geometry!,
-            fresh.Facts!,
-            decisionIndex);
-        return decision.Status switch
-        {
-            DesktopWorkspaceDynamicNextStepStatus.Complete => DynamicFinalVerification.Complete(),
-            DesktopWorkspaceDynamicNextStepStatus.MoveReady => DynamicFinalVerification.MoveReady(),
-            _ => DynamicFinalVerification.Blocked(DescribePlanningIssues(decision)),
-        };
-    }
-
-    private async Task<DesktopWorkspaceDynamicExecutionRunResult> PersistNeedsAttentionResultAsync(
-        DesktopWorkspaceDynamicExecutionJournal journal,
-        IReadOnlyList<DesktopWorkspaceDynamicExecutionAttemptEvidence> attempts,
-        int? lastFailedDecisionIndex,
-        string errorType,
-        string errorMessage)
-    {
-        var terminal = await TryTransitionAsync(
+        return await FailAfterBoundaryAsync(
             journal,
-            journal with
-            {
-                Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention,
-                ForwardAttempts = attempts,
-                LastFailedDecisionIndex = lastFailedDecisionIndex,
-                ForwardFailureType = errorType,
-                ForwardFailureMessage = errorMessage,
-                RecoveryFailureType = null,
-                RecoveryFailureMessage = null,
-                FinalVerifiedAtUtc = null,
-            });
+            writerStarted,
+            attempts,
+            attempts.Count,
+            "DynamicDecisionBudgetExceeded",
+            $"Dynamic execution 超过 {maxDecisions} 次有界决策仍未收敛，已停止新的 Writer。",
+            journal.LastObservedSatisfiedGoalCount);
+    }
+
+    private async Task<DesktopWorkspaceDynamicExecutionRunResult> FailAfterBoundaryAsync(
+        DesktopWorkspaceDynamicExecutionJournal current,
+        bool writerStarted,
+        IReadOnlyList<DesktopWorkspaceDynamicExecutionAttemptEvidence> attempts,
+        int failedDecisionIndex,
+        string errorType,
+        string errorMessage,
+        int? satisfiedGoalCount = null,
+        IEnumerable<string>? verificationIssues = null)
+    {
+        var requested = current with
+        {
+            Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention,
+            ForwardAttempts = attempts,
+            LastObservedSatisfiedGoalCount = satisfiedGoalCount ?? current.LastObservedSatisfiedGoalCount,
+            LastFailedDecisionIndex = failedDecisionIndex,
+            ForwardFailureType = errorType,
+            ForwardFailureMessage = errorMessage,
+            RecoveryFailureType = null,
+            RecoveryFailureMessage = null,
+            FinalVerifiedAtUtc = null,
+        };
+        var terminal = await TryTransitionAsync(current, requested);
         if (terminal is not null)
-            journal = terminal;
+            current = terminal;
 
         return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
             DesktopWorkspaceExecutionRunStatus.NeedsAttention,
-            writerStarted: true,
-            journal,
+            writerStarted,
+            current,
             errorType,
-            errorMessage);
+            errorMessage,
+            verificationIssues);
     }
 
     private async Task<DesktopWorkspaceDynamicExecutionRunResult> ContainUnexpectedExecutionExceptionAsync(
-        DesktopWorkspaceDynamicExecutionJournal? startingJournal,
-        Guid? safetySnapshotId,
+        DesktopWorkspaceDynamicExecutionJournal startingJournal,
         bool writerStarted,
         Exception exception)
     {
-        if (startingJournal is null)
-        {
-            return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                exception.GetType().Name,
-                $"Dynamic execution preparation 失败：{exception.Message}",
-                safetySnapshotId);
-        }
-
         var journal = startingJournal;
         try
         {
@@ -600,50 +557,52 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         }
         catch
         {
-            // 当前内存 journal 仍是最保守的持久化锚点。
         }
 
         if (!writerStarted)
         {
-            if (!journal.IsResolved)
-            {
-                var restored = await TryTransitionAsync(
-                    journal,
-                    journal with { Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored });
-                if (restored is not null)
-                    journal = restored;
-            }
+            var restored = await TryTransitionAsync(
+                journal,
+                journal with
+                {
+                    Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.Restored,
+                    ForwardFailureType = null,
+                    ForwardFailureMessage = null,
+                    RecoveryFailureType = null,
+                    RecoveryFailureMessage = null,
+                    FinalVerifiedAtUtc = null,
+                });
+            if (restored is not null)
+                journal = restored;
 
             return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
                 "UnhandledDynamicExecutionExceptionBeforeWrite",
-                $"第一次 Writer 前发生未处理异常：{exception.GetType().Name}: {exception.Message}",
+                $"进入 dynamic execution boundary 后、第一次 Writer 前发生异常：{exception.GetType().Name}: {exception.Message}",
                 journal.SafetySnapshotId,
                 journal);
         }
 
-        if (journal.Lifecycle != DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention && !journal.IsResolved)
+        if (!journal.IsResolved && journal.Lifecycle != DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention)
         {
             var terminal = await TryTransitionAsync(
                 journal,
                 journal with
                 {
                     Lifecycle = DesktopWorkspaceExecutionJournalLifecycle.NeedsAttention,
-                    LastFailedDecisionIndex = journal.ForwardAttempts.Count,
                     ForwardFailureType = "UnhandledDynamicExecutionException",
                     ForwardFailureMessage = $"{exception.GetType().Name}: {exception.Message}",
+                    FinalVerifiedAtUtc = null,
                 });
             if (terminal is not null)
                 journal = terminal;
         }
 
         return DesktopWorkspaceDynamicExecutionRunResult.FromJournal(
-            journal.Lifecycle == DesktopWorkspaceExecutionJournalLifecycle.Committed
-                ? DesktopWorkspaceExecutionRunStatus.Committed
-                : DesktopWorkspaceExecutionRunStatus.NeedsAttention,
-            writerStarted: true,
+            DesktopWorkspaceExecutionRunStatus.NeedsAttention,
+            true,
             journal,
             "UnhandledDynamicExecutionException",
-            $"Writer boundary 之后发生未处理异常：{exception.GetType().Name}: {exception.Message}。已停止新的 Writer。 ");
+            $"Writer boundary 后发生未处理异常：{exception.GetType().Name}: {exception.Message}。已停止新的 Writer。");
     }
 
     private async Task<DesktopWorkspaceDynamicExecutionJournal?> TryTransitionAsync(
@@ -668,59 +627,68 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         }
     }
 
-    private async Task<FreshFactsCapture> CaptureFreshFactsAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<string>> VerifyCompleteAsync(
+        DesktopWorkspaceApplyConfirmation confirmation,
+        CancellationToken cancellationToken)
     {
-        DesktopObservationCaptureResult capture;
-        try
-        {
-            capture = await _observationSource.CaptureAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            return FreshFactsCapture.Failed(
-                "FreshObservationException",
-                $"fresh DesktopObservation 抛出异常：{ex.GetType().Name}: {ex.Message}");
-        }
-
+        var capture = await _observationSource.CaptureAsync(cancellationToken);
         if (!capture.IsCaptured)
         {
-            return FreshFactsCapture.Failed(
-                "FreshObservationUnavailable",
-                string.Join("；", capture.Issues.Select(static issue => issue.Message)));
+            return Array.AsReadOnly(new[]
+            {
+                "Dynamic final verification 无法取得完整 fresh DesktopObservation：" +
+                string.Join("；", capture.Issues.Select(static issue => issue.Message)),
+            });
         }
 
-        var observation = capture.Observation!;
-        var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(observation);
+        var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(capture.Observation!);
         if (!geometryResult.Succeeded)
         {
-            return FreshFactsCapture.Failed(
-                "FreshGeometryUnavailable",
-                string.Join("；", geometryResult.Issues.Select(static issue => issue.Message)));
+            return Array.AsReadOnly(new[]
+            {
+                "Dynamic final verification 无法建立 fresh Explorer geometry：" +
+                string.Join("；", geometryResult.Issues.Select(static issue => issue.Message)),
+            });
         }
 
+        IReadOnlyList<DesktopWorkspaceCompilationItemFact> facts;
         try
         {
-            var facts = DesktopWorkspaceLocalItemFactProjector.Project(
-                observation,
+            facts = DesktopWorkspaceLocalItemFactProjector.Project(
+                capture.Observation!,
                 geometryResult.Geometry!);
-            return FreshFactsCapture.Success(
-                observation,
-                geometryResult.Geometry!,
-                facts);
         }
         catch (Exception ex)
         {
-            return FreshFactsCapture.Failed(
-                "FreshLocalRealityUnavailable",
-                $"无法建立 fresh Workspace local reality：{ex.GetType().Name}: {ex.Message}");
+            return Array.AsReadOnly(new[]
+            {
+                $"Dynamic final verification 无法建立 local reality：{ex.GetType().Name}: {ex.Message}",
+            });
         }
+
+        var decision = DesktopWorkspaceDynamicNextStepPlanner.Decide(
+            confirmation.FrozenPreview,
+            geometryResult.Geometry!,
+            facts,
+            decisionIndex: 0);
+        if (decision.IsComplete)
+            return Array.AsReadOnly(Array.Empty<string>());
+
+        if (decision.Status == DesktopWorkspaceDynamicNextStepStatus.Blocked)
+            return Array.AsReadOnly(decision.Issues.Select(static issue => issue.Message).ToArray());
+
+        return Array.AsReadOnly(new[]
+        {
+            $"Dynamic final verification 仍需要 move：{decision.Move!.DisplayName} → " +
+            $"({decision.Move.ToPixelPosition.X},{decision.Move.ToPixelPosition.Y})。",
+        });
     }
 
     private static DesktopWorkspaceDynamicExecutionAttemptEvidence ClassifyMoveResult(
         int attemptIndex,
-        Guid freshObservationId,
+        Guid observationId,
         DesktopWorkspaceDynamicMove move,
-        int satisfiedGoalCountBeforeDecision,
+        int satisfiedGoalCount,
         DesktopIconMoveResult result)
     {
         var stableIdMatches = string.Equals(result.StableId, move.StableId, StringComparison.Ordinal);
@@ -753,7 +721,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             attemptIndex,
             move.DecisionIndex,
             DesktopWorkspaceDynamicExecutionAttemptPhase.Forward,
-            freshObservationId,
+            observationId,
             move.StableId,
             move.Kind,
             move.FromDisplayRef,
@@ -764,7 +732,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             move.FrozenTargetDisplayRef,
             move.FrozenTargetPixelPosition,
             move.FrozenTargetSlotId,
-            satisfiedGoalCountBeforeDecision,
+            satisfiedGoalCount,
             result.StableId,
             result.PreviousPosition,
             result.ActualPosition,
@@ -780,15 +748,15 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
 
     private static DesktopWorkspaceDynamicExecutionAttemptEvidence CreateWriterExceptionEvidence(
         int attemptIndex,
-        Guid freshObservationId,
+        Guid observationId,
         DesktopWorkspaceDynamicMove move,
-        int satisfiedGoalCountBeforeDecision,
+        int satisfiedGoalCount,
         Exception exception)
         => new(
             attemptIndex,
             move.DecisionIndex,
             DesktopWorkspaceDynamicExecutionAttemptPhase.Forward,
-            freshObservationId,
+            observationId,
             move.StableId,
             move.Kind,
             move.FromDisplayRef,
@@ -799,7 +767,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             move.FrozenTargetDisplayRef,
             move.FrozenTargetPixelPosition,
             move.FrozenTargetSlotId,
-            satisfiedGoalCountBeforeDecision,
+            satisfiedGoalCount,
             reportedStableId: null,
             reportedPreviousPixelPosition: null,
             actualPixelPosition: null,
@@ -813,119 +781,47 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             primaryPathExceptionMessage: null);
 
     private static (string ErrorType, string ErrorMessage) DescribeInexactEvidence(
-        DesktopWorkspaceDynamicMove move,
+        int decisionIndex,
         DesktopWorkspaceDynamicExecutionAttemptEvidence evidence,
         DesktopIconMoveResult result)
         => evidence.Outcome switch
         {
             DesktopWorkspaceExecutionAttemptOutcome.StableIdMismatch => (
-                "StableIdMismatch",
-                $"Dynamic decision #{move.DecisionIndex} Writer 报告 StableId \"{result.StableId}\"，期望 \"{move.StableId}\"。 "),
+                "DynamicStableIdMismatch",
+                $"Decision #{decisionIndex} Writer 报告 StableId \"{result.StableId}\"，期望 \"{evidence.StableId}\"。"),
             DesktopWorkspaceExecutionAttemptOutcome.PreviousPositionMismatch => (
-                "PreviousPositionMismatch",
-                $"Dynamic decision #{move.DecisionIndex} Writer Previous/Requested 与本次 fresh decision 不一致。" +
-                $" fresh From=({move.FromPixelPosition.X},{move.FromPixelPosition.Y})，" +
-                $"Writer Previous=({result.PreviousPosition.X},{result.PreviousPosition.Y})。 "),
+                "DynamicPreviousPositionMismatch",
+                $"Decision #{decisionIndex} Writer Previous/Requested 与本次 fresh decision identity 不一致。"),
             DesktopWorkspaceExecutionAttemptOutcome.InexactKnown => (
-                "InexactKnownPosition",
-                $"Dynamic decision #{move.DecisionIndex} 实际落点 ({result.ActualPosition.X},{result.ActualPosition.Y}) " +
-                $"不是请求位置 ({move.ToPixelPosition.X},{move.ToPixelPosition.Y})。 "),
+                "DynamicInexactKnownPosition",
+                $"Decision #{decisionIndex} 实际落点 ({result.ActualPosition.X},{result.ActualPosition.Y}) " +
+                $"不是请求位置 ({evidence.RequestedPixelPosition.X},{evidence.RequestedPixelPosition.Y})。"),
             _ => (
-                "UnexpectedWriterEvidence",
-                $"Dynamic decision #{move.DecisionIndex} 返回非 ExactSuccess 证据 {evidence.Outcome}。 "),
+                "DynamicUnexpectedWriterEvidence",
+                $"Decision #{decisionIndex} 返回非 ExactSuccess 证据 {evidence.Outcome}。"),
         };
-
-    private static string DescribePlanningIssues(DesktopWorkspaceDynamicNextStepResult decision)
-        => string.Join("；", decision.Issues.Select(static issue => $"{issue.Code}: {issue.Message}"));
 
     private static string? VerifySnapshotReadBack(
         DesktopLayoutSnapshot expected,
         DesktopLayoutSnapshot? actual)
     {
         if (actual is null)
-            return "Safety Snapshot 保存后回读返回 null。 ";
+            return "Safety Snapshot 保存后回读返回 null。";
         if (actual.SnapshotId != expected.SnapshotId ||
             actual.CreatedAtUtc != expected.CreatedAtUtc ||
             !string.Equals(actual.TargetMonitorDeviceName, expected.TargetMonitorDeviceName, StringComparison.Ordinal) ||
             actual.ConnectionMethod != expected.ConnectionMethod ||
             actual.FormatVersion != expected.FormatVersion ||
             actual.Icons.Count != expected.Icons.Count)
-            return "Safety Snapshot 回读 metadata 与刚保存的快照不一致。 ";
+        {
+            return "Safety Snapshot 回读 metadata 与刚保存的快照不一致。";
+        }
 
         for (var index = 0; index < expected.Icons.Count; index++)
         {
             if (expected.Icons[index] != actual.Icons[index])
-                return $"Safety Snapshot 回读第 {index} 项与刚保存的快照不一致。 ";
+                return $"Safety Snapshot 回读第 {index} 项与刚保存的快照不一致。";
         }
         return null;
-    }
-
-    private static string? VerifyPreparedJournalReadBack(
-        DesktopWorkspaceDynamicExecutionJournal expected,
-        DesktopWorkspaceDynamicExecutionJournal? actual)
-    {
-        if (actual is null)
-            return "Prepared Dynamic Journal 保存后回读返回 null。 ";
-        if (actual.SessionId != expected.SessionId ||
-            actual.SafetySnapshotId != expected.SafetySnapshotId ||
-            actual.BlueprintId != expected.BlueprintId ||
-            actual.BlueprintRevision != expected.BlueprintRevision ||
-            actual.Lifecycle != DesktopWorkspaceExecutionJournalLifecycle.Prepared ||
-            actual.Revision != expected.Revision ||
-            !string.Equals(actual.CertificateFingerprint, expected.CertificateFingerprint, StringComparison.Ordinal) ||
-            actual.Authority.ConfirmationId != expected.Authority.ConfirmationId ||
-            actual.Authority.PreviewId != expected.Authority.PreviewId ||
-            !string.Equals(
-                actual.Authority.PreviewFingerprint,
-                expected.Authority.PreviewFingerprint,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                actual.Authority.ExactPlanFingerprint,
-                expected.Authority.ExactPlanFingerprint,
-                StringComparison.Ordinal) ||
-            !string.Equals(
-                actual.Authority.GeometryFingerprint,
-                expected.Authority.GeometryFingerprint,
-                StringComparison.Ordinal) ||
-            actual.Authority.ItemGoals.Count != expected.Authority.ItemGoals.Count)
-            return "Prepared Dynamic Journal 回读 identity / authority 与刚保存的 journal 不一致。 ";
-        return null;
-    }
-
-    private sealed record FreshFactsCapture(
-        bool Succeeded,
-        DesktopObservation? Observation,
-        ExplorerWorkspaceGeometry? Geometry,
-        IReadOnlyList<DesktopWorkspaceCompilationItemFact>? Facts,
-        string? ErrorType,
-        string? ErrorMessage)
-    {
-        internal static FreshFactsCapture Success(
-            DesktopObservation observation,
-            ExplorerWorkspaceGeometry geometry,
-            IReadOnlyList<DesktopWorkspaceCompilationItemFact> facts)
-            => new(true, observation, geometry, facts, null, null);
-
-        internal static FreshFactsCapture Failed(string errorType, string errorMessage)
-            => new(false, null, null, null, errorType, errorMessage);
-    }
-
-    private enum DynamicFinalVerificationStatus
-    {
-        Complete = 0,
-        MoveReady = 1,
-        Blocked = 2,
-    }
-
-    private sealed record DynamicFinalVerification(
-        DynamicFinalVerificationStatus Status,
-        string? Message)
-    {
-        internal static DynamicFinalVerification Complete()
-            => new(DynamicFinalVerificationStatus.Complete, null);
-        internal static DynamicFinalVerification MoveReady()
-            => new(DynamicFinalVerificationStatus.MoveReady, null);
-        internal static DynamicFinalVerification Blocked(string message)
-            => new(DynamicFinalVerificationStatus.Blocked, message);
     }
 }
