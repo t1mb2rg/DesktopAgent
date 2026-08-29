@@ -143,7 +143,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         if (unresolvedStatic.Count != 0)
         {
             return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
-                "UnresolvedWorkspaceExecution",
+                "UnresolvedStaticWorkspaceExecution",
                 "检测到未解决 V9 Workspace execution journal，Dynamic Writer 未启动。");
         }
 
@@ -797,7 +797,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
                 "DynamicPreviousPositionMismatch",
                 $"Decision #{decisionIndex} Writer Previous/Requested 与本次 fresh decision identity 不一致。"),
             DesktopWorkspaceExecutionAttemptOutcome.InexactKnown => (
-                "DynamicInexactKnownPosition",
+                "InexactKnownPosition",
                 $"Decision #{decisionIndex} 实际落点 ({result.ActualPosition.X},{result.ActualPosition.Y}) " +
                 $"不是请求位置 ({evidence.RequestedPixelPosition.X},{evidence.RequestedPixelPosition.Y})。"),
             _ => (
