@@ -249,7 +249,7 @@ public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStoreTests
             actualPixelPosition: requested,
             hasTrustedActualPosition: true,
             isExact: true,
-            DesktopWorkspaceExecutionAttemptOutcome.ExactSuccess,
+            outcome: DesktopWorkspaceExecutionAttemptOutcome.ExactSuccess,
             connectionMethod: null,
             exceptionType: null,
             errorMessage: null,
