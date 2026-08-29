@@ -9,7 +9,7 @@ namespace DesktopAgent.WinUI;
 
 public sealed partial class LayoutManagementView
 {
-    private readonly SqliteDesktopWorkspaceExecutionJournalStore _workspaceExecutionJournalStore =
+    private readonly AcceptedAwareDesktopWorkspaceExecutionJournalStore _workspaceExecutionJournalStore =
         new(DesktopAgentDataPaths.DefaultDatabasePath);
 
     private DesktopWorkspaceApplyService? _workspaceApplyService;
