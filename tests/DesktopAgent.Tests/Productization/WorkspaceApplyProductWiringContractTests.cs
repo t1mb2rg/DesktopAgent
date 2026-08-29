@@ -54,7 +54,7 @@ public sealed class WorkspaceApplyProductWiringContractTests
     }
 
     [Fact]
-    public void CrossGenerationRecovery_InterlocksBothApplyFamiliesAndNeverFakesLegacyRecovery()
+    public void CrossGenerationRecovery_InterlocksBothApplyFamiliesAndRoutesWorkspaceEvidenceToItsOwnInspector()
     {
         var root = FindRepositoryRoot();
         var legacyApply = Read(
@@ -71,9 +71,16 @@ public sealed class WorkspaceApplyProductWiringContractTests
         Assert.Contains("UnresolvedRecoveryBlocked", legacyApply, StringComparison.Ordinal);
 
         Assert.Contains("_workspaceExecutionJournalStore.ListUnresolvedAsync", recoveryUi, StringComparison.Ordinal);
-        Assert.Contains("检测到 Workspace 恢复现场", recoveryUi, StringComparison.Ordinal);
-        Assert.Contains("不会把 Workspace 第三状态伪装成旧单屏恢复", recoveryUi, StringComparison.Ordinal);
+        Assert.Contains("PresentWorkspaceRecoveryInspectorAsync(workspacePending[0])", recoveryUi, StringComparison.Ordinal);
+        Assert.Contains("V9 Journal、Safety Snapshot 和 Writer 证据仍然保留", recoveryUi, StringComparison.Ordinal);
         Assert.Contains("新的真实写入继续保持阻断", recoveryUi, StringComparison.Ordinal);
+        Assert.Contains("当前版本不会猜测多套恢复现场的处理顺序", recoveryUi, StringComparison.Ordinal);
+
+        // Workspace journal 只路由到 Workspace Inspector；legacy reconcile 仅在 workspacePending == 0 后执行。
+        var workspaceBranch = recoveryUi.IndexOf("if (workspacePending.Count > 0)", StringComparison.Ordinal);
+        var legacyReconcile = recoveryUi.IndexOf("RecoveryProductService.ReconcileSingleAsync", StringComparison.Ordinal);
+        Assert.True(workspaceBranch >= 0 && legacyReconcile > workspaceBranch);
+        Assert.Contains("return;", recoveryUi[workspaceBranch..legacyReconcile], StringComparison.Ordinal);
     }
 
     [Fact]
