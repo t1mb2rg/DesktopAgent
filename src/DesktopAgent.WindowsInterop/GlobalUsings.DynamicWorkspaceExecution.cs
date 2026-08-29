@@ -1,0 +1,1 @@
+global using ISafetySnapshotFactory = DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution.IDesktopLayoutSafetySnapshotFactory;
