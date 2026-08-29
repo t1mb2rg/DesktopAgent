@@ -55,7 +55,7 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
     }
 
     [Fact]
-    public void RecoveryUi_RecognizesWorkspaceJournalBeforeLegacyRecovery_WithoutPretendingItCanReconcileIt()
+    public void RecoveryUi_RecognizesWorkspaceJournalBeforeLegacyRecovery_AndRoutesItToWorkspaceInspector()
     {
         var root = FindRepositoryRoot();
         var recovery = Read(root,
@@ -70,25 +70,34 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
         var workspaceGate = recovery.IndexOf(
             "if (workspacePending.Count > 0)",
             StringComparison.Ordinal);
+        var inspectorRoute = recovery.IndexOf(
+            "PresentWorkspaceRecoveryInspectorAsync(workspacePending[0])",
+            StringComparison.Ordinal);
         var legacyZeroGate = recovery.IndexOf(
             "if (pendingCount == 0)",
+            StringComparison.Ordinal);
+        var legacyReconcile = recovery.IndexOf(
+            "RecoveryProductService.ReconcileSingleAsync()",
             StringComparison.Ordinal);
 
         Assert.True(workspaceRead >= 0);
         Assert.True(legacyRead >= 0);
         Assert.True(workspaceGate > workspaceRead);
         Assert.True(workspaceGate > legacyRead);
+        Assert.True(inspectorRoute > workspaceGate);
         Assert.True(legacyZeroGate > workspaceGate);
+        Assert.True(legacyReconcile > workspaceGate);
 
-        Assert.Contains("检测到 Workspace 恢复现场", recovery, StringComparison.Ordinal);
-        Assert.Contains("当前版本不会把 Workspace 第三状态伪装成旧单屏恢复", recovery, StringComparison.Ordinal);
+        Assert.Contains("V9 Journal、Safety Snapshot 和 Writer 证据仍然保留", recovery, StringComparison.Ordinal);
+        Assert.Contains("新的真实写入继续保持阻断", recovery, StringComparison.Ordinal);
+        Assert.Contains("当前版本不会猜测多套恢复现场的处理顺序", recovery, StringComparison.Ordinal);
         Assert.Contains("DisableWorkspaceFrozenPreviewApplyEvidence();", recovery, StringComparison.Ordinal);
 
-        // Workspace 分支在 legacy Reconcile 之前直接 return，当前 slice 只识别和阻断，不假装有恢复 authority。
-        var returnAfterWorkspaceGate = recovery.IndexOf("return;", workspaceGate, StringComparison.Ordinal);
-        var legacyReconcile = recovery.IndexOf("RecoveryProductService.ReconcileSingleAsync()", StringComparison.Ordinal);
-        Assert.True(returnAfterWorkspaceGate > workspaceGate);
-        Assert.True(legacyReconcile > returnAfterWorkspaceGate);
+        // Workspace 分支必须在进入 legacy recovery gates / reconcile 前 return；不能拿旧恢复协调器处理 V9 journal。
+        var returnAfterInspector = recovery.IndexOf("return;", inspectorRoute, StringComparison.Ordinal);
+        Assert.True(returnAfterInspector > inspectorRoute);
+        Assert.True(legacyZeroGate > returnAfterInspector);
+        Assert.True(legacyReconcile > returnAfterInspector);
     }
 
     [Fact]
