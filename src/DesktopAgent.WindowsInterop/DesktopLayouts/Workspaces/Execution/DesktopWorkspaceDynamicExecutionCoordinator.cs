@@ -144,7 +144,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         {
             return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
                 "UnresolvedWorkspaceExecution",
-                $"检测到未解决 V9 Workspace execution journal {unresolvedStatic[0].SessionId:D}，Dynamic Writer 未启动。");
+                "检测到未解决 V9 Workspace execution journal，Dynamic Writer 未启动。");
         }
 
         await _dynamicJournalStore.InitializeAsync(cancellationToken);
