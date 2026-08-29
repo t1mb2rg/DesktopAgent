@@ -161,9 +161,10 @@ public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStore : IDeskto
                 SELECT session_id
                 FROM workspace_dynamic_execution_journals
                 WHERE lifecycle NOT IN (@committed, @restored)
-                  AND NOT (
-                      lifecycle = @needs_attention
-                      AND recovery_failure_type = @accepted_marker)
+                  AND (
+                      lifecycle <> @needs_attention
+                      OR recovery_failure_type IS NULL
+                      OR recovery_failure_type <> @accepted_marker)
                 ORDER BY started_at_utc ASC, session_id ASC;
             ";
             command.Parameters.AddWithValue("@committed", (int)DesktopWorkspaceExecutionJournalLifecycle.Committed);
