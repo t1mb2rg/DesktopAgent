@@ -1,4 +1,5 @@
 using System.Text;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -51,8 +52,7 @@ public sealed partial class AiAssistantView
                     ? InfoBarSeverity.Warning
                     : InfoBarSeverity.Error;
                 AiStatusBar.Title = "Workspace Blueprint 没有形成可验证预览";
-                AiStatusBar.Message = result.Message ??
-                    $"结果：{result.Status}。没有生成 Frozen Preview，也没有调用 Writer。";
+                AiStatusBar.Message = BuildWorkspacePlanningFailureMessage(result);
                 AiStatusBar.IsOpen = true;
                 return;
             }
@@ -97,6 +97,79 @@ public sealed partial class AiAssistantView
             cts.Dispose();
             SetBusy(false);
         }
+    }
+
+    private static string BuildWorkspacePlanningFailureMessage(
+        AiDesktopWorkspacePlanningProductResult result)
+    {
+        var message = result.Message ??
+            $"结果：{result.Status}。";
+        var attempts = result.DesignAttempts > 0
+            ? $" AI 设计尝试 {result.DesignAttempts} 次。"
+            : string.Empty;
+
+        if (result.CompileIssues.Count == 0)
+        {
+            return message + attempts +
+                   " 没有生成 Frozen Preview，也没有调用 Writer。";
+        }
+
+        var diagnostics = result.CompileIssues
+            .Take(3)
+            .Select(FormatWorkspaceCompileIssue)
+            .ToArray();
+        return message + attempts +
+               $" 本地 Compiler 最后诊断：{string.Join("；", diagnostics)}。" +
+               "没有生成 Frozen Preview，也没有调用 Writer。";
+    }
+
+    private static string FormatWorkspaceCompileIssue(DesktopWorkspaceCompileIssue issue)
+    {
+        var location = FormatWorkspaceCompileIssueLocation(issue.DisplayRef, issue.ZoneKey);
+        var detail = issue.Code switch
+        {
+            DesktopWorkspaceCompileIssueCode.PreserveDisplayConflict =>
+                "设计要求与“保持现状”显示器发生冲突",
+            DesktopWorkspaceCompileIssueCode.NonMovableItemRequiresExplicitPolicy =>
+                "存在不可移动项目，Blueprint 需要明确 Keep / Exclude 策略",
+            DesktopWorkspaceCompileIssueCode.MissingCategoryRule =>
+                "存在没有 Category→Zone 规则的类别",
+            DesktopWorkspaceCompileIssueCode.ZoneQuantizesToEmpty =>
+                "分区量化后没有可用 Explorer 原生槽位",
+            DesktopWorkspaceCompileIssueCode.ReservedRegionQuantizesToEmpty =>
+                "保留区域量化后没有覆盖任何 Explorer 原生槽位",
+            DesktopWorkspaceCompileIssueCode.ZoneRelationViolated =>
+                "分区之间的设计关系在本机几何上无法保持",
+            DesktopWorkspaceCompileIssueCode.ZoneOverlap =>
+                "分区在本机几何上发生重叠",
+            DesktopWorkspaceCompileIssueCode.ZoneCapacityInsufficient =>
+                issue.RequiredSlots.HasValue && issue.AvailableSlots.HasValue
+                    ? $"分区容量不足，需要 {issue.RequiredSlots.Value} 个槽位，但只有 {issue.AvailableSlots.Value} 个"
+                    : "分区容量不足",
+            _ => $"本地 Compiler 拒绝：{issue.Code}",
+        };
+
+        return location.Length == 0 ? detail : $"{location}：{detail}";
+    }
+
+    private static string FormatWorkspaceCompileIssueLocation(string? displayRef, string? zoneKey)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(displayRef))
+            parts.Add(FormatWorkspaceDiagnosticDisplay(displayRef));
+        if (!string.IsNullOrWhiteSpace(zoneKey))
+            parts.Add($"分区 {zoneKey.Trim()}");
+        return string.Join(" / ", parts);
+    }
+
+    private static string FormatWorkspaceDiagnosticDisplay(string displayRef)
+    {
+        var normalized = displayRef.Trim();
+        if (string.Equals(normalized, "primary", StringComparison.OrdinalIgnoreCase))
+            return "主屏";
+        if (normalized.StartsWith("secondary_", StringComparison.OrdinalIgnoreCase))
+            return $"副屏 {normalized["secondary_".Length..]}";
+        return normalized;
     }
 
     /// <summary>
