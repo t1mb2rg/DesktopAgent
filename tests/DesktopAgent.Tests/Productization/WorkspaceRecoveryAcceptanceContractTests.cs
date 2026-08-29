@@ -39,7 +39,8 @@ public sealed class WorkspaceRecoveryAcceptanceContractTests
             "src", "DesktopAgent.WinUI", "LayoutManagementView.DirectApply.cs");
 
         Assert.Contains("PresentWorkspaceRecoveryInspectorAsync(workspacePending[0])", recovery, StringComparison.Ordinal);
-        Assert.Contains("ExpectedPreviousPixelPosition", inspector, StringComparison.Ordinal);
+        Assert.Contains("冻结 From", inspector, StringComparison.Ordinal);
+        Assert.Contains("step.FromPixelPosition", inspector, StringComparison.Ordinal);
         Assert.Contains("ReportedPreviousPixelPosition", inspector, StringComparison.Ordinal);
         Assert.Contains("RequestedPixelPosition", inspector, StringComparison.Ordinal);
         Assert.Contains("ActualPixelPosition", inspector, StringComparison.Ordinal);
