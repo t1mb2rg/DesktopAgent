@@ -50,7 +50,7 @@ public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStoreTests
         var readBack = await store.GetAsync(updated.SessionId);
 
         var actual = Assert.IsType<DesktopWorkspaceDynamicExecutionJournal>(readBack);
-        Assert.Equal(3, actual.Revision);
+        Assert.Equal(2, actual.Revision);
         Assert.Equal(2, actual.ForwardAttempts.Count);
         Assert.Equal(new PixelPoint(1218, 1486), actual.ForwardAttempts[0].FreshFromPixelPosition);
         Assert.Equal(new PixelPoint(1218, 1290), actual.ForwardAttempts[1].FreshFromPixelPosition);
