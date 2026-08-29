@@ -38,17 +38,21 @@ public sealed partial class LayoutManagementView
             DisableWorkspaceFrozenPreviewApplyEvidence();
             ApplyToDesktopButton.IsEnabled = false;
 
+            if (workspacePending.Count == 1 && pendingCount == 0)
+            {
+                await PresentWorkspaceRecoveryInspectorAsync(workspacePending[0]);
+                return;
+            }
+
             var legacySuffix = pendingCount > 0
                 ? $" 同时还有 {pendingCount} 笔旧布局 unresolved 恢复会话。"
                 : string.Empty;
             ShowInfo(
-                workspacePending.Count == 1 && pendingCount == 0
-                    ? "检测到 Workspace 恢复现场"
-                    : "存在多套待处理恢复",
+                "存在多套待处理恢复",
                 $"检测到 {workspacePending.Count} 笔 unresolved Workspace execution journal。" +
                 "V9 Journal、Safety Snapshot 和 Writer 证据仍然保留，新的真实写入继续保持阻断。" +
                 legacySuffix +
-                " 当前版本不会把 Workspace 第三状态伪装成旧单屏恢复；需要先完成 Workspace Recovery 安全入口。",
+                " 当前版本不会猜测多套恢复现场的处理顺序。",
                 InfoBarSeverity.Error);
             return;
         }
