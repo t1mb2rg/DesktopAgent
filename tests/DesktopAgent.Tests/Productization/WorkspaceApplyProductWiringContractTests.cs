@@ -28,7 +28,7 @@ public sealed class WorkspaceApplyProductWiringContractTests
     }
 
     [Fact]
-    public void WorkspaceApply_ProductBoundary_KeepsPhysicalWriterOutOfWinUi()
+    public void WorkspaceApply_ProductBoundary_KeepsPhysicalWriterOutOfWinUi_AndUsesDynamicCoordinator()
     {
         var root = FindRepositoryRoot();
         var workspaceApply = Read(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceApply.cs");
@@ -44,17 +44,19 @@ public sealed class WorkspaceApplyProductWiringContractTests
 
         Assert.DoesNotContain("DesktopShellIconPositionWriter", workspaceApply, StringComparison.Ordinal);
         Assert.DoesNotContain("IDesktopIconPositionWriter", workspaceApply, StringComparison.Ordinal);
-        Assert.DoesNotContain("DesktopWorkspaceExecutionCoordinator", workspaceApply, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopWorkspaceDynamicExecutionCoordinator", workspaceApply, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopShellIconPositionWriter", directApply, StringComparison.Ordinal);
 
         Assert.Contains("DesktopShellIconPositionWriter", service, StringComparison.Ordinal);
-        Assert.Contains("DesktopWorkspaceExecutionCoordinator", service, StringComparison.Ordinal);
+        Assert.Contains("DesktopWorkspaceDynamicExecutionCoordinator", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("new DesktopWorkspaceExecutionCoordinator", service, StringComparison.Ordinal);
+        Assert.Contains("IDesktopWorkspaceDynamicExecutionJournalStore", service, StringComparison.Ordinal);
         Assert.Contains("UnresolvedLegacyRecovery", service, StringComparison.Ordinal);
         Assert.Contains("CancellationToken.None", service, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void CrossGenerationRecovery_InterlocksBothApplyFamiliesAndRoutesWorkspaceEvidenceToItsOwnInspector()
+    public void CrossGenerationRecovery_RoutesV9ToInspector_AndDynamicEvidenceFailsClosedBeforeLegacyRecovery()
     {
         var root = FindRepositoryRoot();
         var legacyApply = Read(
@@ -70,16 +72,20 @@ public sealed class WorkspaceApplyProductWiringContractTests
         Assert.Contains("_workspaceExecutionJournalStore.ListUnresolvedAsync", legacyApply, StringComparison.Ordinal);
         Assert.Contains("UnresolvedRecoveryBlocked", legacyApply, StringComparison.Ordinal);
 
+        Assert.Contains("_workspaceDynamicExecutionJournalStore.ListUnresolvedAsync", recoveryUi, StringComparison.Ordinal);
         Assert.Contains("_workspaceExecutionJournalStore.ListUnresolvedAsync", recoveryUi, StringComparison.Ordinal);
+        Assert.Contains("if (dynamicWorkspacePending.Count > 0)", recoveryUi, StringComparison.Ordinal);
         Assert.Contains("PresentWorkspaceRecoveryInspectorAsync(workspacePending[0])", recoveryUi, StringComparison.Ordinal);
+        Assert.Contains("Dynamic Journal、Safety Snapshot 与逐次 fresh/Writer 证据仍然保留", recoveryUi, StringComparison.Ordinal);
         Assert.Contains("V9 Journal、Safety Snapshot 和 Writer 证据仍然保留", recoveryUi, StringComparison.Ordinal);
         Assert.Contains("新的真实写入继续保持阻断", recoveryUi, StringComparison.Ordinal);
-        Assert.Contains("当前版本不会猜测多套恢复现场的处理顺序", recoveryUi, StringComparison.Ordinal);
+        Assert.Contains("当前版本不会用 V9 或旧单屏恢复器猜测处理 Dynamic 现场", recoveryUi, StringComparison.Ordinal);
 
-        // Workspace journal 只路由到 Workspace Inspector；legacy reconcile 仅在 workspacePending == 0 后执行。
+        var dynamicBranch = recoveryUi.IndexOf("if (dynamicWorkspacePending.Count > 0)", StringComparison.Ordinal);
         var workspaceBranch = recoveryUi.IndexOf("if (workspacePending.Count > 0)", StringComparison.Ordinal);
         var legacyReconcile = recoveryUi.IndexOf("RecoveryProductService.ReconcileSingleAsync", StringComparison.Ordinal);
-        Assert.True(workspaceBranch >= 0 && legacyReconcile > workspaceBranch);
+        Assert.True(dynamicBranch >= 0 && workspaceBranch > dynamicBranch && legacyReconcile > workspaceBranch);
+        Assert.Contains("return;", recoveryUi[dynamicBranch..workspaceBranch], StringComparison.Ordinal);
         Assert.Contains("return;", recoveryUi[workspaceBranch..legacyReconcile], StringComparison.Ordinal);
     }
 
@@ -97,7 +103,6 @@ public sealed class WorkspaceApplyProductWiringContractTests
         Assert.Contains("DisableWorkspaceFrozenPreviewApplyEvidence", replacement, StringComparison.Ordinal);
         Assert.Contains("HasWorkspaceFrozenPreviewApplyTicket(_workspaceFrozenPreview)", previewGate, StringComparison.Ordinal);
 
-        // Renderer 只负责只读预览，不再持有/销毁产品 Apply capability。
         Assert.DoesNotContain("_workspaceFrozenPreviewApplyPreviewId", frozen, StringComparison.Ordinal);
         Assert.DoesNotContain("DisableWorkspaceFrozenPreviewApplyEvidence", frozen, StringComparison.Ordinal);
 
