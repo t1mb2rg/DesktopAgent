@@ -12,24 +12,26 @@ namespace DesktopAgent.WindowsInterop.DesktopLayouts.Workspaces.Execution;
 
 /// <summary>
 /// Workspace Frozen Preview 的产品级 Apply 边界。
-/// WinUI 只提交显式确认对象和持久化接口；真实 Shell Writer、fresh Observation 与 Coordinator
+/// WinUI 只提交显式确认对象和持久化接口；真实 Shell Writer、fresh Observation 与 Dynamic Coordinator
 /// 都在 WindowsInterop 内部组装，避免 UI 获得 Writer authority。
 /// </summary>
 public sealed class DesktopWorkspaceApplyService
 {
     private readonly IRecoverySessionStore _legacyRecoveryStore;
     private readonly Func<DesktopWorkspaceApplyConfirmation, CancellationToken,
-        Task<DesktopWorkspaceExecutionRunResult>> _executeAsync;
+        Task<DesktopWorkspaceDynamicExecutionRunResult>> _executeAsync;
     private readonly SemaphoreSlim _applyLock = new(1, 1);
 
     public DesktopWorkspaceApplyService(
         IDesktopLayoutSnapshotStore snapshotStore,
         IDesktopWorkspaceExecutionJournalStore workspaceJournalStore,
+        IDesktopWorkspaceDynamicExecutionJournalStore dynamicWorkspaceJournalStore,
         IRecoverySessionStore legacyRecoveryStore,
         TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(snapshotStore);
         ArgumentNullException.ThrowIfNull(workspaceJournalStore);
+        ArgumentNullException.ThrowIfNull(dynamicWorkspaceJournalStore);
         _legacyRecoveryStore = legacyRecoveryStore
             ?? throw new ArgumentNullException(nameof(legacyRecoveryStore));
 
@@ -46,13 +48,14 @@ public sealed class DesktopWorkspaceApplyService
             staExecutor,
             clock);
         var snapshotFactory = new DesktopLayoutSnapshotFactory(clock);
-        var coordinator = new DesktopWorkspaceExecutionCoordinator(
+        var coordinator = new DesktopWorkspaceDynamicExecutionCoordinator(
             observationSource,
             positionWriter,
             staExecutor,
             new DefaultSafetySnapshotFactory(snapshotFactory),
             snapshotStore,
             workspaceJournalStore,
+            dynamicWorkspaceJournalStore,
             clock);
 
         _executeAsync = coordinator.ExecuteAsync;
@@ -61,14 +64,14 @@ public sealed class DesktopWorkspaceApplyService
     internal DesktopWorkspaceApplyService(
         IRecoverySessionStore legacyRecoveryStore,
         Func<DesktopWorkspaceApplyConfirmation, CancellationToken,
-            Task<DesktopWorkspaceExecutionRunResult>> executeAsync)
+            Task<DesktopWorkspaceDynamicExecutionRunResult>> executeAsync)
     {
         _legacyRecoveryStore = legacyRecoveryStore
             ?? throw new ArgumentNullException(nameof(legacyRecoveryStore));
         _executeAsync = executeAsync ?? throw new ArgumentNullException(nameof(executeAsync));
     }
 
-    public async Task<DesktopWorkspaceExecutionRunResult> ApplyAsync(
+    public async Task<DesktopWorkspaceDynamicExecutionRunResult> ApplyAsync(
         DesktopWorkspaceApplyConfirmation confirmation,
         CancellationToken cancellationToken = default)
     {
@@ -78,7 +81,7 @@ public sealed class DesktopWorkspaceApplyService
         try
         {
             // Workspace 与旧单屏执行共享同一真实桌面。旧 Recovery 未收敛时，新的 Workspace Writer
-            // 必须 fail-closed，不能让两代 execution journal 同时争夺桌面事实。
+            // 必须 fail-closed，不能让多代 execution journal 同时争夺桌面事实。
             await _legacyRecoveryStore.InitializeAsync(cancellationToken);
             var unresolvedLegacy = (await _legacyRecoveryStore.ListUnresolvedAsync(50, cancellationToken))
                 .Where(static record => record.GetDisposition().IsUnresolved)
@@ -86,7 +89,7 @@ public sealed class DesktopWorkspaceApplyService
                 .ToArray();
             if (unresolvedLegacy.Length != 0)
             {
-                return DesktopWorkspaceExecutionRunResult.FailedBeforeWrite(
+                return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
                     "UnresolvedLegacyRecovery",
                     $"检测到未解决旧恢复会话 {unresolvedLegacy[0].SessionId:D}，Workspace 写入已暂停。");
             }
