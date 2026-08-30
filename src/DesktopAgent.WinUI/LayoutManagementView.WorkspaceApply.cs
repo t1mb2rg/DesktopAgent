@@ -19,6 +19,7 @@ public sealed partial class LayoutManagementView
         _workspaceApplyService ??= new DesktopWorkspaceApplyService(
             _directApplySnapshotStore,
             _workspaceExecutionJournalStore,
+            _workspaceDynamicExecutionJournalStore,
             _directApplyRecoveryStore);
 
     internal void EnableWorkspaceFrozenPreviewApply()
