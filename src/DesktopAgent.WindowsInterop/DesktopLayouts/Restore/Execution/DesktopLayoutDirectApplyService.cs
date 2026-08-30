@@ -95,14 +95,15 @@ public sealed class DesktopLayoutDirectApplyService
     private readonly IDesktopLayoutSnapshotStore _snapshotStore;
     private readonly IRecoverySessionStore _recoveryStore;
     private readonly IDesktopWorkspaceExecutionJournalStore? _workspaceExecutionJournalStore;
+    private readonly IDesktopWorkspaceDynamicExecutionJournalStore? _dynamicWorkspaceExecutionJournalStore;
     private readonly Func<TargetDisplayLayoutRestorePlan, bool, CancellationToken,
         Task<TargetDisplayLayoutExecutionRunResult>> _executeAuthorizedAsync;
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _applyLock = new(1, 1);
 
     /// <summary>
-    /// 兼容旧组合入口。若产品同时启用了 Workspace Apply，应使用带 workspaceJournalStore 的重载，
-    /// 让两代 execution/recovery 互相 fail-closed。
+    /// 兼容旧组合入口。若产品同时启用了 Workspace Apply，应使用带 Workspace journal stores 的重载，
+    /// 让多代 execution/recovery 互相 fail-closed。
     /// </summary>
     public DesktopLayoutDirectApplyService(
         IDesktopLayoutSnapshotStore snapshotStore,
@@ -112,14 +113,14 @@ public sealed class DesktopLayoutDirectApplyService
             snapshotStore,
             recoveryStore,
             workspaceExecutionJournalStore: null,
+            dynamicWorkspaceExecutionJournalStore: null,
             timeProvider,
             productionMarker: true)
     {
     }
 
     /// <summary>
-    /// 产品构造器。调用方只提供持久化接口；真实 Shell Writer 和 Coordinator 在 WindowsInterop 内部组装。
-    /// Workspace journal 仅用于跨代 unresolved interlock，不授予旧 Direct Apply 新的 Workspace authority。
+    /// V9 Workspace 兼容产品构造器。新产品组合应优先使用同时传入 Dynamic store 的重载。
     /// </summary>
     public DesktopLayoutDirectApplyService(
         IDesktopLayoutSnapshotStore snapshotStore,
@@ -130,6 +131,27 @@ public sealed class DesktopLayoutDirectApplyService
             snapshotStore,
             recoveryStore,
             workspaceExecutionJournalStore ?? throw new ArgumentNullException(nameof(workspaceExecutionJournalStore)),
+            dynamicWorkspaceExecutionJournalStore: null,
+            timeProvider,
+            productionMarker: true)
+    {
+    }
+
+    /// <summary>
+    /// 当前产品构造器。V9 / Dynamic Workspace journal 都只用于 unresolved interlock；
+    /// 它们不会向旧 Direct Apply 授予任何 Workspace execution / recovery authority。
+    /// </summary>
+    public DesktopLayoutDirectApplyService(
+        IDesktopLayoutSnapshotStore snapshotStore,
+        IRecoverySessionStore recoveryStore,
+        IDesktopWorkspaceExecutionJournalStore workspaceExecutionJournalStore,
+        IDesktopWorkspaceDynamicExecutionJournalStore dynamicWorkspaceExecutionJournalStore,
+        TimeProvider? timeProvider = null)
+        : this(
+            snapshotStore,
+            recoveryStore,
+            workspaceExecutionJournalStore ?? throw new ArgumentNullException(nameof(workspaceExecutionJournalStore)),
+            dynamicWorkspaceExecutionJournalStore ?? throw new ArgumentNullException(nameof(dynamicWorkspaceExecutionJournalStore)),
             timeProvider,
             productionMarker: true)
     {
@@ -139,6 +161,7 @@ public sealed class DesktopLayoutDirectApplyService
         IDesktopLayoutSnapshotStore snapshotStore,
         IRecoverySessionStore recoveryStore,
         IDesktopWorkspaceExecutionJournalStore? workspaceExecutionJournalStore,
+        IDesktopWorkspaceDynamicExecutionJournalStore? dynamicWorkspaceExecutionJournalStore,
         TimeProvider? timeProvider,
         bool productionMarker)
     {
@@ -146,6 +169,7 @@ public sealed class DesktopLayoutDirectApplyService
         _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
         _recoveryStore = recoveryStore ?? throw new ArgumentNullException(nameof(recoveryStore));
         _workspaceExecutionJournalStore = workspaceExecutionJournalStore;
+        _dynamicWorkspaceExecutionJournalStore = dynamicWorkspaceExecutionJournalStore;
         _timeProvider = timeProvider ?? TimeProvider.System;
 
         var topologyReader = new NativeDisplayTopologyReader();
@@ -189,7 +213,8 @@ public sealed class DesktopLayoutDirectApplyService
         Func<TargetDisplayLayoutRestorePlan, bool, CancellationToken,
             Task<TargetDisplayLayoutExecutionRunResult>> executeAuthorizedAsync,
         TimeProvider? timeProvider = null,
-        IDesktopWorkspaceExecutionJournalStore? workspaceExecutionJournalStore = null)
+        IDesktopWorkspaceExecutionJournalStore? workspaceExecutionJournalStore = null,
+        IDesktopWorkspaceDynamicExecutionJournalStore? dynamicWorkspaceExecutionJournalStore = null)
     {
         _observationSource = observationSource
             ?? throw new ArgumentNullException(nameof(observationSource));
@@ -198,6 +223,7 @@ public sealed class DesktopLayoutDirectApplyService
         _recoveryStore = recoveryStore
             ?? throw new ArgumentNullException(nameof(recoveryStore));
         _workspaceExecutionJournalStore = workspaceExecutionJournalStore;
+        _dynamicWorkspaceExecutionJournalStore = dynamicWorkspaceExecutionJournalStore;
         _executeAuthorizedAsync = executeAuthorizedAsync
             ?? throw new ArgumentNullException(nameof(executeAuthorizedAsync));
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -236,8 +262,8 @@ public sealed class DesktopLayoutDirectApplyService
                     $"检测到未解决恢复会话 {unresolved[0].SessionId:D}，新的真实桌面写入已暂停。");
             }
 
-            // 新 Workspace execution journal 与旧 Direct Apply 共享同一 Explorer 桌面。
-            // 任意 Workspace journal 未收敛时，旧 Writer 也必须停住，不能绕过新恢复锁。
+            // 2. V9 Workspace execution journal 与旧 Direct Apply 共享同一 Explorer 桌面。
+            // 任意 V9 journal 未收敛时，旧 Writer 也必须停住，不能绕过 Workspace 恢复锁。
             if (_workspaceExecutionJournalStore is not null)
             {
                 await _workspaceExecutionJournalStore.InitializeAsync(cancellationToken);
@@ -246,7 +272,22 @@ public sealed class DesktopLayoutDirectApplyService
                 {
                     return DesktopLayoutDirectApplyResult.Rejected(
                         DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked,
-                        $"检测到未解决 Workspace execution journal {unresolvedWorkspace[0].SessionId:D}，旧布局写入已暂停。");
+                        $"检测到未解决 V9 Workspace execution journal {unresolvedWorkspace[0].SessionId:D}，旧布局写入已暂停。");
+                }
+            }
+
+            // 3. Dynamic Workspace journal 与旧 Direct Apply 同样共享真实 Explorer。
+            // 这里只消费 unresolved 事实做 interlock，不解释 Dynamic route，也不调用任何 Dynamic recovery。
+            if (_dynamicWorkspaceExecutionJournalStore is not null)
+            {
+                await _dynamicWorkspaceExecutionJournalStore.InitializeAsync(cancellationToken);
+                var unresolvedDynamicWorkspace =
+                    await _dynamicWorkspaceExecutionJournalStore.ListUnresolvedAsync(cancellationToken);
+                if (unresolvedDynamicWorkspace.Count != 0)
+                {
+                    return DesktopLayoutDirectApplyResult.Rejected(
+                        DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked,
+                        $"检测到未解决 Dynamic Workspace execution journal {unresolvedDynamicWorkspace[0].SessionId:D}，旧布局写入已暂停。");
                 }
             }
 
@@ -254,7 +295,7 @@ public sealed class DesktopLayoutDirectApplyService
             var confirmedUsesTemporaryStaging = confirmedCandidate.UsesTemporaryStaging;
             var authorizedScopeGate = SelectAuthorizedScopeGate(confirmedUsesTemporaryStaging);
 
-            // 2. 用户确认时的 Candidate 自己先过一次对应 ScopeGate。
+            // 4. 用户确认时的 Candidate 自己先过一次对应 ScopeGate。
             var confirmedGate = authorizedScopeGate(
                 confirmedCandidate.RestorePlan,
                 confirmedCandidate.ExecutionPlan);
@@ -265,7 +306,7 @@ public sealed class DesktopLayoutDirectApplyService
                     confirmedGate.RejectionReasons.ToArray());
             }
 
-            // 3. fresh DesktopObservation。WindowsDesktopObservationSource 自己负责
+            // 5. fresh DesktopObservation。WindowsDesktopObservationSource 自己负责
             // topology 双读、完整 Shell 读取、StableId 唯一性和 MonitorDeviceName 归属。
             var freshCapture = await _observationSource.CaptureAsync(cancellationToken);
             if (!freshCapture.IsCaptured || freshCapture.Observation is null)
@@ -278,7 +319,7 @@ public sealed class DesktopLayoutDirectApplyService
                     issues);
             }
 
-            // 4. 必须使用用户实际确认过的 frozen Draft + explicit-inbound 白名单重建，
+            // 6. 必须使用用户实际确认过的 frozen Draft + explicit-inbound 白名单重建，
             // 不从 SQLite 重读旧模板，也不允许 fresh replan 偷偷增删跨屏授权。
             var freshPreparation = DesktopLayoutDirectApplyPreparationService.Create(
                 confirmedPreparation.FrozenDraft,
@@ -301,7 +342,7 @@ public sealed class DesktopLayoutDirectApplyService
 
             var freshCandidate = freshPreparation.Candidate;
 
-            // 5. 授权类型冻结。fresh replan 不得从 no-staging 偷换成 staging，反之亦然。
+            // 7. 授权类型冻结。fresh replan 不得从 no-staging 偷换成 staging，反之亦然。
             if (freshCandidate.UsesTemporaryStaging != confirmedUsesTemporaryStaging)
             {
                 return DesktopLayoutDirectApplyResult.Rejected(
@@ -309,7 +350,7 @@ public sealed class DesktopLayoutDirectApplyService
                     "fresh Candidate 的 staging/no-staging 类型与用户确认时不同。请重新预览并重新确认。");
             }
 
-            // 6. confirmed ↔ fresh 做完整语义比较；任何影响用户确认/执行的变化都 fail-closed。
+            // 8. confirmed ↔ fresh 做完整语义比较；任何影响用户确认/执行的变化都 fail-closed。
             var comparison = DesktopLayoutRuleAwareExecutionCandidateSemanticComparer.Compare(
                 confirmedCandidate,
                 freshCandidate);
@@ -321,7 +362,7 @@ public sealed class DesktopLayoutDirectApplyService
                     comparison.Differences);
             }
 
-            // 7. 使用用户确认时冻结的同一类 ScopeGate 再审 fresh Candidate。
+            // 9. 使用用户确认时冻结的同一类 ScopeGate 再审 fresh Candidate。
             var freshGate = authorizedScopeGate(
                 freshCandidate.RestorePlan,
                 freshCandidate.ExecutionPlan);
@@ -335,7 +376,7 @@ public sealed class DesktopLayoutDirectApplyService
             // 到这里仍然是 0 Writer。允许调用 Coordinator 前最后响应一次取消。
             cancellationToken.ThrowIfCancellationRequested();
 
-            // 8. 用户已经在产品层明确确认，因此进入 Coordinator 后不允许 UI 取消打断 Writer 边界。
+            // 10. 用户已经在产品层明确确认，因此进入 Coordinator 后不允许 UI 取消打断 Writer 边界。
             // Coordinator 仍会再次读取当前桌面、重建 ExecutionPlan、再次执行同一 ScopeGate，
             // 并在第一笔 Writer 前保存+回读 safety snapshot / recovery checkpoint。
             var executionResult = await _executeAuthorizedAsync(
