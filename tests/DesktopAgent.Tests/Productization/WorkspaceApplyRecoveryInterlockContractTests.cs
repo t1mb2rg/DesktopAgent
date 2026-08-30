@@ -33,7 +33,7 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
     }
 
     [Fact]
-    public void WorkspaceAndLegacyApply_KeepExistingCrossGenerationLocksDuringDynamicCutover()
+    public void WorkspaceAndLegacyApply_MutuallyBlockUnresolvedRecoveryAcrossAllGenerations()
     {
         var root = FindRepositoryRoot();
         var workspace = Read(root,
@@ -42,18 +42,27 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
         var legacy = Read(root,
             "src", "DesktopAgent.WindowsInterop", "DesktopLayouts", "Restore", "Execution",
             "DesktopLayoutDirectApplyService.cs");
+        var legacyUi = Read(root,
+            "src", "DesktopAgent.WinUI", "LayoutManagementView.DirectApply.cs");
 
         Assert.Contains("_legacyRecoveryStore.ListUnresolvedAsync", workspace, StringComparison.Ordinal);
         Assert.Contains("UnresolvedLegacyRecovery", workspace, StringComparison.Ordinal);
+        Assert.Contains("IDesktopWorkspaceExecutionJournalStore", workspace, StringComparison.Ordinal);
+        Assert.Contains("IDesktopWorkspaceDynamicExecutionJournalStore", workspace, StringComparison.Ordinal);
         Assert.Contains("CancellationToken.None", workspace, StringComparison.Ordinal);
 
-        // 旧 Direct Apply 继续不得越过 V9 Workspace journal 锁。
-        // Dynamic journal 对旧 Direct Apply 的对称 service-level interlock 将在下一独立安全 slice 补齐，
-        // 在第二次 Physical Apply 前必须完成；本测试不伪造 V9 journal 来冒充 Dynamic evidence。
         Assert.Contains("IDesktopWorkspaceExecutionJournalStore", legacy, StringComparison.Ordinal);
         Assert.Contains("_workspaceExecutionJournalStore.ListUnresolvedAsync", legacy, StringComparison.Ordinal);
-        Assert.Contains("未解决 Workspace execution journal", legacy, StringComparison.Ordinal);
+        Assert.Contains("未解决 V9 Workspace execution journal", legacy, StringComparison.Ordinal);
+        Assert.Contains("IDesktopWorkspaceDynamicExecutionJournalStore", legacy, StringComparison.Ordinal);
+        Assert.Contains("_dynamicWorkspaceExecutionJournalStore.ListUnresolvedAsync", legacy, StringComparison.Ordinal);
+        Assert.Contains("未解决 Dynamic Workspace execution journal", legacy, StringComparison.Ordinal);
         Assert.Contains("DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked", legacy, StringComparison.Ordinal);
+
+        Assert.Contains("_workspaceDynamicExecutionJournalStore", legacyUi, StringComparison.Ordinal);
+        var directApplyCtor = legacyUi.IndexOf("new DesktopLayoutDirectApplyService", StringComparison.Ordinal);
+        var dynamicStoreArg = legacyUi.IndexOf("_workspaceDynamicExecutionJournalStore", directApplyCtor, StringComparison.Ordinal);
+        Assert.True(directApplyCtor >= 0 && dynamicStoreArg > directApplyCtor);
     }
 
     [Fact]
