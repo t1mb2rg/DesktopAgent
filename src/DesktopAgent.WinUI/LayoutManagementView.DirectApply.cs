@@ -20,7 +20,8 @@ public sealed partial class LayoutManagementView
         _directApplyService ??= new DesktopLayoutDirectApplyService(
             _directApplySnapshotStore,
             _directApplyRecoveryStore,
-            _workspaceExecutionJournalStore);
+            _workspaceExecutionJournalStore,
+            _workspaceDynamicExecutionJournalStore);
 
     private async void ApplyToDesktop_Click(object sender, RoutedEventArgs e)
     {
