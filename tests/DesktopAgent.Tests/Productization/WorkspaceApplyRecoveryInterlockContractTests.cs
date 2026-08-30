@@ -11,13 +11,13 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
             "DesktopWorkspaceApplyService.cs");
         var coordinator = Read(root,
             "src", "DesktopAgent.WindowsInterop", "DesktopLayouts", "Workspaces", "Execution",
-            "DesktopWorkspaceExecutionCoordinator.cs");
+            "DesktopWorkspaceDynamicExecutionCoordinator.cs");
         var ui = Read(root,
             "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceApply.cs");
 
         Assert.Contains("new DesktopShellIconPositionWriter()", service, StringComparison.Ordinal);
         Assert.Contains("new WindowsDesktopObservationSource", service, StringComparison.Ordinal);
-        Assert.Contains("new DesktopWorkspaceExecutionCoordinator", service, StringComparison.Ordinal);
+        Assert.Contains("new DesktopWorkspaceDynamicExecutionCoordinator", service, StringComparison.Ordinal);
         Assert.Contains("coordinator.ExecuteAsync", service, StringComparison.Ordinal);
 
         Assert.Contains("Safety Snapshot", ui, StringComparison.Ordinal);
@@ -26,13 +26,14 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
         Assert.DoesNotContain("IDesktopIconPositionWriter", ui, StringComparison.Ordinal);
         Assert.DoesNotContain("MoveDesktopIcon", ui, StringComparison.Ordinal);
 
-        // Coordinator 自己仍在 fresh-check 后检查 unresolved V9 journal，Writer 之前 fail-closed。
-        Assert.Contains("_journalStore.ListUnresolvedAsync", coordinator, StringComparison.Ordinal);
-        Assert.Contains("UnresolvedWorkspaceExecution", coordinator, StringComparison.Ordinal);
+        Assert.Contains("_staticJournalStore.ListUnresolvedAsync", coordinator, StringComparison.Ordinal);
+        Assert.Contains("_dynamicJournalStore.ListUnresolvedAsync", coordinator, StringComparison.Ordinal);
+        Assert.Contains("UnresolvedStaticWorkspaceExecution", coordinator, StringComparison.Ordinal);
+        Assert.Contains("UnresolvedDynamicWorkspaceExecution", coordinator, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void WorkspaceAndLegacyApply_MutuallyBlockUnresolvedRecoveryAcrossGenerations()
+    public void WorkspaceAndLegacyApply_KeepExistingCrossGenerationLocksDuringDynamicCutover()
     {
         var root = FindRepositoryRoot();
         var workspace = Read(root,
@@ -42,12 +43,13 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
             "src", "DesktopAgent.WindowsInterop", "DesktopLayouts", "Restore", "Execution",
             "DesktopLayoutDirectApplyService.cs");
 
-        // 新 Workspace 不得越过旧 Recovery 锁。
         Assert.Contains("_legacyRecoveryStore.ListUnresolvedAsync", workspace, StringComparison.Ordinal);
         Assert.Contains("UnresolvedLegacyRecovery", workspace, StringComparison.Ordinal);
         Assert.Contains("CancellationToken.None", workspace, StringComparison.Ordinal);
 
-        // 旧 Direct Apply 也不得越过新 V9 Workspace journal 锁。
+        // 旧 Direct Apply 继续不得越过 V9 Workspace journal 锁。
+        // Dynamic journal 对旧 Direct Apply 的对称 service-level interlock 将在下一独立安全 slice 补齐，
+        // 在第二次 Physical Apply 前必须完成；本测试不伪造 V9 journal 来冒充 Dynamic evidence。
         Assert.Contains("IDesktopWorkspaceExecutionJournalStore", legacy, StringComparison.Ordinal);
         Assert.Contains("_workspaceExecutionJournalStore.ListUnresolvedAsync", legacy, StringComparison.Ordinal);
         Assert.Contains("未解决 Workspace execution journal", legacy, StringComparison.Ordinal);
@@ -55,17 +57,23 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
     }
 
     [Fact]
-    public void RecoveryUi_RecognizesWorkspaceJournalBeforeLegacyRecovery_AndRoutesItToWorkspaceInspector()
+    public void RecoveryUi_RecognizesDynamicThenV9BeforeLegacyRecovery_AndNeverCrossFeedsContracts()
     {
         var root = FindRepositoryRoot();
         var recovery = Read(root,
             "src", "DesktopAgent.WinUI", "LayoutManagementView.Recovery.cs");
 
+        var dynamicRead = recovery.IndexOf(
+            "dynamicWorkspacePending = await _workspaceDynamicExecutionJournalStore.ListUnresolvedAsync()",
+            StringComparison.Ordinal);
         var workspaceRead = recovery.IndexOf(
             "workspacePending = await _workspaceExecutionJournalStore.ListUnresolvedAsync()",
             StringComparison.Ordinal);
         var legacyRead = recovery.IndexOf(
             "pendingCount = await RecoveryProductService.GetPendingCountAsync()",
+            StringComparison.Ordinal);
+        var dynamicGate = recovery.IndexOf(
+            "if (dynamicWorkspacePending.Count > 0)",
             StringComparison.Ordinal);
         var workspaceGate = recovery.IndexOf(
             "if (workspacePending.Count > 0)",
@@ -80,21 +88,24 @@ public sealed class WorkspaceApplyRecoveryInterlockContractTests
             "RecoveryProductService.ReconcileSingleAsync()",
             StringComparison.Ordinal);
 
-        Assert.True(workspaceRead >= 0);
-        Assert.True(legacyRead >= 0);
-        Assert.True(workspaceGate > workspaceRead);
-        Assert.True(workspaceGate > legacyRead);
+        Assert.True(dynamicRead >= 0);
+        Assert.True(workspaceRead > dynamicRead);
+        Assert.True(legacyRead > workspaceRead);
+        Assert.True(dynamicGate > legacyRead);
+        Assert.True(workspaceGate > dynamicGate);
         Assert.True(inspectorRoute > workspaceGate);
         Assert.True(legacyZeroGate > workspaceGate);
         Assert.True(legacyReconcile > workspaceGate);
 
+        Assert.Contains("Dynamic Journal、Safety Snapshot 与逐次 fresh/Writer 证据仍然保留", recovery, StringComparison.Ordinal);
+        Assert.Contains("当前版本不会用 V9 或旧单屏恢复器猜测处理 Dynamic 现场", recovery, StringComparison.Ordinal);
         Assert.Contains("V9 Journal、Safety Snapshot 和 Writer 证据仍然保留", recovery, StringComparison.Ordinal);
         Assert.Contains("新的真实写入继续保持阻断", recovery, StringComparison.Ordinal);
-        Assert.Contains("当前版本不会猜测多套恢复现场的处理顺序", recovery, StringComparison.Ordinal);
         Assert.Contains("DisableWorkspaceFrozenPreviewApplyEvidence();", recovery, StringComparison.Ordinal);
 
-        // Workspace 分支必须在进入 legacy recovery gates / reconcile 前 return；不能拿旧恢复协调器处理 V9 journal。
+        var returnAfterDynamic = recovery.IndexOf("return;", dynamicGate, StringComparison.Ordinal);
         var returnAfterInspector = recovery.IndexOf("return;", inspectorRoute, StringComparison.Ordinal);
+        Assert.True(returnAfterDynamic > dynamicGate && returnAfterDynamic < workspaceGate);
         Assert.True(returnAfterInspector > inspectorRoute);
         Assert.True(legacyZeroGate > returnAfterInspector);
         Assert.True(legacyReconcile > returnAfterInspector);
