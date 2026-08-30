@@ -19,8 +19,11 @@ public sealed partial class LayoutManagementView
 
         int pendingCount;
         IReadOnlyList<DesktopAgent.Core.DesktopLayouts.Workspaces.Execution.DesktopWorkspaceExecutionJournal> workspacePending;
+        IReadOnlyList<DesktopAgent.Core.DesktopLayouts.Workspaces.Execution.DesktopWorkspaceDynamicExecutionJournal> dynamicWorkspacePending;
         try
         {
+            await _workspaceDynamicExecutionJournalStore.InitializeAsync();
+            dynamicWorkspacePending = await _workspaceDynamicExecutionJournalStore.ListUnresolvedAsync();
             await _workspaceExecutionJournalStore.InitializeAsync();
             workspacePending = await _workspaceExecutionJournalStore.ListUnresolvedAsync();
             pendingCount = await RecoveryProductService.GetPendingCountAsync();
@@ -28,6 +31,30 @@ public sealed partial class LayoutManagementView
         catch (Exception ex)
         {
             ShowError("无法读取恢复状态", $"{ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        // Dynamic journal 是新的执行黑匣子。当前阶段只允许识别并阻断，
+        // 在 snapshot-convergence recovery 合同落地前绝不把它交给 V9/legacy 恢复器处理。
+        if (dynamicWorkspacePending.Count > 0)
+        {
+            DisableWorkspaceFrozenPreviewApplyEvidence();
+            ApplyToDesktopButton.IsEnabled = false;
+
+            var v9Suffix = workspacePending.Count > 0
+                ? $" 同时还有 {workspacePending.Count} 笔 V9 Workspace unresolved journal。"
+                : string.Empty;
+            var legacySuffix = pendingCount > 0
+                ? $" 同时还有 {pendingCount} 笔旧布局 unresolved 恢复会话。"
+                : string.Empty;
+            ShowInfo(
+                "存在 Dynamic Workspace 恢复现场",
+                $"检测到 {dynamicWorkspacePending.Count} 笔 unresolved Dynamic Workspace execution journal。" +
+                "Dynamic Journal、Safety Snapshot 与逐次 fresh/Writer 证据仍然保留，新的真实写入继续保持阻断。" +
+                v9Suffix +
+                legacySuffix +
+                " 当前版本不会用 V9 或旧单屏恢复器猜测处理 Dynamic 现场。",
+                InfoBarSeverity.Error);
             return;
         }
 
