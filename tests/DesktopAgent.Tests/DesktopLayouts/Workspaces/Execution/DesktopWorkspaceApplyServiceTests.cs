@@ -28,7 +28,7 @@ public sealed class DesktopWorkspaceApplyServiceTests
             (_, _) =>
             {
                 executeCount++;
-                return Task.FromResult(DesktopWorkspaceExecutionRunResult.NoOp());
+                return Task.FromResult(DesktopWorkspaceDynamicExecutionRunResult.NoOp());
             });
 
         var result = await service.ApplyAsync(confirmation);
@@ -53,7 +53,7 @@ public sealed class DesktopWorkspaceApplyServiceTests
             {
                 executeCount++;
                 executionTokenCanBeCanceled = executionToken.CanBeCanceled;
-                return Task.FromResult(DesktopWorkspaceExecutionRunResult.NoOp());
+                return Task.FromResult(DesktopWorkspaceDynamicExecutionRunResult.NoOp());
             });
 
         using var callerCancellation = new CancellationTokenSource();
