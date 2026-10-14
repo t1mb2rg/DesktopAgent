@@ -153,6 +153,29 @@
                     </StackPanel>
                 </DockPanel>
             </TabItem>
+            <TabItem Header="Explorer Grid Physical Probe v1">
+                <DockPanel Margin="4">
+                    <StackPanel DockPanel.Dock="Left" MaxWidth="590">
+                        <TextBlock FontSize="15" FontWeight="SemiBold"
+                                   Text="Explorer Grid Physical Probe v1 — 仅限 Diagnostics Workbench" />
+                        <TextBlock x:Name="GridProbeStatusText" Margin="0,2,12,0" Foreground="Gray"
+                                   TextWrapping="Wrap"
+                                   Text="每屏创建一个本次运行专用的临时 .url 快捷方式，执行完整横线、完整纵线和四角验证；不会把既有桌面图标移到新的位置——若 Explorer 在运行期间挪动了它们，收尾时会把它们放回运行前的位置并复核（报告里为 UserIconsRepaired/unrepaired）。" />
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <CheckBox x:Name="GridProbeConsentCheckBox" VerticalAlignment="Center"
+                                  Width="230" Margin="0,0,8,0"
+                                  Checked="GridProbeConsentChanged" Unchecked="GridProbeConsentChanged">
+                            <TextBlock TextWrapping="Wrap"
+                                       Text="我确认：这是实机写入诊断；运行期间不手动改动桌面或显示器拓扑" />
+                        </CheckBox>
+                        <Button x:Name="RunGridProbeButton" Width="110" Height="32" Margin="0,0,8,0"
+                                Click="RunGridProbe_Click" Content="运行 Probe" IsEnabled="False" />
+                        <Button x:Name="CancelGridProbeButton" Width="90" Height="32"
+                                Click="CancelGridProbe_Click" Content="停止" IsEnabled="False" />
+                    </StackPanel>
+                </DockPanel>
+            </TabItem>
         </TabControl>
 
         <!-- ── 10 快照标题 ── -->

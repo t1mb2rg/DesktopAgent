@@ -186,6 +186,15 @@ public sealed record DesktopWorkspaceFrozenPreviewDisplay
     private readonly IReadOnlyList<CompiledWorkspaceReservedRegion> _reservedRegions;
 
     public string DisplayRef { get; }
+
+    /// <summary>
+    /// 物理显示器名（例如 \\.\DISPLAY1）。
+    ///
+    /// DisplayRef 是 Blueprint/编译契约里的逻辑引用（primary、secondary_1…），
+    /// 跨机器可读；DeviceName 才是这台机器上的一张真实显示器。
+    /// 站定授权之类的记录绑定到具体设备，必须用 DeviceName。
+    /// </summary>
+    public string DeviceName { get; }
     public bool IsPrimary { get; }
     public DesktopWorkspaceDisplayPolicyKind Policy { get; }
     public DesktopWorkspacePreviewNormalizedRect TopologyBounds { get; }
@@ -214,6 +223,7 @@ public sealed record DesktopWorkspaceFrozenPreviewDisplay
         var reservedArray = reservedRegions.ToArray();
 
         DisplayRef = geometry.DisplayRef;
+        DeviceName = geometry.DeviceName;
         IsPrimary = geometry.IsPrimary;
         Policy = policy;
         TopologyBounds = topologyBounds;

@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopSuggestions;
+using DesktopGeometryEvidence = DesktopAgent.Core.Automation.DesktopGeometryEvidence;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Tests.DesktopNotifications;
 using DesktopAgent.WindowsInterop.DesktopIcons;
@@ -21,6 +22,9 @@ public sealed class DesktopAutomationAutomaticSafetyGateTests
 
         Assert.DoesNotContain(typeof(IDesktopIconPositionWriter), parameterTypes);
         Assert.DoesNotContain(typeof(TargetDisplayLayoutExecutionCoordinator), parameterTypes);
+        // A 方案：安全门必须能查到"目标显示器在当前拓扑下有没有实测事实、有没有站定授权"，
+        // 这是无人值守执行的必要条件，不是可选优化。
+        Assert.Contains(typeof(IDesktopGridDisplayClearanceProvider), parameterTypes);
     }
 
     [Fact]
@@ -42,7 +46,7 @@ public sealed class DesktopAutomationAutomaticSafetyGateTests
         var recovery = new FakeRecoveryStore();
         var risk = new FakeFreshRiskPolicy();
         var gate = new DesktopAutomationAutomaticSafetyGate(
-            lifecycle, runtimePolicy, risk, recovery);
+            lifecycle, runtimePolicy, risk, recovery, new FakeGridDisplayClearanceProvider());
 
         var result = await gate.EvaluateAsync(handoff);
 
@@ -262,6 +266,89 @@ public sealed class DesktopAutomationAutomaticSafetyGateTests
                 fuseFailureThreshold: 3),
             gate);
 
+    [Fact]
+    public async Task GeometryEvidenceNotMeasured_BlocksUnattendedExecution()
+    {
+        var fixture = await ReadyFixtureAsync();
+        var recovery = new FakeRecoveryStore();
+        var risk = new FakeFreshRiskPolicy();
+        var clearance = new FakeGridDisplayClearanceProvider(DesktopGeometryEvidence.Unknown);
+        var gate = fixture.Gate(recovery, risk, clearance);
+
+        var result = await gate.EvaluateAsync(fixture.Handoff);
+
+        Assert.Equal(
+            DesktopAutomationAutomaticSafetyGateStatus.GeometryEvidenceNotMeasured,
+            result.Status);
+        Assert.False(result.MayEnterCoordinatorPreWriteGate);
+        Assert.Equal(1, clearance.CallCount);
+        Assert.Equal(fixture.FreshCandidate.TargetDeviceName, clearance.LastTargetDeviceName);
+        Assert.Contains(
+            fixture.FreshCandidate.TargetDeviceName!,
+            result.RejectionReasons.Single(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task InferredGeometryEvidence_IsStillNotEnoughForUnattendedExecution()
+    {
+        var fixture = await ReadyFixtureAsync();
+        var gate = fixture.Gate(
+            new FakeRecoveryStore(),
+            new FakeFreshRiskPolicy(),
+            new FakeGridDisplayClearanceProvider(DesktopGeometryEvidence.Inferred, isAuthorized: true));
+
+        var result = await gate.EvaluateAsync(fixture.Handoff);
+
+        Assert.Equal(
+            DesktopAutomationAutomaticSafetyGateStatus.GeometryEvidenceNotMeasured,
+            result.Status);
+        Assert.False(result.MayEnterCoordinatorPreWriteGate);
+    }
+
+    [Fact]
+    public async Task MeasuredEvidenceWithoutDisplayAuthorization_BlocksUnattendedExecution()
+    {
+        // A 方案里"证据"和"决定"是两条独立的门槛：实测过只说明知道图标会落在哪，
+        // 没有人对这块屏同意过时无人值守仍然停下——只是这次要做的动作是"去同意一次"。
+        var fixture = await ReadyFixtureAsync();
+        var clearance = new FakeGridDisplayClearanceProvider(
+            DesktopGeometryEvidence.Measured,
+            isAuthorized: false);
+        var gate = fixture.Gate(new FakeRecoveryStore(), new FakeFreshRiskPolicy(), clearance);
+
+        var result = await gate.EvaluateAsync(fixture.Handoff);
+
+        Assert.Equal(
+            DesktopAutomationAutomaticSafetyGateStatus.DisplayNotAuthorizedForUnattendedExecution,
+            result.Status);
+        Assert.False(result.MayEnterCoordinatorPreWriteGate);
+        Assert.Equal(1, clearance.CallCount);
+        Assert.Contains(
+            fixture.FreshCandidate.TargetDeviceName!,
+            result.RejectionReasons.Single(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task MeasuredEvidenceWithDisplayAuthorization_LetsTheCycleReachTheCoordinatorPreWriteGate()
+    {
+        var fixture = await ReadyFixtureAsync();
+        var clearance = new FakeGridDisplayClearanceProvider(
+            DesktopGeometryEvidence.Measured,
+            isAuthorized: true);
+        var gate = fixture.Gate(new FakeRecoveryStore(), new FakeFreshRiskPolicy(), clearance);
+
+        var result = await gate.EvaluateAsync(fixture.Handoff);
+
+        Assert.Equal(
+            DesktopAutomationAutomaticSafetyGateStatus.ReadyForCoordinatorPreWriteGate,
+            result.Status);
+        Assert.True(result.MayEnterCoordinatorPreWriteGate);
+        Assert.Equal(1, clearance.CallCount);
+        Assert.Equal(fixture.FreshCandidate.TargetDeviceName, clearance.LastTargetDeviceName);
+    }
+
     private static DesktopAutomationCandidateRiskPolicy PermissiveSuggestionRisk() =>
         new(
             new DesktopAutomationCandidateRiskPolicySettings(
@@ -278,8 +365,14 @@ public sealed class DesktopAutomationAutomaticSafetyGateTests
     {
         public DesktopAutomationAutomaticSafetyGate Gate(
             IRecoverySessionStore recovery,
-            IDesktopAutomationCandidateRiskEvidencePolicy risk) =>
-            new(Lifecycle, RuntimePolicy, risk, recovery);
+            IDesktopAutomationCandidateRiskEvidencePolicy risk,
+            IDesktopGridDisplayClearanceProvider? clearanceProvider = null) =>
+            new(
+                Lifecycle,
+                RuntimePolicy,
+                risk,
+                recovery,
+                clearanceProvider ?? new FakeGridDisplayClearanceProvider());
     }
 
     private sealed class FakeFreshRiskPolicy(
@@ -315,6 +408,27 @@ public sealed class DesktopAutomationAutomaticSafetyGateTests
                 returnedEvidence,
                 settings,
                 reasons);
+        }
+    }
+
+    private sealed class FakeGridDisplayClearanceProvider(
+        DesktopGeometryEvidence evidence = DesktopGeometryEvidence.Measured,
+        bool isAuthorized = true)
+        : IDesktopGridDisplayClearanceProvider
+    {
+        public int CallCount { get; private set; }
+        public string? LastTargetDeviceName { get; private set; }
+
+        public Task<DesktopGridDisplayClearance> GetClearanceAsync(
+            string? targetDeviceName,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            LastTargetDeviceName = targetDeviceName;
+            // 记录自身的构造不变量会把"没有实测证据却声称已授权"降级为 false，
+            // 所以这里给安全门的语义与真实 provider 一致。
+            return Task.FromResult(new DesktopGridDisplayClearance(evidence, isAuthorized));
         }
     }
 

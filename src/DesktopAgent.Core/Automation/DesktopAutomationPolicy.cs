@@ -24,6 +24,18 @@ public enum DesktopAutomationAuthorizationBasis
     DirectUserRequest = 4,
 }
 
+/// <summary>
+/// 候选动作所依赖的 Explorer 网格证据来源。
+/// Measured 只表示与当前拓扑绑定的物理实测事实；Inferred 表示图标位置多数投票；
+/// Unknown 表示调用方没有提供证据信息，按 fail closed 处理。
+/// </summary>
+public enum DesktopGeometryEvidence
+{
+    Unknown = 0,
+    Measured = 1,
+    Inferred = 2,
+}
+
 public enum DesktopAutomationPolicyReason
 {
     SafetyBlocked = 0,
@@ -37,6 +49,7 @@ public enum DesktopAutomationPolicyReason
     NoExecutionAuthorization = 21,
     ManualMode = 22,
     AssistedRequiresConfirmedPolicy = 23,
+    GeometryEvidenceNotMeasured = 24,
 
     DirectUserRequest = 30,
     ConfirmedUserAuthorization = 31,
@@ -50,7 +63,8 @@ public sealed record DesktopAutomationPolicyContext(
     bool RequiresUserResolution,
     bool CanDefer,
     bool IsLayoutEditing,
-    bool IsSafetyBlocked);
+    bool IsSafetyBlocked,
+    DesktopGeometryEvidence GeometryEvidence = DesktopGeometryEvidence.Unknown);
 
 public sealed record DesktopAutomationPolicyDecision(
     DesktopAutomationDisposition Disposition,
@@ -80,6 +94,9 @@ public static class DesktopAutomationPolicy
 
         if (!Enum.IsDefined(context.AuthorizationBasis))
             throw new ArgumentOutOfRangeException(nameof(context), "Authorization Basis 无效。");
+
+        if (!Enum.IsDefined(context.GeometryEvidence))
+            throw new ArgumentOutOfRangeException(nameof(context), "Geometry Evidence 无效。");
 
         // 硬安全边界永远优先，任何模式或普通确认都不能绕过。
         if (context.IsSafetyBlocked)
@@ -137,6 +154,22 @@ public static class DesktopAutomationPolicy
 
         // 用户此前确认过的长期策略：
         // Manual 仍不允许后台自动执行；Assisted / Automatic 可以直接通过。
+        // 但"长期策略"是无人值守的执行，网格证据必须是与当前拓扑绑定的实测事实：
+        // 推断（多数投票）或未知证据都不得支撑 Auto，只能进入 Queue 由用户处理。
+        if (context.GeometryEvidence != DesktopGeometryEvidence.Measured)
+        {
+            return context.AuthorizationBasis switch
+            {
+                DesktopAutomationAuthorizationBasis.ConfirmedUserPolicy
+                    or DesktopAutomationAuthorizationBasis.DeterministicLocal => new(
+                        DesktopAutomationDisposition.Queue,
+                        DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured),
+
+                // AI-only 与无授权来源本来就不进 Auto，保留各自原因，避免掩盖真实原因。
+                _ => ResolveWithoutGeometryEvidence(context),
+            };
+        }
+
         if (context.AuthorizationBasis ==
             DesktopAutomationAuthorizationBasis.ConfirmedUserPolicy)
         {
@@ -185,4 +218,18 @@ public static class DesktopAutomationPolicy
             DesktopAutomationDisposition.Queue,
             DesktopAutomationPolicyReason.NoExecutionAuthorization);
     }
+
+    /// <summary>
+    /// 网格证据不是实测时的兜底结果：这两种来源本来就不可能进入 Auto，
+    /// 因此保留它们各自的真实原因，不把它伪装成几何证据问题。
+    /// </summary>
+    private static DesktopAutomationPolicyDecision ResolveWithoutGeometryEvidence(
+        DesktopAutomationPolicyContext context)
+        => context.AuthorizationBasis == DesktopAutomationAuthorizationBasis.AiOnly
+            ? new(
+                DesktopAutomationDisposition.Queue,
+                DesktopAutomationPolicyReason.AiOnlyUnconfirmed)
+            : new(
+                DesktopAutomationDisposition.Queue,
+                DesktopAutomationPolicyReason.NoExecutionAuthorization);
 }

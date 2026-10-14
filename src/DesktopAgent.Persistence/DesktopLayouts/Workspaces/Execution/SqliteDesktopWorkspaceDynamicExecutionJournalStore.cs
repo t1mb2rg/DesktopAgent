@@ -12,7 +12,9 @@ namespace DesktopAgent.Persistence.DesktopLayouts.Workspaces.Execution;
 /// 当前先在共享 schema v9 初始化之后幂等创建自己的表，不修改 PRAGMA user_version；
 /// 等 Dynamic Coordinator 通过产品/物理 Gate 后再正式折入共享 schema migration。
 /// </summary>
-public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStore : IDesktopWorkspaceDynamicExecutionJournalStore
+public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStore
+    : IDesktopWorkspaceDynamicExecutionJournalStore,
+      ICommittedWorkspaceExecutionJournalQuery
 {
     private const int SqliteConstraintPrimaryKey = 1555;
     private readonly string _databasePath;
@@ -185,6 +187,49 @@ public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStore : IDeskto
             journals.Add(GetInternal(connection, transaction: null, id)
                 ?? throw new InvalidDataException($"Dynamic Workspace journal {id:D} 在枚举后消失。"));
         }
+        return Task.FromResult<IReadOnlyList<DesktopWorkspaceDynamicExecutionJournal>>(
+            Array.AsReadOnly(journals.ToArray()));
+    }
+
+    /// <summary>
+    /// 已收尾（Committed）的工作区设计写入，新的在前。撤销入口用它把这条路径也纳入候选：
+    /// 这条路径不写恢复会话，只留安全检查点 + 本 journal。
+    /// </summary>
+    public Task<IReadOnlyList<DesktopWorkspaceDynamicExecutionJournal>> ListCommittedAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (limit <= 0)
+            throw new ArgumentOutOfRangeException(nameof(limit), "limit 必须为正数。");
+
+        using var connection = CreateConnection();
+        EnsureDynamicSchemaExtension(connection);
+        var ids = new List<Guid>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                SELECT session_id
+                FROM workspace_dynamic_execution_journals
+                WHERE lifecycle = @committed
+                ORDER BY started_at_utc DESC, session_id DESC
+                LIMIT @limit;
+            ";
+            command.Parameters.AddWithValue("@committed", (int)DesktopWorkspaceExecutionJournalLifecycle.Committed);
+            command.Parameters.AddWithValue("@limit", limit);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                ids.Add(Guid.Parse(reader.GetString(0)));
+        }
+
+        var journals = new List<DesktopWorkspaceDynamicExecutionJournal>(ids.Count);
+        foreach (var id in ids)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            journals.Add(GetInternal(connection, transaction: null, id)
+                ?? throw new InvalidDataException($"Dynamic Workspace journal {id:D} 在枚举后消失。"));
+        }
+
         return Task.FromResult<IReadOnlyList<DesktopWorkspaceDynamicExecutionJournal>>(
             Array.AsReadOnly(journals.ToArray()));
     }

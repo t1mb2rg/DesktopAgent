@@ -90,7 +90,7 @@ public sealed partial class LayoutManagementView
         LayoutEmptyEditorState.Visibility = Visibility.Collapsed;
         LayoutPreviewDetails.Visibility = Visibility.Visible;
         SetLayoutInteractionMode(isEditing: true);
-        ApplyToDesktopButton.IsEnabled = false;
+        RefreshApplyButtonFromCurrentEvidence();
         FocusAiWorkspaceFrozenPreviewDisplay(0);
 
         ShowInfo(

@@ -14,6 +14,7 @@ using DesktopAgent.Core.Geometry;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
+using DesktopAgent.WindowsInterop.ExplorerGridPhysicalProbe;
 using DesktopAgent.Poc.LayoutTemplates.Editor;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
@@ -34,6 +35,8 @@ public partial class MainWindow : Window
     private readonly IDesktopLayoutIconRuleStore _ruleStore;
     private readonly IRecoverySessionStore _recoverySessionStore;
     private readonly PersistedRecoveryCoordinator _recoveryCoordinator;
+    private readonly ExplorerGridPhysicalProbeRunner _explorerGridPhysicalProbeRunner;
+    private readonly ExplorerGridProbeFactRecorder _explorerGridProbeFactRecorder;
 
     private readonly ObservableCollection<DisplayRow> _displayRows = [];
     private IReadOnlyList<DisplayDescriptor> _cachedDisplays = Array.Empty<DisplayDescriptor>();
@@ -49,6 +52,7 @@ public partial class MainWindow : Window
     private bool _snapshotOperationInProgress;
     private bool _iconReadInProgress;
     private bool _moveOperationInProgress;
+    private bool _gridProbeOperationInProgress;
 
     private MoveRecoverySession? _activeMoveSession;
 
@@ -62,7 +66,7 @@ public partial class MainWindow : Window
 
     private bool IsAnyOperationInProgress =>
         _iconReadInProgress || _snapshotOperationInProgress || _moveOperationInProgress
-        || _layoutRestoreOperationInProgress;
+        || _layoutRestoreOperationInProgress || _gridProbeOperationInProgress;
 
     public MainWindow(
         IDisplayTopologyReader displayTopologyReader,
@@ -76,7 +80,9 @@ public partial class MainWindow : Window
         IDesktopLayoutTemplateStore templateStore,
         IDesktopLayoutIconRuleStore ruleStore,
         IRecoverySessionStore recoverySessionStore,
-        PersistedRecoveryCoordinator recoveryCoordinator)
+        PersistedRecoveryCoordinator recoveryCoordinator,
+        ExplorerGridPhysicalProbeRunner explorerGridPhysicalProbeRunner,
+        ExplorerGridProbeFactRecorder explorerGridProbeFactRecorder)
     {
         InitializeComponent();
 
@@ -92,6 +98,8 @@ public partial class MainWindow : Window
         _ruleStore = ruleStore;
         _recoverySessionStore = recoverySessionStore;
         _recoveryCoordinator = recoveryCoordinator;
+        _explorerGridPhysicalProbeRunner = explorerGridPhysicalProbeRunner;
+        _explorerGridProbeFactRecorder = explorerGridProbeFactRecorder;
 
         DisplaysGrid.ItemsSource = _displayRows;
         IconsGrid.ItemsSource = _iconRows;
@@ -157,6 +165,11 @@ public partial class MainWindow : Window
 
         OpenTemplateEditorButton.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention;
         OpenLayoutPreviewButton.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention;
+
+        GridProbeConsentCheckBox.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention;
+        RunGridProbeButton.IsEnabled = !busy && !hasSession && !_layoutRestoreRequiresAttention
+            && GridProbeConsentCheckBox.IsChecked == true;
+        CancelGridProbeButton.IsEnabled = _gridProbeOperationInProgress;
 
         if (hasSession && !busy)
         {

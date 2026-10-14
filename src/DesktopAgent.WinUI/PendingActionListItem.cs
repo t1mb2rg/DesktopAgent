@@ -59,6 +59,7 @@ public sealed class PendingActionListItem
             DesktopAutomationPolicyReason.NoExecutionAuthorization => "尚未授权",
             DesktopAutomationPolicyReason.ManualMode => "Manual 模式",
             DesktopAutomationPolicyReason.AssistedRequiresConfirmedPolicy => "等待确认长期策略",
+            DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured => "网格位置尚未实测，等待确认",
             _ => reason.ToString(),
         };
 }

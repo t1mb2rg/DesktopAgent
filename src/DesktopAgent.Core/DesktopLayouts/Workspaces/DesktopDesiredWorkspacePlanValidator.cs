@@ -27,6 +27,7 @@ public enum DesktopDesiredWorkspacePlanIssueCode
     TargetCellInsideReservedRegion = 22,
     TargetCellCollision = 23,
     ZoneCapacityExceeded = 24,
+    MultipleTargetDisplays = 25,
 }
 
 public sealed record DesktopDesiredWorkspacePlanIssue(
@@ -202,6 +203,26 @@ public static class DesktopDesiredWorkspacePlanValidator
                 DesktopDesiredWorkspacePlanIssueCode.UnknownItemRef,
                 $"Plan 引用了未知 ItemRef \"{group.Key}\"。",
                 itemRef: group.Key);
+        }
+
+        // 执行面收口：自动执行只允许一块目标屏。来源可以是任意多块屏（跨屏搬迁照旧合法），
+        // 但把图标放到两块以上显示器上时，没有任何一块屏的实测网格与站定授权能覆盖整个动作。
+        var targetDisplayRefs = itemGroups
+            .Where(static group => group.Count() == 1)
+            .Select(static group => group.Single())
+            .Where(static desired =>
+                desired.State == DesktopDesiredItemState.Place && desired.TargetDisplayRef is not null)
+            .Select(static desired => desired.TargetDisplayRef!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static displayRef => displayRef, StringComparer.Ordinal)
+            .ToArray();
+        if (targetDisplayRefs.Length > 1)
+        {
+            Add(
+                DesktopDesiredWorkspacePlanIssueCode.MultipleTargetDisplays,
+                $"Plan 把图标放到了 {targetDisplayRefs.Length} 块目标显示器（{string.Join("、", targetDisplayRefs)}）：" +
+                "自动执行只允许一块目标屏（来源可以来自任何屏，但目标必须唯一），其余屏上的项目请改为 Keep。",
+                displayRef: targetDisplayRefs[0]);
         }
 
         var occupancy = new Dictionary<(string DisplayRef, DesktopLogicalGridCell Cell), List<Occupant>>();

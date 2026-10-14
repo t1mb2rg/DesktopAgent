@@ -150,12 +150,25 @@ public sealed class M3TrayController : IDisposable
         _statusTimer = new DispatcherTimer(
             TimeSpan.FromSeconds(1),
             DispatcherPriority.Background,
-            (_, _) => RefreshStatus(),
+            (_, _) => OnStatusTick(),
             _dispatcher);
         _statusTimer.Start();
 
         _started = true;
         RefreshStatus();
+    }
+
+    /// <summary>
+    /// 每秒一次的状态刷新，顺带做一次无人值守点火。
+    /// 托盘菜单的“自动整理模式 → Automatic”是产品上唯一的模式切换入口（见 <see cref="SetAutomationMode"/>），
+    /// 而以 Automatic 启动的进程（验收 harness）没有人去点那道菜单；
+    /// 因此这里对“RequestedMode 已经是 Automatic”的情况补一次等价输入，否则 trigger 只会被动听建议变更事件。
+    /// Suggestion 模式下这里是 no-op，重复调用由 TriggerKey 折叠。
+    /// </summary>
+    private void OnStatusTick()
+    {
+        RefreshStatus();
+        _automaticTrigger.RequestCurrentIfAutomatic();
     }
 
     public void Dispose()
@@ -413,6 +426,8 @@ public sealed class M3TrayController : IDisposable
     {
         RunOnDispatcher(() =>
         {
+            // 托盘只显示一行状态；周期在哪一段停下、风险预算是多少，只有诊断日志留得下来。
+            _diagnosticsWindow.AppendAutomaticCycleResult(result);
             RefreshStatus();
 
             if (result.Status == DesktopAutomationExecutionCycleStatus.FaultedAndPaused)

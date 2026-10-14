@@ -1,7 +1,10 @@
+using DesktopAgent.Application.DesktopAutomation;
+using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Execution;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Preview;
 using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Execution;
+using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Workspaces.Execution;
 using Microsoft.UI.Xaml.Controls;
 
@@ -15,12 +18,20 @@ public sealed partial class LayoutManagementView
     private DesktopWorkspaceApplyService? _workspaceApplyService;
     private Guid? _workspaceFrozenPreviewApplyPreviewId;
 
+    /// <summary>
+    /// 网格实测事实的唯一读取入口（Diagnostics 探针是唯一写入方）。
+    /// 未实测的显示器会自然读到空集合，Adapter 回退到推断并把来源写进 Provenance。
+    /// </summary>
+    private readonly DesktopExplorerGridFactReader _workspaceGridFactReader =
+        new(new SqliteExplorerGridMeasurementStore(DesktopAgentDataPaths.DefaultDatabasePath));
+
     private DesktopWorkspaceApplyService WorkspaceApplyService =>
         _workspaceApplyService ??= new DesktopWorkspaceApplyService(
             _directApplySnapshotStore,
             _workspaceExecutionJournalStore,
             _workspaceDynamicExecutionJournalStore,
-            _directApplyRecoveryStore);
+            _directApplyRecoveryStore,
+            gridFactReader: _workspaceGridFactReader);
 
     internal void EnableWorkspaceFrozenPreviewApply()
     {
@@ -38,26 +49,6 @@ public sealed partial class LayoutManagementView
     {
         _workspaceFrozenPreviewApplyPreviewId = null;
         RefreshApplyButtonFromCurrentEvidence();
-    }
-
-    private void RefreshApplyButtonFromCurrentEvidence()
-    {
-        if (_workspaceFrozenPreview is not null)
-        {
-            ApplyToDesktopButton.Content = "应用这个布局";
-            ApplyToDesktopButton.IsEnabled =
-                !_directApplyInProgress &&
-                HasWorkspaceFrozenPreviewApplyTicket(_workspaceFrozenPreview) &&
-                _workspaceFrozenPreview.MoveCount > 0;
-            return;
-        }
-
-        ApplyToDesktopButton.Content = "应用到桌面";
-        ApplyToDesktopButton.IsEnabled =
-            !_directApplyInProgress &&
-            _latestPreview is not null &&
-            _latestPreview.Plan.IsComplete &&
-            _latestPreview.Plan.MoveRequiredCount > 0;
     }
 
     private async Task ApplyWorkspaceFrozenPreviewAsync()
@@ -99,16 +90,31 @@ public sealed partial class LayoutManagementView
             "只要当前桌面与这份 Frozen Preview 有任何变化，本次操作就会停止，不会静默重新设计或重新编译另一份布局。\n\n" +
             "通过 fresh check 后，Tessel 会先保存并回读全桌面安全快照和 Workspace execution journal，之后才允许第一次 Writer。";
 
+        var dialogContent = new StackPanel { Spacing = 12 };
+        dialogContent.Children.Add(new TextBlock
+        {
+            Text = confirmContent,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 560,
+        });
+
+        // 站定授权只能由用户当面确认的路径签发，所以这个复选框只在确有参与设计的显示器时出现。
+        CheckBox? rememberDisplaysCheckBox = null;
+        if (designDisplayCount > 0)
+        {
+            rememberDisplaysCheckBox = new CheckBox
+            {
+                Content = $"在这套显示设置下记住参与设计的 {designDisplayCount} 块显示器，之后允许无人值守执行",
+                IsChecked = false,
+            };
+            dialogContent.Children.Add(rememberDisplaysCheckBox);
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "应用这个布局？",
-            Content = new TextBlock
-            {
-                Text = confirmContent,
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 560,
-            },
+            Content = dialogContent,
             PrimaryButtonText = "确认并应用",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,
@@ -135,6 +141,12 @@ public sealed partial class LayoutManagementView
             var result = await WorkspaceApplyService.ApplyAsync(confirmation);
             LayoutCanvasStatusText.Text = "Workspace Apply 已结束 · 再次执行前需要新的精确预览";
             PresentWorkspaceApplyResult(result, preview);
+
+            if (result.Status == DesktopWorkspaceExecutionRunStatus.Committed
+                && rememberDisplaysCheckBox?.IsChecked == true)
+            {
+                await GrantDisplayAuthorizationsAsync(preview);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -160,6 +172,69 @@ public sealed partial class LayoutManagementView
             PreviewLayoutButton.IsEnabled = false;
             RefreshApplyButtonFromCurrentEvidence();
         }
+    }
+
+    /// <summary>
+    /// “记住这些显示器”只在执行真的成功之后才落盘：失败或回滚没有给用户带来
+    /// “这套布局在这台机器上成立”的经验，因此不能据此签发长期授权。
+    ///
+    /// 授权逐屏写入，绑定写入当时的显示拓扑指纹。写失败不回滚已经成功的布局——
+    /// 授权决定的是“以后能不能自己动手”，而不是这一次执行的条件。
+    /// </summary>
+    private async Task GrantDisplayAuthorizationsAsync(DesktopWorkspaceFrozenPreview preview)
+    {
+        var deviceNames = preview.Displays
+            .Where(static display => display.Policy == DesktopWorkspaceDisplayPolicyKind.Design)
+            .Select(static display => display.DeviceName)
+            .ToArray();
+
+        var grantService = new DesktopGridDisplayAuthorizationGrantService(
+            _observationSource,
+            new SqliteExplorerGridDisplayAuthorizationStore(DesktopAgentDataPaths.DefaultDatabasePath));
+
+        DesktopGridDisplayAuthorizationGrantOutcome outcome;
+        try
+        {
+            outcome = await grantService.GrantAsync(deviceNames);
+        }
+        catch (Exception ex)
+        {
+            ShowInfo(
+                "已应用，但没能记住这些显示器",
+                $"布局已经应用成功；签署授权时发生 {ex.GetType().Name}: {ex.Message}。"
+                + "下次仍然需要你确认，不会因此放宽任何检查。",
+                InfoBarSeverity.Warning);
+            return;
+        }
+
+        if (outcome.Succeeded)
+        {
+            ShowInfo(
+                "已记住这些显示器",
+                $"在当前显示设置下，{outcome.GrantedDeviceNames.Count} 块显示器已允许无人值守执行。"
+                + "换屏、改分辨率或移动任务栏之后这条授权会自动失效，需要重新确认一次。"
+                + "想提前收回时，点「工作区设计库」右上角的「已记住的显示器…」取消记住。",
+                InfoBarSeverity.Success);
+            return;
+        }
+
+        var reason = outcome.Status switch
+        {
+            DesktopGridDisplayAuthorizationGrantStatus.NothingRequested =>
+                "这次没有需要记住的显示器。",
+            DesktopGridDisplayAuthorizationGrantStatus.ObservationUnavailable =>
+                "重新读取当前桌面失败，无法确定这套显示设置。",
+            DesktopGridDisplayAuthorizationGrantStatus.TopologyUnavailable =>
+                "无法确定当前显示拓扑指纹，因此没有写入授权。",
+            DesktopGridDisplayAuthorizationGrantStatus.StoreFailed =>
+                "授权记录写入失败，本次没有生效。",
+            _ => "授权没有写入。",
+        };
+
+        ShowInfo(
+            "已应用，但没能记住这些显示器",
+            $"{reason}布局本身已经应用成功；下次仍然需要你确认。",
+            InfoBarSeverity.Warning);
     }
 
     private void PresentWorkspaceApplyResult(

@@ -236,6 +236,45 @@ public sealed class RecoverySessionPersistenceWiringTests : IDisposable
             sharedEvents.Take(3));
     }
 
+    // ═══════════ 2b. CheckpointRestoreOriginReachesTheStoredRow ═══════════
+    // 撤销入口把 origin 交给协调器，协调器必须一路带到落库那一刻；
+    // 否则撤销自己写下的那一笔会以默认的 organize 落库，成为下一次撤销的候选。
+    [Fact] public async Task CheckpointRestoreOriginReachesTheStoredRow()
+    {
+        ResetOrd(); var store = CreateStore(); await store.InitializeAsync();
+        var plan = MakeRestorePlan([Snap("a", new(240, 320))], [Live("a", new(160, 240))]);
+        var sharedEvents = new List<string>();
+        var writer = new SpyWriter(sharedEvents, "a", new(160, 240), new(240, 320));
+        var reader = new ScriptedDesktopIconReader();
+        reader.Enqueue([Live("a", new(160, 240))]);
+        reader.Enqueue([Live("a", new(240, 320))]);
+
+        var estore = new EventStore(_dbPath);
+        estore.Events = sharedEvents;
+        await estore.InitializeAsync();
+        var coordinator = new TargetDisplayLayoutExecutionCoordinator(
+            new FakeDisplayTopologyReader(TD, WA), reader, writer,
+            new StaThreadExecutor(), new DefaultSafetySnapshotFactory(new DesktopLayoutSnapshotFactory()),
+            new InMemoryDesktopLayoutSnapshotStore(), TargetDisplayLayoutExecutionPlanner.CreatePlan,
+            recoveryStore: estore);
+
+        var result = await coordinator.ExecuteWithScopeGateAsync(
+            plan,
+            TargetDisplayLayoutExecutionScopeGate.EvaluateSingleDirectMove,
+            CancellationToken.None,
+            RecoverySessionOrigin.CheckpointRestore);
+
+        Assert.Equal(TargetDisplayLayoutExecutionRunStatus.Completed, result.Status);
+        Assert.NotNull(result.Session);
+
+        var record = await store.GetAsync(result.Session!.SessionId);
+        Assert.NotNull(record);
+        Assert.Equal(RecoverySessionOrigin.CheckpointRestore, record!.Origin);
+
+        // 撤销候选只认整理来源：这一笔不该出现在候选列表里。
+        Assert.Empty(await store.ListCommittedAsync(10));
+    }
+
     // ═══════════ 3. ForwardCheckpointBeforeNextWriter ═══════════
     [Fact] public async Task ForwardCheckpointBeforeNextWriter()
     {

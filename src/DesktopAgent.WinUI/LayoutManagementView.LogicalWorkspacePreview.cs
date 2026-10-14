@@ -52,7 +52,7 @@ public sealed partial class LayoutManagementView
         LayoutEmptyEditorState.Visibility = Visibility.Collapsed;
         LayoutPreviewDetails.Visibility = Visibility.Visible;
         SetLayoutInteractionMode(isEditing: true);
-        ApplyToDesktopButton.IsEnabled = false;
+        RefreshApplyButtonFromCurrentEvidence();
         FocusAiLogicalWorkspaceDisplay(0);
 
         ShowInfo(
@@ -101,7 +101,18 @@ public sealed partial class LayoutManagementView
         MoveCountText.Text = preview.MoveCount.ToString();
         StayCountText.Text = (preview.KeepCount + preview.Items.Count(static item =>
             item.State == DesktopDesiredItemState.Place && !item.IsPositionChange)).ToString();
-        TargetDisplayText.Text = preview.Displays.Count == 1 ? display.DisplayRef : "多屏逻辑工作区";
+        var targetDisplayRefs = preview.Items
+            .Where(static item => item.State == DesktopDesiredItemState.Place && item.TargetDisplayRef is not null)
+            .Select(static item => item.TargetDisplayRef!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static displayRef => displayRef, StringComparer.Ordinal)
+            .ToArray();
+        TargetDisplayText.Text = targetDisplayRefs.Length switch
+        {
+            0 => "保持现状（不移动任何图标）",
+            1 => targetDisplayRefs[0],
+            _ => $"{targetDisplayRefs.Length} 块目标屏（不合法：自动执行只允许一块）",
+        };
         LayoutPreviewSummaryText.Text =
             $"输入 {preview.Items.Count} · 移动 {preview.MoveCount} · 跨屏 {preview.CrossDisplayAssignmentCount} · " +
             $"保持 {preview.KeepCount} · 排除 {preview.ExcludeCount} · 完整 是";

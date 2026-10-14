@@ -92,7 +92,8 @@ public sealed class DesktopPendingAction
             DesktopAutomationPolicyReason.AiOnlyUnconfirmed or
             DesktopAutomationPolicyReason.NoExecutionAuthorization or
             DesktopAutomationPolicyReason.ManualMode or
-            DesktopAutomationPolicyReason.AssistedRequiresConfirmedPolicy;
+            DesktopAutomationPolicyReason.AssistedRequiresConfirmedPolicy or
+            DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured;
 }
 
 public enum DesktopPendingActionResolutionKind

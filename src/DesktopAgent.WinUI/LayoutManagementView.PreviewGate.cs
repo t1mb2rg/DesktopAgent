@@ -1,3 +1,4 @@
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -21,7 +22,7 @@ public sealed partial class LayoutManagementView
             return;
         }
 
-        ApplyToDesktopButton.IsEnabled = false;
+        RefreshApplyButtonFromCurrentEvidence();
 
         if (_logicalWorkspaceSession is not null)
         {
@@ -46,8 +47,8 @@ public sealed partial class LayoutManagementView
 
             // 只有完整、fresh 且确实存在变化的 Preview 才开放真实 Apply 入口。
             // NoOp 继续留在 Preview 层展示，不需要为了“什么也不做”打开 Writer 确认门。
-            ApplyToDesktopButton.IsEnabled =
-                preview.Plan.IsComplete && preview.Plan.MoveRequiredCount > 0;
+            // 判定本身在 Application 的 DesktopApplyReadiness 里，这里只让它按新证据重算。
+            RefreshApplyButtonFromCurrentEvidence();
 
             ShowInfo(
                 "预览已刷新",
@@ -56,7 +57,8 @@ public sealed partial class LayoutManagementView
         }
         catch (Exception ex)
         {
-            ApplyToDesktopButton.IsEnabled = false;
+            // 预览失败期间不开放写入；这条理由绑当次证据，成功的新预览会替掉它。
+            BlockApplyForCurrentEvidence(DesktopApplyBlockReason.PreviewAttemptFailed);
             LayoutCanvasStatusText.Text = "当前无法生成预览";
             ShowError("无法预览", ex.Message);
         }

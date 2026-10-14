@@ -36,6 +36,65 @@ public sealed class DesktopDesiredWorkspacePlanValidatorTests
     }
 
     [Fact]
+    public void PlacingIconsOnTwoDisplays_IsRejectedWithMultipleTargetDisplays()
+    {
+        // 执行面收口：来源可以是任意多块屏，但目标必须唯一——否则没有任何一块屏的实测网格与
+        // 站定授权能覆盖整个动作。规则落在验证器里，所以不依赖任何调用方自觉。
+        var observed = CreateObserved();
+        var plan = CreatePlan(
+            zones:
+            [
+                new("main", "主屏区", "primary", new DesktopLogicalGridRect(0, 0, 4, 4)),
+                new("work", "工作区", "secondary_1", new DesktopLogicalGridRect(0, 0, 4, 4)),
+            ],
+            items:
+            [
+                Place("item-a", "primary", 1, 0, "main"),
+                Place("item-b", "secondary_1", 1, 1, "work"),
+                DesktopDesiredWorkspaceItem.Keep("item-c"),
+                DesktopDesiredWorkspaceItem.Exclude("system-recycle-bin"),
+            ]);
+
+        var result = DesktopDesiredWorkspacePlanValidator.Validate(observed, plan);
+
+        Assert.False(result.IsValid);
+        // 两块屏各自的目标格都合法：唯一的失败原因就是「目标屏不唯一」。
+        Assert.Equal(
+            new[] { DesktopDesiredWorkspacePlanIssueCode.MultipleTargetDisplays },
+            result.Issues.Select(static issue => issue.Code));
+        AssertIssue(result, DesktopDesiredWorkspacePlanIssueCode.MultipleTargetDisplays, displayRef: "primary");
+        var issue = Assert.Single(result.Issues);
+        Assert.Contains("primary", issue.Message, StringComparison.Ordinal);
+        Assert.Contains("secondary_1", issue.Message, StringComparison.Ordinal);
+        Assert.Contains("目标必须唯一", issue.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SingleTargetDisplay_RemainsValidEvenWhenSourcesAndKeepsSpanMultipleDisplays()
+    {
+        // 收口只约束「目标」，不约束「来源」：跨屏搬迁 + 其他屏保持现状仍然合法。
+        var observed = CreateObserved();
+        var plan = CreatePlan(
+            zones:
+            [
+                new("work", "工作区", "secondary_1", new DesktopLogicalGridRect(0, 0, 4, 4)),
+            ],
+            items:
+            [
+                Place("item-a", "secondary_1", 1, 0, "work"),
+                Place("item-b", "secondary_1", 2, 0, "work"),
+                DesktopDesiredWorkspaceItem.Keep("item-c"),
+                DesktopDesiredWorkspaceItem.Exclude("system-recycle-bin"),
+            ]);
+
+        var result = DesktopDesiredWorkspacePlanValidator.Validate(observed, plan);
+
+        Assert.DoesNotContain(
+            result.Issues,
+            static issue => issue.Code == DesktopDesiredWorkspacePlanIssueCode.MultipleTargetDisplays);
+    }
+
+    [Fact]
     public void MissingUnknownAndDuplicateItems_AreAllRejectedWithoutRepair()
     {
         var observed = CreateObserved();
@@ -389,11 +448,13 @@ public sealed class DesktopDesiredWorkspacePlanValidatorTests
         DesktopDesiredWorkspacePlanValidationResult result,
         DesktopDesiredWorkspacePlanIssueCode code,
         string? itemRef = null,
-        string? zoneKey = null)
+        string? zoneKey = null,
+        string? displayRef = null)
     {
         Assert.Contains(result.Issues, issue =>
             issue.Code == code &&
             (itemRef is null || string.Equals(issue.ItemRef, itemRef, StringComparison.Ordinal)) &&
+            (displayRef is null || string.Equals(issue.DisplayRef, displayRef, StringComparison.Ordinal)) &&
             (zoneKey is null || string.Equals(issue.ZoneKey, zoneKey, StringComparison.Ordinal)));
     }
 }

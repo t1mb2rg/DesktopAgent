@@ -130,6 +130,23 @@ public sealed class M3AutomaticExecutionTriggerCoordinator : IDisposable
         }
     }
 
+    /// <summary>
+    /// 无人值守点火：RequestedMode 为 Automatic 时请求一次当前建议。
+    /// 这是“从托盘把模式切到 Automatic”的等价输入，用于本次进程一开始就处于 Automatic、
+    /// 因此没有人去点托盘菜单的场景；重复调用由 TriggerKey 折叠，不会重复执行同一份建议。
+    /// 安全边界不在这里：RequestedMode=Automatic 只是请求，真正的门是
+    /// ValidatedOpen gate + 逐屏实测证据 + 站定授权，全部由 preflight/安全门审判。
+    /// </summary>
+    public void RequestCurrentIfAutomatic()
+    {
+        ThrowIfDisposed();
+
+        if (_getRuntime().RequestedMode != DesktopAutomationMode.Automatic)
+            return;
+
+        RequestCurrent();
+    }
+
     public async Task StopAsync()
     {
         if (Volatile.Read(ref _disposeStarted) != 0 && !_started)

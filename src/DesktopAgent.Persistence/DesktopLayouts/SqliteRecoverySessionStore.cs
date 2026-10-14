@@ -10,7 +10,7 @@ using Microsoft.Data.Sqlite;
 
 namespace DesktopAgent.Persistence.DesktopLayouts;
 
-public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
+public sealed class SqliteRecoverySessionStore : IRecoverySessionStore, ICommittedRecoverySessionQuery
 {
     private readonly string _databasePath;
 
@@ -307,7 +307,8 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                    recovery_failure_type, recovery_failure_message,
                    verification_result_json,
                    revision, updated_at_utc,
-                   forward_attempt_count, rollback_attempt_count
+                   forward_attempt_count, rollback_attempt_count,
+                   origin
             FROM desktop_layout_recovery_sessions
             WHERE session_id = @id
         ";
@@ -359,6 +360,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
 
         var declaredFwdCount = reader.GetInt32(18);
         var declaredRbCount = reader.GetInt32(19);
+        var origin = ParseOrigin(reader.GetString(20), sessionId);
 
         TargetDisplayLayoutRestorePlan sourceRestorePlan;
         TargetDisplayLayoutExecutionPlan executionPlan;
@@ -439,6 +441,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             TargetDeviceName = targetDeviceName,
             StartedAtUtc = startedAtUtc,
             Lifecycle = lifecycle,
+            Origin = origin,
             LastFailedStepIndex = lastFailedStepIndex,
             SourceRestorePlan = sourceRestorePlan,
             ExecutionPlan = executionPlan,
@@ -527,6 +530,78 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             .ToList().AsReadOnly();
     }
 
+    /// <summary>
+    /// 「撤销上次整理」的候选：只取已收尾（<see cref="RecoverySessionLifecycle.Completed"/>）的
+    /// <strong>整理</strong>会话（origin = organize）。
+    ///
+    /// 排除 origin = checkpoint-restore 是硬要求：撤销自己写下去的那一笔如果也算候选，
+    /// 用户点第二次「撤销」就会把桌面重新整理一遍。
+    /// 这里只做候选筛选，不判断「能不能撤销」——那由 Core 的
+    /// <see cref="DesktopLayoutRollbackPreflight"/> 结合当前桌面决定。
+    /// </summary>
+    public async Task<IReadOnlyList<RecoverySessionRecord>> ListCommittedAsync(
+        int limit, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (limit <= 0) throw new ArgumentOutOfRangeException(nameof(limit), "limit 必须大于 0。");
+
+        using var connection = CreateConnection();
+
+        var rawIds = new List<string>();
+        using (var sel = connection.CreateCommand())
+        {
+            sel.CommandText =
+                "SELECT session_id FROM desktop_layout_recovery_sessions " +
+                "WHERE lifecycle = $lifecycle AND origin = $origin ORDER BY rowid";
+            sel.Parameters.AddWithValue("$lifecycle", (int)RecoverySessionLifecycle.Completed);
+            sel.Parameters.AddWithValue(
+                "$origin", OriginToStorageValue(RecoverySessionOrigin.Organize));
+            using var reader = sel.ExecuteReader();
+            while (reader.Read())
+                rawIds.Add(reader.GetString(0));
+        }
+
+        var corruptedIds = new List<string>();
+        var cleanRecords = new List<RecoverySessionRecord>();
+        foreach (var raw in rawIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!Guid.TryParse(raw, out var sid))
+            {
+                corruptedIds.Add($"无效 SessionId 原始值：\"{raw}\"");
+                continue;
+            }
+            try
+            {
+                var record = GetInternal(connection, sid);
+                if (record is null)
+                {
+                    corruptedIds.Add($"{sid:D} (null)");
+                    continue;
+                }
+                cleanRecords.Add(record);
+            }
+            catch (Exception ex)
+            {
+                corruptedIds.Add($"{sid:D} ({ex.GetType().Name}: {ex.Message})");
+            }
+        }
+
+        if (corruptedIds.Count > 0)
+            throw new InvalidDataException(
+                $"ListCommitted 检测到 {corruptedIds.Count} 条损坏记录：" +
+                string.Join("; ", corruptedIds));
+
+        await Task.CompletedTask;
+
+        return cleanRecords
+            .Where(r => r.Lifecycle == RecoverySessionLifecycle.Completed)
+            .OrderByDescending(r => r.StartedAtUtc)
+            .ThenByDescending(r => r.SessionId)
+            .Take(limit)
+            .ToList().AsReadOnly();
+    }
+
     private static void InsertSessionRow(
         SqliteConnection connection, RecoverySessionRecord record)
     {
@@ -544,7 +619,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                  recovery_failure_type, recovery_failure_message,
                  verification_result_json,
                  revision, updated_at_utc,
-                 forward_attempt_count, rollback_attempt_count)
+                 forward_attempt_count, rollback_attempt_count, origin)
             VALUES
                 (@sid, @ssid, @tdn,
                  @sat, @lc,
@@ -556,7 +631,7 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
                  @rft, @rfm,
                  @vrj,
                  @rev, @uat,
-                 @fac, @rac);
+                 @fac, @rac, @origin);
         ";
         ins.Parameters.AddWithValue("@sid", record.SessionId.ToString("D"));
         ins.Parameters.AddWithValue("@ssid", record.SafetySnapshotId.ToString("D"));
@@ -588,9 +663,31 @@ public sealed class SqliteRecoverySessionStore : IRecoverySessionStore
             record.UpdatedAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         ins.Parameters.AddWithValue("@fac", record.ForwardAttempts.Count);
         ins.Parameters.AddWithValue("@rac", record.RollbackAttempts.Count);
+        ins.Parameters.AddWithValue("@origin", OriginToStorageValue(record.Origin));
 
         ins.ExecuteNonQuery();
     }
+
+    /// <summary>
+    /// V13：写入行上的来路。非法值按数据损坏处理——不做「看起来像整理就当整理」的兜底猜测，
+    /// 因为猜错的代价是让用户能撤销掉自己的撤销。
+    /// </summary>
+    private static RecoverySessionOrigin ParseOrigin(string value, Guid sessionId)
+        => value switch
+        {
+            "organize" => RecoverySessionOrigin.Organize,
+            "checkpoint-restore" => RecoverySessionOrigin.CheckpointRestore,
+            _ => throw new InvalidDataException(
+                $"会话 {sessionId:D} origin 值无效：{value}。"),
+        };
+
+    private static string OriginToStorageValue(RecoverySessionOrigin origin)
+        => origin switch
+        {
+            RecoverySessionOrigin.Organize => "organize",
+            RecoverySessionOrigin.CheckpointRestore => "checkpoint-restore",
+            _ => throw new ArgumentOutOfRangeException(nameof(origin), origin, "未知的写入来路。"),
+        };
 
     private static void UpdateSessionRow(
         SqliteConnection connection, RecoverySessionRecord record)

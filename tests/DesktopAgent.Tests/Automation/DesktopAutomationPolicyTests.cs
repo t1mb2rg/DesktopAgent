@@ -186,6 +186,115 @@ public sealed class DesktopAutomationPolicyTests
             (DesktopAutomationAuthorizationBasis)999));
     }
 
+    [Fact]
+    public void Resolve_EvidenceNotMeasured_NeverReachesAutoForUnattendedBases()
+    {
+        foreach (var evidence in new[]
+                 {
+                     DesktopGeometryEvidence.Inferred,
+                     DesktopGeometryEvidence.Unknown,
+                 })
+        {
+            Assert.Equal(
+                new DesktopAutomationPolicyDecision(
+                    DesktopAutomationDisposition.Queue,
+                    DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured),
+                Resolve(
+                    DesktopAutomationMode.Automatic,
+                    DesktopAutomationAuthorizationBasis.DeterministicLocal,
+                    geometryEvidence: evidence));
+
+            Assert.Equal(
+                new DesktopAutomationPolicyDecision(
+                    DesktopAutomationDisposition.Queue,
+                    DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured),
+                Resolve(
+                    DesktopAutomationMode.Assisted,
+                    DesktopAutomationAuthorizationBasis.ConfirmedUserPolicy,
+                    geometryEvidence: evidence));
+
+            Assert.Equal(
+                new DesktopAutomationPolicyDecision(
+                    DesktopAutomationDisposition.Queue,
+                    DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured),
+                Resolve(
+                    DesktopAutomationMode.Automatic,
+                    DesktopAutomationAuthorizationBasis.ConfirmedUserPolicy,
+                    geometryEvidence: evidence));
+        }
+    }
+
+    [Fact]
+    public void Resolve_MeasuredEvidence_KeepsTheAutomaticMatrixUnchanged()
+    {
+        Assert.Equal(
+            new DesktopAutomationPolicyDecision(
+                DesktopAutomationDisposition.Auto,
+                DesktopAutomationPolicyReason.DeterministicAutomaticPolicy),
+            Resolve(
+                DesktopAutomationMode.Automatic,
+                DesktopAutomationAuthorizationBasis.DeterministicLocal,
+                geometryEvidence: DesktopGeometryEvidence.Measured));
+
+        Assert.Equal(
+            new DesktopAutomationPolicyDecision(
+                DesktopAutomationDisposition.Auto,
+                DesktopAutomationPolicyReason.ConfirmedUserAuthorization),
+            Resolve(
+                DesktopAutomationMode.Assisted,
+                DesktopAutomationAuthorizationBasis.ConfirmedUserPolicy,
+                geometryEvidence: DesktopGeometryEvidence.Measured));
+    }
+
+    /// <summary>
+    /// 这是一条刻意保留的边界：DirectUserRequest 是"用户此刻亲自授权"，
+    /// 不是"推断在自我授权"。因此它不受网格实测门槛限制。
+    /// 若产品决定连显式请求也必须实测，这条断言必须一起改。
+    /// </summary>
+    [Fact]
+    public void Resolve_DirectUserRequest_IsAuthorizedByTheUserNotByTheGeometryEvidence()
+    {
+        Assert.Equal(
+            new DesktopAutomationPolicyDecision(
+                DesktopAutomationDisposition.Auto,
+                DesktopAutomationPolicyReason.DirectUserRequest),
+            Resolve(
+                DesktopAutomationMode.Automatic,
+                DesktopAutomationAuthorizationBasis.DirectUserRequest,
+                geometryEvidence: DesktopGeometryEvidence.Inferred));
+    }
+
+    [Fact]
+    public void Resolve_OtherBases_KeepTheirOwnReasonWhenEvidenceIsNotMeasured()
+    {
+        Assert.Equal(
+            new DesktopAutomationPolicyDecision(
+                DesktopAutomationDisposition.Queue,
+                DesktopAutomationPolicyReason.AiOnlyUnconfirmed),
+            Resolve(
+                DesktopAutomationMode.Automatic,
+                DesktopAutomationAuthorizationBasis.AiOnly,
+                geometryEvidence: DesktopGeometryEvidence.Inferred));
+
+        Assert.Equal(
+            new DesktopAutomationPolicyDecision(
+                DesktopAutomationDisposition.Queue,
+                DesktopAutomationPolicyReason.NoExecutionAuthorization),
+            Resolve(
+                DesktopAutomationMode.Automatic,
+                DesktopAutomationAuthorizationBasis.None,
+                geometryEvidence: DesktopGeometryEvidence.Inferred));
+    }
+
+    [Fact]
+    public void Resolve_InvalidGeometryEvidence_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Resolve(
+            DesktopAutomationMode.Automatic,
+            DesktopAutomationAuthorizationBasis.DeterministicLocal,
+            geometryEvidence: (DesktopGeometryEvidence)999));
+    }
+
     private static void AssertDisposition(
         DesktopAutomationMode mode,
         DesktopAutomationAuthorizationBasis authorization,
@@ -197,6 +306,10 @@ public sealed class DesktopAutomationPolicyTests
         Assert.Equal(expectedReason, result.Reason);
     }
 
+    /// <summary>
+    /// 既有授权矩阵描述的是"网格证据可用（实测）"时的行为；
+    /// 证据不足时的行为由 Resolve_EvidenceNotMeasured... 系列单独覆盖。
+    /// </summary>
     private static DesktopAutomationPolicyDecision Resolve(
         DesktopAutomationMode mode,
         DesktopAutomationAuthorizationBasis authorization,
@@ -204,7 +317,8 @@ public sealed class DesktopAutomationPolicyTests
         bool requiresUserResolution = false,
         bool canDefer = true,
         bool isLayoutEditing = false,
-        bool isSafetyBlocked = false)
+        bool isSafetyBlocked = false,
+        DesktopGeometryEvidence geometryEvidence = DesktopGeometryEvidence.Measured)
         => DesktopAutomationPolicy.Resolve(
             new DesktopAutomationPolicyContext(
                 mode,
@@ -213,5 +327,6 @@ public sealed class DesktopAutomationPolicyTests
                 requiresUserResolution,
                 canDefer,
                 isLayoutEditing,
-                isSafetyBlocked));
+                isSafetyBlocked,
+                geometryEvidence));
 }

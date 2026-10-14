@@ -7,6 +7,8 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -18,7 +20,19 @@
 
         <InfoBar x:Name="LayoutStatusBar" Grid.Row="1" IsOpen="False" IsClosable="True" />
 
-        <Border x:Name="WorkspaceLibrarySection" Grid.Row="2" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Loaded="WorkspaceLibrarySection_Loaded">
+        <Border x:Name="LayoutStageBar" Grid.Row="2" Padding="10,8" CornerRadius="10" Background="{ThemeResource LayerFillColorDefaultBrush}">
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button x:Name="StagePrepareButton" Content="准备" Click="LayoutStageButton_Click" Tag="Prepare" ToolTipService.ToolTip="这台机器能不能被信任：校准目标屏的网格 + 站定授权" />
+                    <Button x:Name="StageDesignButton" Content="设计" Click="LayoutStageButton_Click" Tag="Design" ToolTipService.ToolTip="图标摆成什么样：选布局、改分区与目标屏" />
+                    <Button x:Name="StageExecuteButton" Content="执行" Click="LayoutStageButton_Click" Tag="Execute" ToolTipService.ToolTip="落到桌面：先预览，看清要移动什么，再应用" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" x:Name="StageHintText" Text="先让这台机器可被信任：校准目标屏的图标网格，并确认它的站定授权。" FontSize="12" Opacity="0.62" VerticalAlignment="Center" TextWrapping="Wrap" />
+            </Grid>
+        </Border>
+
+        <Border x:Name="WorkspaceLibrarySection" Grid.Row="3" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Loaded="WorkspaceLibrarySection_Loaded">
             <Grid RowSpacing="10">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid ColumnSpacing="12">
@@ -27,7 +41,9 @@
                         <TextBlock Text="工作区设计库" FontSize="17" FontWeight="SemiBold" />
                         <TextBlock x:Name="WorkspaceLibraryStatusText" Text="正在读取工作区设计库…" FontSize="12" Opacity="0.58" TextWrapping="Wrap" />
                     </StackPanel>
-                    <Button x:Name="WorkspaceLibraryRefreshButton" Grid.Column="1" Content="↻" Width="38" ToolTipService.ToolTip="刷新工作区设计库" Click="RefreshWorkspaceLibrary_Click" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
+                        <Button x:Name="WorkspaceLibraryRefreshButton" Content="↻" Width="38" ToolTipService.ToolTip="刷新工作区设计库" Click="RefreshWorkspaceLibrary_Click" />
+                    </StackPanel>
                 </Grid>
                 <Grid Grid.Row="1">
                     <TextBlock x:Name="WorkspaceLibraryEmptyText" Text="正在读取…" FontSize="12" Opacity="0.52" VerticalAlignment="Center" />
@@ -53,7 +69,28 @@
             </Grid>
         </Border>
 
-        <Grid x:Name="LayoutWorkbenchSurface" Grid.Row="3" MinWidth="980" MinHeight="0" VerticalAlignment="Stretch" ColumnSpacing="12">
+        <Border x:Name="PrepareStagePanel" Grid.Row="4" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <Grid RowSpacing="10">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock Text="这台机器准备好了吗" FontSize="17" FontWeight="SemiBold" />
+                    <TextBlock Text="无人值守执行的前提只有两件：目标屏的图标网格被实测过，并且你为它站定授权过。" FontSize="12" Opacity="0.58" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="GridProbeButton" Content="校准桌面网格…" ToolTipService.ToolTip="跑一次真机探测，测出这台机器上每块显示器的图标网格（会临时移动测试图标，结束后放回）" Click="RunGridProbe_Click" />
+                    <Button x:Name="GridDisplayAuthorizationsButton" Content="已记住的显示器…" ToolTipService.ToolTip="查看并收回「允许无人值守执行」的站定授权" Click="GridDisplayAuthorizations_Click" />
+                    <Button x:Name="ReconcileRecoveryButton" Content="处理恢复状态" ToolTipService.ToolTip="读取并安全协调未完成的桌面执行会话" Click="ReconcileRecovery_Click" />
+                    <Button x:Name="RollbackLastApplyButton" Content="撤销上次整理…" ToolTipService.ToolTip="把桌面放回最近一次成功整理之前的安全检查点位置：只按检查点还原，绝不凭推断摆回去" Click="RollbackLastApply_Click" />
+                </StackPanel>
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="OverlayToggleButton" Content="▣ 桌面线框" Click="ToggleOverlay_Click" />
+                    <TextBlock x:Name="OverlayStateText" Text="线框关闭" FontSize="12" Opacity="0.55" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Grid.Row="3" Text="换屏、改缩放比例或关掉自动排列之后，事实会失效：需要重新校准。" FontSize="11" Opacity="0.52" TextWrapping="Wrap" />
+            </Grid>
+        </Border>
+
+        <Grid x:Name="LayoutWorkbenchSurface" Grid.Row="5" MinWidth="980" MinHeight="0" VerticalAlignment="Stretch" ColumnSpacing="12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" MinWidth="420" /><ColumnDefinition Width="300" /></Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" MinHeight="0" VerticalAlignment="Stretch" Padding="12" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
@@ -67,9 +104,9 @@
                 </Grid>
             </Border>
 
-            <Border Grid.Column="1" MinHeight="0" VerticalAlignment="Stretch" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <Border x:Name="LayoutCanvasCard" Grid.Column="1" MinHeight="0" VerticalAlignment="Stretch" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <Grid MinHeight="0" RowSpacing="12">
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid ColumnSpacing="10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Spacing="2"><TextBlock x:Name="LayoutCanvasDraftNameText" Text="桌面画布" FontSize="17" FontWeight="SemiBold" /><TextBlock x:Name="LayoutCanvasStatusText" Text="选择一个布局查看分区" FontSize="12" Opacity="0.58" /></StackPanel>
@@ -77,20 +114,26 @@
                         <Border Grid.Column="2" x:Name="EditingBadge" Visibility="Collapsed" Padding="9,4" CornerRadius="10" Background="{ThemeResource AccentFillColorSecondaryBrush}" VerticalAlignment="Center"><TextBlock Text="编辑中 · 自动化暂停" FontSize="11" /></Border>
                     </Grid>
                     <Border Grid.Row="1" MinHeight="180" CornerRadius="10" Background="{ThemeResource LayerFillColorDefaultBrush}"><Grid><Canvas x:Name="LayoutCanvas" SizeChanged="LayoutCanvas_SizeChanged" /><StackPanel x:Name="LayoutCanvasEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="7"><TextBlock Text="▦" FontSize="42" HorizontalAlignment="Center" Opacity="0.35" /><TextBlock Text="选择一个布局看看" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" /><TextBlock Text="分区和预览位置会直接画在这里" FontSize="12" Opacity="0.52" HorizontalAlignment="Center" /></StackPanel></Grid></Border>
-                    <Grid Grid.Row="2" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}"><StackPanel Spacing="1"><TextBlock Text="移动" FontSize="11" Opacity="0.52" /><TextBlock x:Name="MoveCountText" Text="—" FontSize="18" FontWeight="SemiBold" /></StackPanel></Border><Border Grid.Column="1" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}"><StackPanel Spacing="1"><TextBlock Text="保持" FontSize="11" Opacity="0.52" /><TextBlock x:Name="StayCountText" Text="—" FontSize="18" FontWeight="SemiBold" /></StackPanel></Border><Border Grid.Column="2" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}"><StackPanel Spacing="1"><TextBlock Text="目标屏" FontSize="11" Opacity="0.52" /><TextBlock x:Name="TargetDisplayText" Text="—" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /></StackPanel></Border></Grid>
-                    <Grid Grid.Row="3" ColumnSpacing="8">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid Grid.Row="2" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}"><StackPanel Spacing="1"><TextBlock Text="移动" FontSize="11" Opacity="0.52" /><TextBlock x:Name="MoveCountText" Text="—" FontSize="18" FontWeight="SemiBold" /></StackPanel></Border><Border Grid.Column="1" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}"><StackPanel Spacing="1"><TextBlock Text="保持" FontSize="11" Opacity="0.52" /><TextBlock x:Name="StayCountText" Text="—" FontSize="18" FontWeight="SemiBold" /></StackPanel></Border><Border Grid.Column="2" Padding="10,8" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}" ToolTipService.ToolTip="多屏可用：来源可以是任何屏；一次自动执行只落在一块目标屏，其他屏保持现状"><StackPanel Spacing="1"><TextBlock Text="目标屏" FontSize="11" Opacity="0.52" /><TextBlock x:Name="TargetDisplayText" Text="—" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="一次执行只落这一块屏" FontSize="10" Opacity="0.45" /></StackPanel></Border></Grid>
+                    <Border Grid.Row="3" x:Name="ApplyReadinessBar" Padding="10,7" CornerRadius="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock x:Name="ApplyReadinessGlyphText" Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="14" VerticalAlignment="Top" Opacity="0.75" />
+                            <StackPanel Spacing="1">
+                                <TextBlock x:Name="ApplyReadinessHeadlineText" Text="还不能应用 · 没有预览" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock x:Name="ApplyReadinessDetailText" Text="先点「↻ 预览」读一次当前桌面。" FontSize="11" Opacity="0.62" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <Grid Grid.Row="4" x:Name="LayoutActionRow" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <Button x:Name="PreviewLayoutButton" Content="↻ 预览" Click="PreviewLayoutWithDirectApplyGate_Click" />
-                        <Button Grid.Column="1" x:Name="OverlayToggleButton" Content="▣ 桌面线框" Click="ToggleOverlay_Click" />
-                        <TextBlock Grid.Column="2" x:Name="OverlayStateText" Text="线框关闭" FontSize="12" Opacity="0.55" VerticalAlignment="Center" />
-                        <Button Grid.Column="3" x:Name="ApplyToDesktopButton" Content="应用到桌面" IsEnabled="False" Click="ApplyToDesktop_Click" />
-                        <Button Grid.Column="4" x:Name="ReconcileRecoveryButton" Content="处理恢复状态" ToolTipService.ToolTip="读取并安全协调未完成的桌面执行会话" Click="ReconcileRecovery_Click" />
-                        <Button Grid.Column="5" x:Name="SaveLayoutButton" Content="保存" Click="SaveLayout_Click" />
+                        <Button Grid.Column="1" x:Name="ApplyToDesktopButton" Content="应用到桌面" IsEnabled="False" Click="ApplyToDesktop_Click" />
+                        <Button Grid.Column="3" x:Name="SaveLayoutButton" Content="保存" Click="SaveLayout_Click" />
                     </Grid>
                 </Grid>
             </Border>
 
-            <Border Grid.Column="2" MinHeight="0" VerticalAlignment="Stretch" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <Border x:Name="LayoutEditorSurface" Grid.Column="2" MinHeight="0" VerticalAlignment="Stretch" Padding="14" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                 <ScrollViewer VerticalAlignment="Stretch" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
                     <Grid>
                         <StackPanel x:Name="LayoutEmptyEditorState" VerticalAlignment="Center" Spacing="8" Margin="0,120,0,0"><TextBlock Text="布局属性" FontSize="17" FontWeight="SemiBold" /><TextBlock Text="选择布局后，这里会显示它的主要属性。" TextWrapping="Wrap" FontSize="12" Opacity="0.58" /></StackPanel>
@@ -112,7 +155,7 @@
             </Border>
         </Grid>
 
-        <Border x:Name="WorkspaceDetailSurface" Grid.Row="3" Visibility="Collapsed" MinWidth="980" MinHeight="0" Padding="16" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+        <Border x:Name="WorkspaceDetailSurface" Grid.Row="5" Visibility="Collapsed" MinWidth="980" MinHeight="0" Padding="16" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
             <Grid RowSpacing="14">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                 <Grid ColumnSpacing="12">

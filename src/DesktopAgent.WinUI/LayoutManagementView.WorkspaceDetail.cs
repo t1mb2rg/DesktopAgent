@@ -1,4 +1,5 @@
 using System.Text;
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -74,6 +75,8 @@ public sealed partial class LayoutManagementView
             .Select(record => WorkspaceRevisionListItem.From(record, asset.CurrentRevision))
             .ToArray();
 
+        // 看设计资产属于"设计"这一步：先把阶段切过去，再让详情面占用整块地方。
+        SetLayoutStage(DesktopLayoutStage.Design);
         WorkspaceLibrarySection.Visibility = Visibility.Collapsed;
         LayoutWorkbenchSurface.Visibility = Visibility.Collapsed;
         WorkspaceDetailSurface.Visibility = Visibility.Visible;

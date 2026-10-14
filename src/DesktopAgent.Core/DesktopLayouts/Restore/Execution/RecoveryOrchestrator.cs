@@ -104,6 +104,7 @@ public sealed class RecoveryOrchestrator
                 SourceRestorePlan = record.SourceRestorePlan,
                 ExecutionPlan = record.ExecutionPlan,
                 Lifecycle = finalLifecycle,
+                Origin = record.Origin,
                 LastFailedStepIndex = record.LastFailedStepIndex,
                 ForwardAttempts = forwardAttempts,
                 RollbackAttempts = rollbackAttempts,

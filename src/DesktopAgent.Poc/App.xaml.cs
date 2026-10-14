@@ -8,12 +8,15 @@ using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Core.DesktopLayouts.Templates;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.Displays;
 using DesktopAgent.Core.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
+using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Poc.Acceptance;
+using DesktopAgent.WindowsInterop.ExplorerGridPhysicalProbe;
 using DesktopAgent.WindowsInterop.DesktopAutomation;
 using DesktopAgent.WindowsInterop.DesktopIcons;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
@@ -34,6 +37,13 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        var runGridProbeUnattended = false;
+        foreach (var argument in e.Args)
+        {
+            if (string.Equals(argument, "--run-grid-probe", StringComparison.OrdinalIgnoreCase))
+                runGridProbeUnattended = true;
+        }
 
         var enableM3DesktopSurfaces = true;
         var enableWindowsAppNotifications = true;
@@ -96,14 +106,22 @@ public partial class App : System.Windows.Application
                     + "该位置早于 recovery checkpoint 与第一笔 Writer；用于验证 Failure → Cooldown → Fuse，桌面 Writer 不应被调用。"
                 : string.Empty;
 
+            var requestedModeDescription =
+                m3AutomaticAcceptance.RequestedMode == DesktopAutomationMode.Automatic
+                    ? "本次进程以 RequestedMode=Automatic 启动（验收 harness 显式指定，"
+                        + "等价于你从 tray 选择 Automatic）。进入真实 M2 Coordinator / Writer "
+                        + "仍受 ValidatedOpen gate、逐屏实测证据与站定授权约束。"
+                    : "启动后 RequestedMode 仍默认为 Suggestion。"
+                        + "只有你随后从 tray 明确选择 Automatic，"
+                        + "自动执行链才可能进入真实 M2 Coordinator / Writer。";
+
             var answer = MessageBox.Show(
                 "M3 AUTOMATIC ACCEPTANCE ARMED\n\n"
                 + "本次 Debug 进程允许 unattended REAL desktop writes。\n"
                 + "这不是普通 DesktopAgent 运行模式。\n\n"
                 + m3AutomaticAcceptance.Describe()
                 + safeFailureDescription + "\n\n"
-                + "启动后 RequestedMode 仍默认为 Suggestion。"
-                + "只有你随后从 tray 明确选择 Automatic，自动执行链才可能进入真实 M2 Coordinator / Writer。\n\n"
+                + requestedModeDescription + "\n\n"
                 + "确认本次进程用于受控实机验收并继续？",
                 "DesktopAgent - M3 UNATTENDED WRITE ACCEPTANCE",
                 MessageBoxButton.YesNo,
@@ -130,7 +148,8 @@ public partial class App : System.Windows.Application
         var windowsAppSdkReady = runtimeInitialization.IsInitialized;
 
 #if DEBUG
-        if (enableWindowsAppNotifications && !windowsAppSdkReady)
+        // 无人值守模式（--run-grid-probe）下不能弹这个模态对话框：没人点它，OnStartup 会永远停在这里。
+        if (enableWindowsAppNotifications && !windowsAppSdkReady && !runGridProbeUnattended)
         {
             MessageBox.Show(
                 "Windows App SDK runtime / Singleton 初始化失败。DesktopAgent 会继续运行；"
@@ -172,6 +191,8 @@ public partial class App : System.Windows.Application
 #endif
                 services.AddSingleton<StaThreadExecutor>();
                 services.AddSingleton<IDesktopObservationSource, WindowsDesktopObservationSource>();
+                services.AddSingleton<IExplorerGridProbeShortcutStore, DesktopInternetShortcutStore>();
+                services.AddSingleton<ExplorerGridPhysicalProbeRunner>();
                 services.AddSingleton(
                     new DesktopObservationStabilitySettings(TimeSpan.FromMilliseconds(500)));
                 services.AddSingleton<IStableDesktopObservationSource, StableDesktopObservationSource>();
@@ -213,6 +234,18 @@ public partial class App : System.Windows.Application
                     new SqliteDesktopLayoutIconRuleStore(
                         DesktopAgentDataPaths.DefaultDatabasePath));
 
+                // 网格事实只由 Diagnostics Physical Gate 写入，产品路径读取。
+                services.AddSingleton<IExplorerGridMeasurementStore>(
+                    new SqliteExplorerGridMeasurementStore(
+                        DesktopAgentDataPaths.DefaultDatabasePath));
+                services.AddSingleton<ExplorerGridProbeFactRecorder>();
+
+                // A 方案：站定授权由用户确认界面的"记住这块屏"写入，自动执行前读取。
+                // 与网格事实分表：证据回答"图标会落在哪"，授权回答"人是否已经同意它自己动手"。
+                services.AddSingleton<IExplorerGridDisplayAuthorizationStore>(
+                    new SqliteExplorerGridDisplayAuthorizationStore(
+                        DesktopAgentDataPaths.DefaultDatabasePath));
+
                 // M3-03 Suggestion：旧 Candidate 只作为建议证据；M3-B 永远通过 fresh rebuilder 重建。
                 services.AddSingleton<DesktopLayoutSuggestionLifecycle>();
                 services.AddSingleton<IDesktopLayoutSuggestionBuilder, DesktopLayoutSuggestionBuilder>();
@@ -243,6 +276,12 @@ public partial class App : System.Windows.Application
                     IDesktopLayoutFreshCandidateRebuilder,
                     DesktopLayoutFreshCandidateRebuilder>();
                 services.AddSingleton<DesktopAutomationFreshExecutionHandoff>();
+                // A 方案：无人值守执行前查"这块显示器在这套拓扑下有没有证据 + 有没有站定授权"。
+                // 证据来自 Physical Probe 写入的实测事实，授权来自用户在确认界面上选择"记住这块屏"。
+                // 两条都是自动执行的必要条件，缺一即 fail closed；只读推断只够监督执行。
+                services.AddSingleton<
+                    IDesktopGridDisplayClearanceProvider,
+                    DesktopGridDisplayClearanceProvider>();
                 services.AddSingleton<DesktopAutomationAutomaticSafetyGate>();
                 services.AddSingleton<DesktopAutomationCoordinatorExecutionBridge>();
                 services.AddSingleton<DesktopAutomationExecutionOutcomeCoordinator>();
@@ -279,7 +318,8 @@ public partial class App : System.Windows.Application
         if (windowsAppSdkReady)
         {
 #if DEBUG
-            StartWindowsAppNotifications(showFailureDialog: true);
+            // 无人值守模式下不能弹这个模态对话框：没人点它，OnStartup 会永远卡在这里，探针永远不会启动。
+            StartWindowsAppNotifications(showFailureDialog: !runGridProbeUnattended);
 #else
             StartWindowsAppNotifications(showFailureDialog: false);
 #endif
@@ -288,6 +328,15 @@ public partial class App : System.Windows.Application
         var mainWindow = _host.Services.GetRequiredService<MainWindow>();
         MainWindow = mainWindow;
         mainWindow.Show();
+
+        if (runGridProbeUnattended)
+        {
+            // 无人值守模式：命令行上的 --run-grid-probe 就是这次物理写入的显式确认（等价于勾选同意并在
+            // 确认框上选 Yes）。报告照常落盘到 %LOCALAPPDATA%\DesktopAgent\logs\grid-probe-latest.txt，
+            // 退出码：0 = Passed，3 = Partial，1 = 其它（含被前置安全检查拒绝）。
+            _ = RunUnattendedGridProbeAsync(mainWindow);
+            return;
+        }
 
         if (enableM3DesktopSurfaces)
         {
@@ -301,6 +350,33 @@ public partial class App : System.Windows.Application
             // each window's existing safety Closing handlers have allowed the close request.
             _host.Services.GetRequiredService<M3TrayController>().Start();
         }
+    }
+
+    private async Task RunUnattendedGridProbeAsync(MainWindow mainWindow)
+    {
+        int exitCode;
+        try
+        {
+            // 应用刚启动时窗口自身可能仍在读显示器/桌面图标，此时探针会被前置检查拒绝；
+            // 无人值守入口必须等到空闲再启动，否则会静默什么都不做。
+            var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(60);
+            while (!mainWindow.CanStartGridProbeNow && DateTimeOffset.UtcNow < deadline)
+                await Task.Delay(250);
+
+            var status = await mainWindow.RunGridProbeUnattendedAsync();
+            exitCode = status switch
+            {
+                ExplorerGridProbeRunStatus.Passed => 0,
+                ExplorerGridProbeRunStatus.Partial => 3,
+                _ => 4,
+            };
+        }
+        catch (Exception)
+        {
+            exitCode = 1;
+        }
+
+        Shutdown(exitCode);
     }
 
     private void StartWindowsAppNotifications(bool showFailureDialog)

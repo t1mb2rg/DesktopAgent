@@ -1,6 +1,22 @@
 namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 
 /// <summary>
+/// 这次写入的来路：是用户的一次整理，还是「撤销上次整理」按检查点还原。
+///
+/// 撤销入口的候选是「最近一次成功收尾的写盘」。如果连撤销自己写下去的那一笔也算候选，
+/// 用户点第二次「撤销」就会把桌面重新整理一遍——2026-10-14 的真机演练里确实发生了。
+/// 来路只有写盘时知道（事后靠数据推断不可靠），所以它必须落在写入行上。
+/// </summary>
+public enum RecoverySessionOrigin
+{
+    /// <summary>用户的一次整理（直接应用到桌面 / 工作区设计应用到桌面）。</summary>
+    Organize = 0,
+
+    /// <summary>「撤销上次整理」按检查点还原时写下去的那一笔。</summary>
+    CheckpointRestore = 1,
+}
+
+/// <summary>
 /// 不可变的恢复会话持久化聚合。
 /// 包含跨重启恢复所需的全部证据：Session 标头、双向计划冻结副本、
 /// 全部 Forward/Rollback 尝试、已完成步骤索引、独立验证结果、
@@ -15,6 +31,12 @@ public sealed record RecoverySessionRecord
     public Guid SafetySnapshotId { get; init; }
     public string TargetDeviceName { get; init; } = string.Empty;
     public DateTimeOffset StartedAtUtc { get; init; }
+
+    /// <summary>
+    /// 这次写入的来路。默认 <see cref="RecoverySessionOrigin.Organize"/>：
+    /// 既有历史行与不传来路的旧调用都是整理写入。
+    /// </summary>
+    public RecoverySessionOrigin Origin { get; init; } = RecoverySessionOrigin.Organize;
 
     // ── 生命周期 ──
     public RecoverySessionLifecycle Lifecycle { get; init; }

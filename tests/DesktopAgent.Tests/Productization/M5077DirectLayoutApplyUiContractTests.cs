@@ -76,7 +76,18 @@ public sealed class M5077DirectLayoutApplyUiContractTests
         Assert.Contains("IsEnabled=\"False\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"ApplyToDesktop_Click\"", xaml, StringComparison.Ordinal);
         Assert.Contains("PreviewLayoutWithDirectApplyGate_Click", xaml, StringComparison.Ordinal);
-        Assert.Contains("preview.Plan.IsComplete && preview.Plan.MoveRequiredCount > 0", previewGate, StringComparison.Ordinal);
+        // 「完整且有变化才开放应用」这条规则没变，但它现在只有一处判定
+        // （Application 的 DesktopApplyReadiness），界面只负责按新证据重算。
+        Assert.Contains("RefreshApplyButtonFromCurrentEvidence()", previewGate, StringComparison.Ordinal);
+        var readiness = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Application",
+            "DesktopLayouts",
+            "Workspaces",
+            "DesktopApplyReadiness.cs"));
+        Assert.Contains("FreshPreviewIsComplete", readiness, StringComparison.Ordinal);
+        Assert.Contains("FreshPreviewMoveRequiredCount <= 0", readiness, StringComparison.Ordinal);
         Assert.Contains("new ContentDialog", directApply, StringComparison.Ordinal);
         Assert.Contains("DefaultButton = ContentDialogButton.Close", directApply, StringComparison.Ordinal);
         Assert.Contains("CreateFromPreview(_latestPreview)", directApply, StringComparison.Ordinal);

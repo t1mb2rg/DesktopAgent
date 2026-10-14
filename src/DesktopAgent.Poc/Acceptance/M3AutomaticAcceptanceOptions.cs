@@ -21,9 +21,13 @@ public sealed record M3AutomaticAcceptanceOptions
     public const string MaxStepsVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_MAX_STEPS";
     public const string AllowStagingVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_ALLOW_STAGING";
     public const string FailureModeVariable = "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_FAILURE_MODE";
+    public const string RequestedModeVariable =
+        "DESKTOPAGENT_M3_AUTO_ACCEPTANCE_REQUESTED_MODE";
 
     public const string SupportedMode = "ValidatedOpen";
     public const string SupportedFailureMode = "FailBeforeWriterAtSafetySnapshot";
+    public const string AutomaticRequestedModeValue = "Automatic";
+    public const string SuggestionRequestedModeValue = "Suggestion";
     public const string RequiredArmValue =
         "I_UNDERSTAND_THIS_ALLOWS_UNATTENDED_REAL_DESKTOP_WRITES";
 
@@ -36,6 +40,14 @@ public sealed record M3AutomaticAcceptanceOptions
     public bool AllowTemporaryStaging { get; }
     public M3AutomaticAcceptanceFailureMode FailureMode { get; }
 
+    /// <summary>
+    /// 本次验收进程启动时的请求模式。默认 Suggestion（与产品一致）；
+    /// 只有显式给定 <see cref="AutomaticRequestedModeValue"/> 时才以 Automatic 启动，
+    /// 用于在没有 tray 交互的验收环境里等价地完成「用户从 tray 选择 Automatic」这一步。
+    /// 它只是一次等价输入：真正的安全边界仍是 ValidatedOpen gate、逐屏实测证据与站定授权。
+    /// </summary>
+    public DesktopAutomationMode RequestedMode { get; }
+
     public bool InjectPreWriterFailure =>
         FailureMode == M3AutomaticAcceptanceFailureMode.FailBeforeWriterAtSafetySnapshot;
 
@@ -47,13 +59,15 @@ public sealed record M3AutomaticAcceptanceOptions
         int maxMoveCount,
         int maxExecutionStepCount,
         bool allowTemporaryStaging,
-        M3AutomaticAcceptanceFailureMode failureMode)
+        M3AutomaticAcceptanceFailureMode failureMode,
+        DesktopAutomationMode requestedMode)
     {
         IsEnabled = isEnabled;
         MaxMoveCount = maxMoveCount;
         MaxExecutionStepCount = maxExecutionStepCount;
         AllowTemporaryStaging = allowTemporaryStaging;
         FailureMode = failureMode;
+        RequestedMode = requestedMode;
     }
 
     public static M3AutomaticAcceptanceOptions Disabled { get; } =
@@ -62,7 +76,8 @@ public sealed record M3AutomaticAcceptanceOptions
             M3AutomationPoCDefaults.RiskSettings.MaxMoveCount,
             M3AutomationPoCDefaults.RiskSettings.MaxExecutionStepCount,
             M3AutomationPoCDefaults.RiskSettings.AllowTemporaryStaging,
-            M3AutomaticAcceptanceFailureMode.None);
+            M3AutomaticAcceptanceFailureMode.None,
+            DesktopAutomationMode.Suggestion);
 
     public static M3AutomaticAcceptanceOptions FromEnvironment() =>
         FromLookup(Environment.GetEnvironmentVariable);
@@ -78,13 +93,15 @@ public sealed record M3AutomaticAcceptanceOptions
         var maxStepsText = lookup(MaxStepsVariable);
         var allowStagingText = lookup(AllowStagingVariable);
         var failureModeText = lookup(FailureModeVariable);
+        var requestedModeText = lookup(RequestedModeVariable);
 
         if (mode is null
             && arm is null
             && maxMovesText is null
             && maxStepsText is null
             && allowStagingText is null
-            && failureModeText is null)
+            && failureModeText is null
+            && requestedModeText is null)
         {
             return Disabled;
         }
@@ -113,13 +130,15 @@ public sealed record M3AutomaticAcceptanceOptions
             allowStagingText,
             AllowStagingVariable);
         var failureMode = ParseFailureMode(failureModeText);
+        var requestedMode = ParseRequestedMode(requestedModeText);
 
         return new M3AutomaticAcceptanceOptions(
             true,
             maxMoves,
             maxSteps,
             allowStaging,
-            failureMode);
+            failureMode,
+            requestedMode);
     }
 
     public DesktopAutomationRuntimePolicy CreateValidatedRuntimePolicy(
@@ -132,12 +151,14 @@ public sealed record M3AutomaticAcceptanceOptions
         return new DesktopAutomationRuntimePolicy(
             M3AutomationPoCDefaults.RuntimeSettings,
             DesktopAutomationUnattendedGate.ValidatedOpen,
-            timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
+            timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)),
+            RequestedMode);
     }
 
     public string Describe() => IsEnabled
         ? $"Mode={SupportedMode}; MaxMoves={MaxMoveCount}; MaxSteps={MaxExecutionStepCount}; "
-            + $"AllowStaging={AllowTemporaryStaging}; FailureMode={FailureMode}"
+            + $"AllowStaging={AllowTemporaryStaging}; FailureMode={FailureMode}; "
+            + $"RequestedMode={RequestedMode}"
         : "Disabled";
 
     private static int ParseBoundedPositiveInt(
@@ -180,5 +201,16 @@ public sealed record M3AutomaticAcceptanceOptions
             _ => throw new InvalidOperationException(
                 $"{FailureModeVariable} 若提供，必须精确为 {SupportedFailureMode}。"
                 + "M3 automatic acceptance 未启用。"),
+        };
+
+    private static DesktopAutomationMode ParseRequestedMode(string? text) =>
+        text switch
+        {
+            null => DesktopAutomationMode.Suggestion,
+            AutomaticRequestedModeValue => DesktopAutomationMode.Automatic,
+            SuggestionRequestedModeValue => DesktopAutomationMode.Suggestion,
+            _ => throw new InvalidOperationException(
+                $"{RequestedModeVariable} 若提供，必须精确为 {AutomaticRequestedModeValue}"
+                + $" 或 {SuggestionRequestedModeValue}。M3 automatic acceptance 未启用。"),
         };
 }

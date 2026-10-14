@@ -80,6 +80,7 @@ public sealed partial class LayoutManagementView : UserControl
                     _templateItems.FirstOrDefault(item => item.TemplateId == _draft.TemplateId));
             }
             RenderLayoutCanvas();
+            await InitializeLayoutStageAsync();
         }
         catch (Exception ex)
         {

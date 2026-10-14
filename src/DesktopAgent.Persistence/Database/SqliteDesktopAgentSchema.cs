@@ -8,7 +8,7 @@ namespace DesktopAgent.Persistence.Database;
 /// </summary>
 internal static class SqliteDesktopAgentSchema
 {
-    internal const int CurrentVersion = 9;
+    internal const int CurrentVersion = 13;
 
     public static void Initialize(SqliteConnection connection, CancellationToken cancellationToken)
     {
@@ -34,6 +34,10 @@ internal static class SqliteDesktopAgentSchema
             EnsureV7Schema(connection, tx);
             EnsureV8Schema(connection, tx);
             EnsureV9Schema(connection, tx);
+            EnsureV10Schema(connection, tx);
+            EnsureV11Schema(connection, tx);
+            EnsureV12Schema(connection, tx);
+            EnsureV13Schema(connection, tx);
 
             if (version < CurrentVersion)
             {
@@ -497,6 +501,204 @@ internal static class SqliteDesktopAgentSchema
                 ON workspace_execution_journals (lifecycle ASC, started_at_utc ASC, session_id ASC);
         ";
         cmd.ExecuteNonQuery();
+    }
+
+    private static void EnsureV10Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS explorer_grid_measurements (
+                observation_id        TEXT PRIMARY KEY NOT NULL,
+                device_name           TEXT NOT NULL CHECK(TRIM(device_name) != ''),
+                topology_fingerprint  TEXT NOT NULL CHECK(TRIM(topology_fingerprint) != ''),
+                evidence_source       INTEGER NOT NULL CHECK(evidence_source IN (0,1)),
+                spacing_x             INTEGER NOT NULL CHECK(spacing_x > 0),
+                spacing_y             INTEGER NOT NULL CHECK(spacing_y > 0),
+                phase_x               INTEGER NOT NULL CHECK(phase_x >= 0 AND phase_x < spacing_x),
+                phase_y               INTEGER NOT NULL CHECK(phase_y >= 0 AND phase_y < spacing_y),
+                sample_count          INTEGER NOT NULL CHECK(sample_count > 0),
+                consensus_count       INTEGER NOT NULL CHECK(consensus_count >= 0 AND consensus_count <= sample_count),
+                spacing_constant      INTEGER NOT NULL CHECK(spacing_constant IN (0,1)),
+                phase_constant        INTEGER NOT NULL CHECK(phase_constant IN (0,1)),
+                observed_at_utc       TEXT NOT NULL CHECK(TRIM(observed_at_utc) != '' AND observed_at_utc LIKE '%+00:00'),
+                recorded_at_utc       TEXT NOT NULL CHECK(TRIM(recorded_at_utc) != '' AND recorded_at_utc LIKE '%+00:00'),
+                CHECK(evidence_source = 0 OR sample_count >= 3),
+                CHECK(evidence_source = 0 OR consensus_count = sample_count)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_grid_measurements_device_observed_desc
+                ON explorer_grid_measurements (device_name ASC, observed_at_utc DESC, recorded_at_utc DESC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// V11 只做一件事：把 desktop_pending_actions.queue_reason 的允许列表
+    /// 从 (10,11,20,21,22,23) 宽化为 (10,11,20,21,22,23,24)，
+    /// 以接纳 DesktopAutomationPolicyReason.GeometryEvidenceNotMeasured = 24。
+    /// SQLite 无法 ALTER 已有的 CHECK 约束，因此对已存在的旧表只能在当前事务内整表重建。
+    /// 允许列表仍然保持枚举级别的精确约束，不使用宽范围。
+    /// 该方法在每次 Initialize 时都会执行，因此必须自带“是否需要重建”的判断以保持幂等。
+    /// </summary>
+    private static void EnsureV11Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        if (!PendingActionsTableNeedsV11Rebuild(connection, transaction))
+            return;
+
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        // 说明：
+        // 1. 列定义与 V7 完全一致，仅 queue_reason 的允许列表追加 24。
+        // 2. 不写 IF NOT EXISTS：若上一次重建的临时表残留（正常不应发生），
+        //    宁可显式失败，也不能把残留表当成新表重命名而丢掉真实数据。
+        // 3. desktop_pending_actions 没有任何外键引用它，因此不需要处理外键关系，
+        //    也不需要在事务内改写 PRAGMA foreign_keys。
+        cmd.CommandText = @"
+            CREATE TABLE desktop_pending_actions_v11 (
+                pending_action_id    TEXT PRIMARY KEY NOT NULL,
+                created_at_utc       TEXT NOT NULL,
+                template_id          TEXT NULL,
+                stable_id            TEXT NOT NULL CHECK(stable_id != ''),
+                display_name         TEXT NOT NULL CHECK(TRIM(display_name) != ''),
+                file_extension       TEXT NULL,
+                item_kind            INTEGER NOT NULL CHECK(item_kind IN (0,1,2,3,4)),
+                is_system_item       INTEGER NOT NULL CHECK(is_system_item IN (0,1)),
+                is_file_system_item  INTEGER NOT NULL CHECK(is_file_system_item IN (0,1)),
+                proposed_category    TEXT NULL,
+                proposed_zone_id     TEXT NULL,
+                proposed_confidence  REAL NULL,
+                proposed_source      INTEGER NULL,
+                explanation          TEXT NULL,
+                authorization_basis  INTEGER NOT NULL CHECK(authorization_basis IN (0,1,2,3,4)),
+                queue_reason         INTEGER NOT NULL CHECK(queue_reason IN (10,11,20,21,22,23,24)),
+                CHECK(file_extension IS NULL OR
+                      (LENGTH(file_extension) > 1 AND SUBSTR(file_extension, 1, 1) = '.')),
+                CHECK(proposed_zone_id IS NULL OR template_id IS NOT NULL),
+                CHECK(
+                    (proposed_category IS NULL AND proposed_zone_id IS NULL AND
+                     proposed_confidence IS NULL AND proposed_source IS NULL AND explanation IS NULL)
+                    OR
+                    (proposed_category IS NOT NULL AND TRIM(proposed_category) != '' AND
+                     proposed_confidence IS NOT NULL AND
+                     proposed_confidence >= 0.0 AND proposed_confidence <= 1.0 AND
+                     proposed_source IS NOT NULL AND proposed_source IN (0,1,2,3) AND
+                     explanation IS NOT NULL AND TRIM(explanation) != '')
+                )
+            );
+
+            INSERT INTO desktop_pending_actions_v11
+                (pending_action_id, created_at_utc, template_id,
+                 stable_id, display_name, file_extension, item_kind,
+                 is_system_item, is_file_system_item,
+                 proposed_category, proposed_zone_id, proposed_confidence,
+                 proposed_source, explanation,
+                 authorization_basis, queue_reason)
+            SELECT
+                 pending_action_id, created_at_utc, template_id,
+                 stable_id, display_name, file_extension, item_kind,
+                 is_system_item, is_file_system_item,
+                 proposed_category, proposed_zone_id, proposed_confidence,
+                 proposed_source, explanation,
+                 authorization_basis, queue_reason
+            FROM desktop_pending_actions;
+
+            DROP TABLE desktop_pending_actions;
+
+            ALTER TABLE desktop_pending_actions_v11 RENAME TO desktop_pending_actions;
+
+            CREATE INDEX IF NOT EXISTS idx_pending_actions_created_at_utc
+                ON desktop_pending_actions (created_at_utc ASC, pending_action_id ASC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// V12 只新增 explorer_grid_display_authorizations 这一张表，
+    /// 用于记录"用户对某块显示器在当前显示拓扑下的站定授权"。
+    ///
+    /// 授权特意与 V10 的网格事实（explorer_grid_measurements）分表存放：
+    /// 网格事实回答"图标会落在哪"，那是证据；授权回答"人是否已经同意它自己动手"，
+    /// 那是决定。合在一张表里会让"实测过"看起来像"已经同意过"。
+    ///
+    /// 读取按 device_name + topology_fingerprint 进行，因此换屏、改分辨率、
+    /// 移动任务栏之后，绑定旧指纹的授权自然不再被选出，无需改写任何历史记录。
+    /// 与其它版本方法一样，本方法每次 Initialize 都会执行，必须保持幂等。
+    /// </summary>
+    private static void EnsureV12Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS explorer_grid_display_authorizations (
+                authorization_id     TEXT PRIMARY KEY NOT NULL,
+                device_name          TEXT NOT NULL CHECK(TRIM(device_name) != ''),
+                topology_fingerprint TEXT NOT NULL CHECK(TRIM(topology_fingerprint) != ''),
+                state                INTEGER NOT NULL CHECK(state IN (0,1)),
+                authorized_at_utc    TEXT NOT NULL CHECK(TRIM(authorized_at_utc) != '' AND authorized_at_utc LIKE '%+00:00'),
+                recorded_at_utc      TEXT NOT NULL CHECK(TRIM(recorded_at_utc) != '' AND recorded_at_utc LIKE '%+00:00')
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_grid_authorizations_device_recorded_desc
+                ON explorer_grid_display_authorizations (device_name ASC, recorded_at_utc DESC);
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// V13 给 desktop_layout_recovery_sessions 增加 origin：这一笔写盘是「用户的一次整理」，
+    /// 还是「撤销上次整理时按检查点还原」。
+    ///
+    /// 为什么必须落库：撤销入口的候选是「最近一次成功收尾的写盘」。若不区分来路，
+    /// 撤销自己刚写下的那一笔立刻变成下一次撤销的对象——用户点第二次「撤销」就会把桌面
+    /// 重新整理一遍（2026-10-14 的真机演练确实发生了）。来路只有写盘时知道，
+    /// 事后靠数据反推不可靠，所以在写入行上留一个字段。
+    ///
+    /// 默认 'organize'：既有历史行都是整理写入，旧调用不传来源时也按整理处理。
+    /// 与其它版本方法一样，本方法每次 Initialize 都会执行，必须保持幂等。
+    /// </summary>
+    private static void EnsureV13Schema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        if (ColumnExists(connection, transaction, "desktop_layout_recovery_sessions", "origin"))
+            return;
+
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            ALTER TABLE desktop_layout_recovery_sessions
+                ADD COLUMN origin TEXT NOT NULL DEFAULT 'organize'
+                CHECK(origin IN ('organize','checkpoint-restore'));
+        ";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 判断 desktop_pending_actions 是否仍停留在 V10 的 queue_reason 约束上。
+    /// 表尚不存在（例如空库，由 EnsureV7Schema 在本次调用中先行创建）时返回 false。
+    /// 已经包含 24 的宽化约束时返回 false，从而保证重复 Initialize 不会反复重建。
+    /// 比较前去除空白，兼容 CREATE TABLE 文本的不同排版。
+    /// </summary>
+    private static bool PendingActionsTableNeedsV11Rebuild(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = @"
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'desktop_pending_actions';
+        ";
+
+        if (cmd.ExecuteScalar() is not string sql || string.IsNullOrEmpty(sql))
+            return false;
+
+        var normalized = new string(
+            sql.Where(character => !char.IsWhiteSpace(character)).ToArray());
+
+        return !normalized.Contains(
+            "queue_reasonIN(10,11,20,21,22,23,24)",
+            StringComparison.Ordinal);
     }
 
     private static void DropColumnIfExists(

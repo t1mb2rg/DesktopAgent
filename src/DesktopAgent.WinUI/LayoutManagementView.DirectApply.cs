@@ -4,6 +4,8 @@ using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
+
 namespace DesktopAgent.WinUI;
 
 public sealed partial class LayoutManagementView
@@ -25,6 +27,26 @@ public sealed partial class LayoutManagementView
 
     private async void ApplyToDesktop_Click(object sender, RoutedEventArgs e)
     {
+        // async void 事件处理器里逃出去的异常会被 XAML 框架变成 WinRT stowed exception
+        // （0xc000027b，故障模块 Microsoft.UI.Xaml.dll）并直接 fail-fast：进程整个消失，
+        // 事件日志里既没有异常类型也没有调用栈。这里兜住、落日志，并把它变成一条
+        // 用户看得见的错误——"应用"这条路径的失败必须永远是可解释的。
+        try
+        {
+            await ApplyToDesktopCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            ProductCrashDiagnostics.Write("LayoutManagementView.ApplyToDesktop_Click", ex, handled: true);
+            InvalidateDirectApplyEvidence("应用流程发生未预期异常 · 已暂停继续应用");
+            ShowError(
+                "应用流程发生未预期异常",
+                $"{ex.GetType().Name}: {ex.Message}。为安全起见，请先检查恢复状态，不要重复执行。");
+        }
+    }
+
+    private async Task ApplyToDesktopCoreAsync()
+    {
         if (_directApplyInProgress)
             return;
 
@@ -38,7 +60,7 @@ public sealed partial class LayoutManagementView
 
         if (_latestPreview is null)
         {
-            ApplyToDesktopButton.IsEnabled = false;
+            RefreshApplyButtonFromCurrentEvidence();
             ShowInfo(
                 "请先预览",
                 "“应用到桌面”只执行你刚刚看过并确认的预览。先点击“预览”读取当前桌面。",
@@ -94,14 +116,15 @@ public sealed partial class LayoutManagementView
         var candidate = preparation.Candidate;
         if (candidate.IsNoOp || candidate.MoveRequiredCount == 0)
         {
-            ApplyToDesktopButton.IsEnabled = false;
+            RefreshApplyButtonFromCurrentEvidence();
             ShowInfo("已经在目标位置", "当前预览没有需要移动的桌面图标。", InfoBarSeverity.Success);
             return;
         }
 
         if (!candidate.IsExecutable)
         {
-            ApplyToDesktopButton.IsEnabled = false;
+            // 只有生成过安全执行候选才知道"不可执行"；这条理由绑当次证据，换预览即失效。
+            BlockApplyForCurrentEvidence(DesktopApplyBlockReason.PreviewNotExecutable);
             ShowInfo(
                 "当前计划不可执行",
                 BuildNonExecutableCandidateMessage(candidate),
@@ -150,7 +173,7 @@ public sealed partial class LayoutManagementView
         }
 
         _directApplyInProgress = true;
-        ApplyToDesktopButton.IsEnabled = false;
+        RefreshApplyButtonFromCurrentEvidence();
         LayoutCanvasStatusText.Text = "正在 fresh 验证并准备安全执行…";
 
         try
@@ -184,10 +207,7 @@ public sealed partial class LayoutManagementView
         finally
         {
             _directApplyInProgress = false;
-            ApplyToDesktopButton.IsEnabled =
-                _latestPreview is not null &&
-                _latestPreview.Plan.IsComplete &&
-                _latestPreview.Plan.MoveRequiredCount > 0;
+            RefreshApplyButtonFromCurrentEvidence();
         }
     }
 
@@ -315,8 +335,7 @@ public sealed partial class LayoutManagementView
     {
         _latestPreview = null;
         _previewItems.Clear();
-        ApplyToDesktopButton.IsEnabled = false;
-        ApplyToDesktopButton.Content = "应用到桌面";
+        RefreshApplyButtonFromCurrentEvidence();
         LayoutPreviewDetails.Visibility = Visibility.Collapsed;
         ResetPreviewSummary();
         LayoutCanvasStatusText.Text = status;

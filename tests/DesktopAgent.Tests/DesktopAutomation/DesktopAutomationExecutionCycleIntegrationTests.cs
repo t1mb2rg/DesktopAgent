@@ -1,6 +1,7 @@
 using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Application.DesktopSuggestions;
+using DesktopGeometryEvidence = DesktopAgent.Core.Automation.DesktopGeometryEvidence;
 using DesktopAgent.Core.DesktopIcons;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
@@ -54,7 +55,8 @@ public sealed class DesktopAutomationExecutionCycleIntegrationTests
             lifecycle,
             runtime,
             risk,
-            recovery);
+            recovery,
+            new MeasuredGridDisplayClearanceProvider());
 
         var writer = ScriptWriterFor(freshCandidate);
         var coordinator = CreateM2Coordinator(freshCandidate, writer);
@@ -247,6 +249,23 @@ public sealed class DesktopAutomationExecutionCycleIntegrationTests
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult<IReadOnlyList<RecoverySessionRecord>>(
                 Array.Empty<RecoverySessionRecord>());
+        }
+    }
+
+    /// <summary>
+    /// 集成测试关注的是"预检 → 安全门 → 协调器"的接线，网格证据与站定授权固定用"已实测 + 已授权"这一档，
+    /// 免得 A 方案的两道门挡住与网格无关的集成路径（这两道门各自有专门的测试）。
+    /// </summary>
+    private sealed class MeasuredGridDisplayClearanceProvider : IDesktopGridDisplayClearanceProvider
+    {
+        public Task<DesktopGridDisplayClearance> GetClearanceAsync(
+            string? targetDeviceName,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new DesktopGridDisplayClearance(
+                DesktopGeometryEvidence.Measured,
+                isAuthorizedForUnattendedExecution: true));
         }
     }
 }

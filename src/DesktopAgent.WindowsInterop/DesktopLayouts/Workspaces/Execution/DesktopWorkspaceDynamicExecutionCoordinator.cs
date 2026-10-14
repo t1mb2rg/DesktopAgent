@@ -110,6 +110,7 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
     private readonly IDesktopWorkspaceExecutionJournalStore _staticJournalStore;
     private readonly IDesktopWorkspaceDynamicExecutionJournalStore _dynamicJournalStore;
     private readonly TimeProvider _timeProvider;
+    private readonly DesktopExplorerGridFactReader? _gridFactReader;
 
     public DesktopWorkspaceDynamicExecutionCoordinator(
         IDesktopObservationSource observationSource,
@@ -119,7 +120,8 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         IDesktopLayoutSnapshotStore snapshotStore,
         IDesktopWorkspaceExecutionJournalStore staticJournalStore,
         IDesktopWorkspaceDynamicExecutionJournalStore dynamicJournalStore,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        DesktopExplorerGridFactReader? gridFactReader = null)
     {
         _observationSource = observationSource ?? throw new ArgumentNullException(nameof(observationSource));
         _positionWriter = positionWriter ?? throw new ArgumentNullException(nameof(positionWriter));
@@ -129,6 +131,33 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         _staticJournalStore = staticJournalStore ?? throw new ArgumentNullException(nameof(staticJournalStore));
         _dynamicJournalStore = dynamicJournalStore ?? throw new ArgumentNullException(nameof(dynamicJournalStore));
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _gridFactReader = gridFactReader;
+    }
+
+    /// <summary>
+    /// 读取与当前拓扑绑定的网格实测事实并交给 Adapter（实测优先）。
+    ///
+    /// 未注入 reader 时返回 null：行为与引入实测事实之前完全一致（全部走推断）。
+    /// 存储读取失败同样降级为 null，而不是让一次存储故障改变几何构建的可用性：
+    /// Adapter 会回退到图标位置推断，并把每一块显示器的来源写进 Provenance，不会静默使用未经校验的相位。
+    /// </summary>
+    private async Task<IReadOnlyList<ExplorerGridMeasurement>?> TryReadGridFactsAsync(
+        DesktopObservation observation,
+        CancellationToken cancellationToken)
+    {
+        if (_gridFactReader is null)
+            return null;
+
+        try
+        {
+            return await _gridFactReader
+                .TryReadActiveAsync(observation, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     public async Task<DesktopWorkspaceDynamicExecutionRunResult> ExecuteAsync(
@@ -177,7 +206,9 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
         }
 
         var initialObservation = initialCapture.Observation!;
-        var initialGeometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(initialObservation);
+        var initialGeometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(
+            initialObservation,
+            await TryReadGridFactsAsync(initialObservation, cancellationToken).ConfigureAwait(false));
         if (!initialGeometryResult.Succeeded)
         {
             return DesktopWorkspaceDynamicExecutionRunResult.FailedBeforeWrite(
@@ -329,7 +360,9 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             }
 
             var observation = capture.Observation!;
-            var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(observation);
+            var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(
+                observation,
+                await TryReadGridFactsAsync(observation, cancellationToken).ConfigureAwait(false));
             if (!geometryResult.Succeeded)
             {
                 return await FailAfterBoundaryAsync(
@@ -645,7 +678,9 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinator
             });
         }
 
-        var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(capture.Observation!);
+        var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(
+            capture.Observation!,
+            await TryReadGridFactsAsync(capture.Observation!, cancellationToken).ConfigureAwait(false));
         if (!geometryResult.Succeeded)
         {
             return Array.AsReadOnly(new[]

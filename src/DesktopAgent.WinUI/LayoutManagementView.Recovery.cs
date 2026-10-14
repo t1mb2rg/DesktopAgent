@@ -1,3 +1,4 @@
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -39,7 +40,7 @@ public sealed partial class LayoutManagementView
         if (dynamicWorkspacePending.Count > 0)
         {
             DisableWorkspaceFrozenPreviewApplyEvidence();
-            ApplyToDesktopButton.IsEnabled = false;
+            BlockApplyForCurrentEvidence(DesktopApplyBlockReason.PendingRecovery);
 
             var v9Suffix = workspacePending.Count > 0
                 ? $" 同时还有 {workspacePending.Count} 笔 V9 Workspace unresolved journal。"
@@ -63,7 +64,7 @@ public sealed partial class LayoutManagementView
         if (workspacePending.Count > 0)
         {
             DisableWorkspaceFrozenPreviewApplyEvidence();
-            ApplyToDesktopButton.IsEnabled = false;
+            BlockApplyForCurrentEvidence(DesktopApplyBlockReason.PendingRecovery);
 
             if (workspacePending.Count == 1 && pendingCount == 0)
             {

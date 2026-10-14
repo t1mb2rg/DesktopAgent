@@ -1,4 +1,5 @@
 using DesktopAgent.Application.DesktopSuggestions;
+using DesktopAgent.Core.Automation;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 using DesktopAgent.Core.DesktopLayouts.Templates.Execution;
 
@@ -15,6 +16,16 @@ public enum DesktopAutomationAutomaticSafetyGateStatus
     CandidateInvariantRejected = 6,
     FreshRiskBudgetBlocked = 7,
     ReadyForCoordinatorPreWriteGate = 8,
+
+    /// <summary>A 方案：目标显示器没有可授权的实测网格事实，禁止无人值守执行。</summary>
+    GeometryEvidenceNotMeasured = 9,
+
+    /// <summary>
+    /// A 方案：目标显示器没有在当前拓扑下有效的站定授权，禁止无人值守执行。
+    /// 与 <see cref="GeometryEvidenceNotMeasured"/> 分开报，因为用户要做的动作不同：
+    /// 前者是"去测一次"，后者是"去同意一次"。
+    /// </summary>
+    DisplayNotAuthorizedForUnattendedExecution = 10,
 }
 
 /// <summary>
@@ -80,17 +91,21 @@ public sealed class DesktopAutomationAutomaticSafetyGate
     private readonly DesktopAutomationRuntimePolicy _runtimePolicy;
     private readonly IDesktopAutomationCandidateRiskEvidencePolicy _riskPolicy;
     private readonly IRecoverySessionStore _recoveryStore;
+    private readonly IDesktopGridDisplayClearanceProvider _clearanceProvider;
 
     public DesktopAutomationAutomaticSafetyGate(
         DesktopLayoutSuggestionLifecycle lifecycle,
         DesktopAutomationRuntimePolicy runtimePolicy,
         IDesktopAutomationCandidateRiskEvidencePolicy riskPolicy,
-        IRecoverySessionStore recoveryStore)
+        IRecoverySessionStore recoveryStore,
+        IDesktopGridDisplayClearanceProvider clearanceProvider)
     {
         _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
         _runtimePolicy = runtimePolicy ?? throw new ArgumentNullException(nameof(runtimePolicy));
         _riskPolicy = riskPolicy ?? throw new ArgumentNullException(nameof(riskPolicy));
         _recoveryStore = recoveryStore ?? throw new ArgumentNullException(nameof(recoveryStore));
+        _clearanceProvider = clearanceProvider
+            ?? throw new ArgumentNullException(nameof(clearanceProvider));
     }
 
     public async Task<DesktopAutomationAutomaticSafetyGateResult> EvaluateAsync(
@@ -230,6 +245,14 @@ public sealed class DesktopAutomationAutomaticSafetyGate
                 rejectionReasons: freshRisk.BlockReasons.Select(reason => reason.ToString()));
         }
 
+        // A 方案：无人值守执行必须同时满足两件事——
+        // ① 这块显示器在当前拓扑下有实测网格事实（只读推断只够监督执行）；
+        // ② 用户在这套拓扑下对这块屏给过站定授权（监督执行的 DirectUserRequest 是另一次、一次性的同意）。
+        // 两者都从这里 fail closed：绝不让"预测"或"没人同意过"变成自动执行。
+        var clearance = await _clearanceProvider.GetClearanceAsync(
+            candidate.TargetDeviceName,
+            ct);
+
         // Risk 评估期间也可能发生 UI 或 monitoring 状态变化。
         // 在返回 Ready 前再次核对 lifecycle + runtime revision。
         if (!MatchesExpectedActiveLifecycle(_lifecycle.Snapshot, expectedLifecycle))
@@ -257,6 +280,37 @@ public sealed class DesktopAutomationAutomaticSafetyGate
                 handoff,
                 finalRuntime,
                 "Safety gate 评估结束时 runtime 已不允许 unattended execution。");
+        }
+
+        if (clearance.GeometryEvidence != DesktopGeometryEvidence.Measured)
+        {
+            return new DesktopAutomationAutomaticSafetyGateResult(
+                DesktopAutomationAutomaticSafetyGateStatus.GeometryEvidenceNotMeasured,
+                handoff,
+                finalRuntime,
+                freshRisk,
+                unresolvedRecoveryCount: 0,
+                rejectionReasons: new[]
+                {
+                    $"目标显示器 {candidate.TargetDeviceName} 没有可以授权自动执行的实测网格事实（证据={clearance.GeometryEvidence}）。"
+                    + "只读推断只够监督执行；要让它无人值守，请先在 Diagnostics 的 Explorer Grid Physical Probe 页对该屏跑一次 Physical Probe。",
+                });
+        }
+
+        if (!clearance.IsAuthorizedForUnattendedExecution)
+        {
+            return new DesktopAutomationAutomaticSafetyGateResult(
+                DesktopAutomationAutomaticSafetyGateStatus.DisplayNotAuthorizedForUnattendedExecution,
+                handoff,
+                finalRuntime,
+                freshRisk,
+                unresolvedRecoveryCount: 0,
+                rejectionReasons: new[]
+                {
+                    $"目标显示器 {candidate.TargetDeviceName} 在当前显示拓扑下没有站定授权，禁止无人值守执行。"
+                    + "「让它自己动手」这件事还没有人对这块屏同意过；"
+                    + "要么在界面上确认一次并选择记住这块屏，要么这一次由人来确认（监督执行）。",
+                });
         }
 
         return new DesktopAutomationAutomaticSafetyGateResult(

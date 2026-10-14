@@ -448,3 +448,19 @@ public interface IDesktopWorkspaceDynamicExecutionJournalStore
     Task<IReadOnlyList<DesktopWorkspaceDynamicExecutionJournal>> ListUnresolvedAsync(
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// 只读窄接口：列出<strong>已经成功收尾</strong>（<c>Committed</c>）的工作区设计写入，新的在前。
+///
+/// 为什么单开一个接口而不是给 <see cref="IDesktopWorkspaceDynamicExecutionJournalStore"/>
+/// 加成员：那个接口只服务执行/恢复流程，加成员会牵动它的测试替身与装饰器；
+/// 「最近一次成功整理是谁」是撤销入口的关注点，两者不该互相牵扯。
+/// 这里只覆盖产品今天真正在写的那条路径（V10 动态工作区执行）。
+/// </summary>
+public interface ICommittedWorkspaceExecutionJournalQuery
+{
+    /// <summary>按开始时间倒序返回最近的已收尾写入，最多 <paramref name="limit"/> 条。</summary>
+    Task<IReadOnlyList<DesktopWorkspaceDynamicExecutionJournal>> ListCommittedAsync(
+        int limit,
+        CancellationToken cancellationToken = default);
+}

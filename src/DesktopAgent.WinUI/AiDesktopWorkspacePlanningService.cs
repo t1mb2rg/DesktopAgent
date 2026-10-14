@@ -6,10 +6,12 @@ using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Equivalence;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Preview;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Core.Intelligence;
 using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Blueprints;
+using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Persistence.Productization;
 using DesktopAgent.WindowsInterop.Intelligence;
 
@@ -56,6 +58,13 @@ internal sealed class AiDesktopWorkspacePlanningService
 {
     internal static readonly TimeSpan ProductDesignTimeout = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// 网格实测事实的唯一读取入口（Diagnostics 探针是唯一写入方）。
+    /// 未实测的显示器读到空集合，Adapter 回退推断并把来源写进 Provenance。
+    /// </summary>
+    private readonly DesktopExplorerGridFactReader _workspaceGridFactReader =
+        new(new SqliteExplorerGridMeasurementStore(DesktopAgentDataPaths.DefaultDatabasePath));
+
     internal async Task<AiDesktopWorkspacePlanningProductResult> PlanAsync(
         DesktopUnderstandingDraft understanding,
         DesktopObservation observation,
@@ -80,7 +89,9 @@ internal sealed class AiDesktopWorkspacePlanningService
                 providerStatus: IntelligenceProviderStatus.NotConfigured);
         }
 
-        var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(observation);
+        var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(
+            observation,
+            await TryReadGridFactsAsync(observation, cancellationToken).ConfigureAwait(false));
         if (!geometryResult.Succeeded || geometryResult.Geometry is null)
         {
             return Failure(
@@ -290,6 +301,26 @@ internal sealed class AiDesktopWorkspacePlanningService
                 loop.DesignAttempts,
                 $"Workspace Design loop 返回未识别状态：{loop.Status}。"),
         };
+
+    /// <summary>
+    /// 读取当前拓扑下的实测网格事实。存储故障或事实缺失都不应让计划路径失败：
+    /// Adapter 会回退到推断，并把每个显示器的来源写进 Provenance。
+    /// </summary>
+    private async Task<IReadOnlyList<ExplorerGridMeasurement>?> TryReadGridFactsAsync(
+        DesktopObservation observation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _workspaceGridFactReader
+                .TryReadActiveAsync(observation, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
 
     private static AiDesktopWorkspacePlanningProductResult Failure(
         AiDesktopWorkspacePlanningProductStatus status,

@@ -356,8 +356,8 @@ public sealed class SqliteDesktopWorkspaceBlueprintStoreTests : IDisposable
         await blueprintStore.InitializeAsync();
         await blueprintStore.InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(understandingDb));
-        Assert.Equal(9, ReadUserVersion(blueprintDb));
+        Assert.Equal(13, ReadUserVersion(understandingDb));
+        Assert.Equal(13, ReadUserVersion(blueprintDb));
         Assert.True(TableExists(understandingDb, "workspace_blueprints"));
         Assert.True(TableExists(blueprintDb, "desktop_semantic_understandings"));
     }

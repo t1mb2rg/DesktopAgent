@@ -77,29 +77,35 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(restorePlan);
-        return await ExecuteCoreAsync(restorePlan, scopeGate: null, cancellationToken);
+        return await ExecuteCoreAsync(
+            restorePlan, scopeGate: null, cancellationToken, RecoverySessionOrigin.Organize);
     }
 
     /// <summary>
     /// 受控执行入口 — 在最新 ExecutionPlan 创建后、安全快照保存前执行闸门。
     /// scopeGate 为 null 时保持原 public ExecuteAsync 行为。
+    ///
+    /// <paramref name="origin"/> 会写进恢复会话行：撤销入口按它区分「用户的整理」与
+    /// 「撤销自己写下的还原」，否则第二次点撤销会把桌面重新整理一遍。
     /// </summary>
     internal async Task<TargetDisplayLayoutExecutionRunResult> ExecuteWithScopeGateAsync(
         TargetDisplayLayoutRestorePlan restorePlan,
         Func<TargetDisplayLayoutRestorePlan, TargetDisplayLayoutExecutionPlan,
             TargetDisplayLayoutExecutionScopeGate.GateResult> scopeGate,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RecoverySessionOrigin origin = RecoverySessionOrigin.Organize)
     {
         ArgumentNullException.ThrowIfNull(restorePlan);
         ArgumentNullException.ThrowIfNull(scopeGate);
-        return await ExecuteCoreAsync(restorePlan, scopeGate, cancellationToken);
+        return await ExecuteCoreAsync(restorePlan, scopeGate, cancellationToken, origin);
     }
 
     private async Task<TargetDisplayLayoutExecutionRunResult> ExecuteCoreAsync(
         TargetDisplayLayoutRestorePlan restorePlan,
         Func<TargetDisplayLayoutRestorePlan, TargetDisplayLayoutExecutionPlan,
             TargetDisplayLayoutExecutionScopeGate.GateResult>? scopeGate,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RecoverySessionOrigin origin)
     {
         TargetDisplayLayoutExecutionPlan executionPlan;
         DesktopLayoutSnapshot safetySnapshot;
@@ -280,7 +286,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             lastFailedStepIndex: null,
             requiresManualRecovery: false,
             isPositionUncertain: false,
-            status: "Ready");
+            status: "Ready",
+            origin: origin);
 
         // ═══ 7.5. 初始持久化检查点（第一笔 Writer 前） ═══
         RecoverySessionRecord? checkpoint = null;
@@ -618,7 +625,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
             completedFwd, Array.Empty<int>(),
             null,
             nonPassed, nonPassed,
-            nonPassed ? "PositionUncertain" : "Completed");
+            nonPassed ? "PositionUncertain" : "Completed",
+            origin: successSession.Origin);
 
         var terminalPersisted = true;
         if (_recoveryStore is not null && currentCheckpoint is not null)
@@ -1148,7 +1156,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                     allForward.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                         .Select(a => a.SourceStepIndex).ToList(),
                     rollbackSourceIndexes,
-                    failedStepIndex, false, false, "FailedAndRolledBack");
+                    failedStepIndex, false, false, "FailedAndRolledBack",
+                    origin: passedSession.Origin);
 
                 return new TargetDisplayLayoutExecutionRunResult(
                     TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack,
@@ -1304,7 +1313,8 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 .Select(a => a.SourceStepIndex).ToList(),
             rollback.Where(a => a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                 .Select(a => a.SourceStepIndex).ToList(),
-            failedStepIndex, requiresManual, isPositionUncertain, status);
+            failedStepIndex, requiresManual, isPositionUncertain, status,
+            origin: original.Origin);
 
     private async Task<TargetDisplayLayoutExecutionVerificationResult> VerifyForwardAsync(
         TargetDisplayLayoutExecutionPlan executionPlan,
@@ -1584,6 +1594,9 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 TargetDeviceName = session.TargetDeviceName,
                 StartedAtUtc = session.StartedAtUtc,
                 Lifecycle = RecoverySessionLifecycle.Executing,
+                // 来路必须一路带到落库那一刻：撤销写下的每一笔标成 CheckpointRestore，
+                // 否则第二行默认的 Organize 会让「撤销」自己变成下一次撤销的候选。
+                Origin = session.Origin,
                 LastFailedStepIndex = null,
                 SourceRestorePlan = session.SourceRestorePlan,
                 ExecutionPlan = executionPlan,
@@ -1639,6 +1652,7 @@ public sealed class TargetDisplayLayoutExecutionCoordinator
                 SourceRestorePlan = session.SourceRestorePlan,
                 ExecutionPlan = session.ExecutionPlan,
                 Lifecycle = lifecycle,
+                Origin = session.Origin,
                 LastFailedStepIndex = lastFailedStepIndex,
                 ForwardAttempts = forwardAttempts,
                 RollbackAttempts = rollbackAttempts,

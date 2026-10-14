@@ -158,7 +158,7 @@ public sealed class SqliteDesktopWorkspaceDynamicExecutionJournalStoreTests
         connection.Open();
         using var version = connection.CreateCommand();
         version.CommandText = "PRAGMA user_version;";
-        Assert.Equal(9L, (long)version.ExecuteScalar()!);
+        Assert.Equal(13L, (long)version.ExecuteScalar()!);
 
         using var tables = connection.CreateCommand();
         tables.CommandText = @"

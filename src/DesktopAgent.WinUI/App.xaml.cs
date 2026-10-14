@@ -12,6 +12,7 @@ public partial class App : Microsoft.UI.Xaml.Application
     public App()
     {
         InitializeComponent();
+        ProductCrashDiagnostics.Install(this);
         Program.SecondaryActivationReceived += OnSecondaryActivationReceived;
     }
 

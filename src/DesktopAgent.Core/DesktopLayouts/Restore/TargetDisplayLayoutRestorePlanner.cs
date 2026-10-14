@@ -12,6 +12,30 @@ public static class TargetDisplayLayoutRestorePlanner
         IReadOnlyList<DisplayDescriptor> currentDisplays,
         DesktopIconPositioningCapabilities capabilities,
         string targetDeviceName)
+        => CreatePlan(
+            snapshot,
+            currentReadResult,
+            currentDisplays,
+            capabilities,
+            targetDeviceName,
+            allowSnapshotFromAnotherDisplay: false);
+
+    /// <summary>
+    /// 与上面同一个规划器，但允许用<strong>标注在别的显示器上</strong>的整桌面快照来为
+    /// <paramref name="targetDeviceName"/> 排还原计划。快照条目自带每一项所属显示器，
+    /// 因此跨屏整理（把别的屏的项目挪进来）也能按同一份检查点把每一项送回它原来的屏。
+    ///
+    /// 只有「撤销上次整理」这条路径传 true：它拿到的是自己写盘前存的检查点，
+    /// 而其它路径必须保持原来的 fail-closed 语义（快照与目标屏不一致就拒绝）。
+    /// 判定与规划其余部分完全不变——计划项仍然只由快照坐标产生，不引入任何推断。
+    /// </summary>
+    public static TargetDisplayLayoutRestorePlan CreatePlan(
+        DesktopLayoutSnapshot snapshot,
+        DesktopIconReadResult currentReadResult,
+        IReadOnlyList<DisplayDescriptor> currentDisplays,
+        DesktopIconPositioningCapabilities capabilities,
+        string targetDeviceName,
+        bool allowSnapshotFromAnotherDisplay)
     {
         // ═══ 阶段 1: 参数和全局前置验证 ═══
         ArgumentNullException.ThrowIfNull(snapshot);
@@ -33,9 +57,13 @@ public static class TargetDisplayLayoutRestorePlanner
 
         var targetDisplay = UniqueDisplaySelector.FindByDeviceName(currentDisplays, targetDeviceName);
 
-        if (snapshot.TargetMonitorDeviceName is null)
+        // 整桌面检查点（例如工作区设计应用写盘前存的那份）没有「目标显示器」这一说：
+        // 每一项自带所属显示器，撤销时由调用方逐屏指定目标屏。只有允许跨屏快照的
+        // 撤销路径能走这条路；其它路径仍旧 fail closed。
+        if (snapshot.TargetMonitorDeviceName is null && !allowSnapshotFromAnotherDisplay)
             throw new InvalidOperationException("快照的 TargetMonitorDeviceName 为 null，不能用于指定显示器恢复。");
-        if (!string.Equals(snapshot.TargetMonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
+        if (!allowSnapshotFromAnotherDisplay
+            && !string.Equals(snapshot.TargetMonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
             throw new InvalidOperationException(
                 $"快照目标显示器 {snapshot.TargetMonitorDeviceName} 与请求的 {targetDeviceName} 不一致。");
 
@@ -206,6 +234,24 @@ public static class TargetDisplayLayoutRestorePlanner
             snapToCurrentIndex[si] = ci;
             var currentIcon = currentReadResult.Icons[ci];
 
+            // 「无需移动」必须先于可移动性验证：已经位于快照目标且显示器一致的项目
+            // 根本不需要 Writer，所以它不是可恢复性的前提。真机踩到过：回收站
+            // （既不是文件系统项目、也不是系统项目）停在检查点原格时，整块屏的
+            // 还原计划曾被它一个项目挡下；它不需要被移动，也就不该阻断别的项目。
+            if (currentIcon.PixelPosition == snapIcon.PixelPosition
+                && string.Equals(currentIcon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
+            {
+                items[si] = items[si] with
+                {
+                    CurrentPosition = currentIcon.PixelPosition,
+                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
+                    State = TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
+                    IsFileSystemItem = currentIcon.IsFileSystemItem,
+                    IsSystemItem = currentIcon.IsSystemItem,
+                };
+                continue;
+            }
+
             // 可移动性验证
             if (!currentIcon.IsFileSystemItem)
             {
@@ -238,23 +284,6 @@ public static class TargetDisplayLayoutRestorePlanner
                     CurrentPosition = currentIcon.PixelPosition,
                     State = TargetDisplayLayoutRestoreItemState.NoMonitorDeviceName,
                     BlockReason = $"当前图标 \"{currentIcon.DisplayName}\" 没有显示器归属。"
-                };
-                continue;
-            }
-
-            // 无需移动？（必须先于目标坐标验证：
-            // 已位于快照目标且显示器一致的项目不需要 Writer，
-            // 因此目标工作区越界不应阻断。）
-            if (currentIcon.PixelPosition == snapIcon.PixelPosition
-                && string.Equals(currentIcon.MonitorDeviceName, targetDeviceName, StringComparison.Ordinal))
-            {
-                items[si] = items[si] with
-                {
-                    CurrentPosition = currentIcon.PixelPosition,
-                    CurrentMonitorDeviceName = currentIcon.MonitorDeviceName,
-                    State = TargetDisplayLayoutRestoreItemState.AlreadyAtTarget,
-                    IsFileSystemItem = currentIcon.IsFileSystemItem,
-                    IsSystemItem = currentIcon.IsSystemItem,
                 };
                 continue;
             }

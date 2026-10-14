@@ -3,6 +3,7 @@ using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
 using DesktopAgent.Persistence.DesktopLayouts.Templates.Rules;
 using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Execution;
+using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Persistence.Intelligence;
 using Microsoft.Data.Sqlite;
 
@@ -34,11 +35,14 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
     }
 
     [Fact]
-    public async Task FreshDatabase_CreatesCompleteV9Schema()
+    public async Task FreshDatabase_CreatesCompleteV13Schema()
     {
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
+
+        // V13：恢复会话行必须记住「这次写盘是谁发起的」，否则撤销入口分不清整理和撤销自己写下的还原。
+        Assert.Contains("origin", ReadColumnNames(_dbPath, "desktop_layout_recovery_sessions"));
 
         var expectedTables = new[]
         {
@@ -58,6 +62,8 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             "workspace_blueprint_revisions",
             "workspace_execution_journals",
             "workspace_execution_attempts",
+            "explorer_grid_measurements",
+            "explorer_grid_display_authorizations",
         };
         foreach (var table in expectedTables)
             Assert.True(TableExists(_dbPath, table), $"缺少表 {table}");
@@ -75,15 +81,17 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             "idx_workspace_blueprints_library",
             "idx_workspace_blueprint_revisions_created",
             "idx_workspace_execution_journals_lifecycle",
+            "idx_grid_measurements_device_observed_desc",
+            "idx_grid_authorizations_device_recorded_desc",
         };
         foreach (var index in expectedIndexes)
             Assert.True(IndexExists(_dbPath, index), $"缺少索引 {index}");
     }
 
     [Fact]
-    public async Task EveryStore_UsesSharedV9Initializer_AndRepeatedInitIsIdempotent()
+    public async Task EveryStore_UsesSharedV13Initializer_AndRepeatedInitIsIdempotent()
     {
-        var paths = Enumerable.Range(0, 7)
+        var paths = Enumerable.Range(0, 9)
             .Select(index => Path.Combine(_tempDir, $"store-{index}.db"))
             .ToArray();
 
@@ -115,9 +123,17 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         await workspaceJournalStore.InitializeAsync();
         await workspaceJournalStore.InitializeAsync();
 
+        var gridMeasurementStore = new SqliteExplorerGridMeasurementStore(paths[7]);
+        await gridMeasurementStore.InitializeAsync();
+        await gridMeasurementStore.InitializeAsync();
+
+        var displayAuthorizationStore = new SqliteExplorerGridDisplayAuthorizationStore(paths[8]);
+        await displayAuthorizationStore.InitializeAsync();
+        await displayAuthorizationStore.InitializeAsync();
+
         foreach (var path in paths)
         {
-            Assert.Equal(9, ReadUserVersion(path));
+            Assert.Equal(13, ReadUserVersion(path));
             Assert.True(TableExists(path, "desktop_classification_rules"));
             Assert.True(TableExists(path, "desktop_classification_evidence"));
             Assert.True(TableExists(path, "desktop_pending_actions"));
@@ -126,6 +142,8 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             Assert.True(TableExists(path, "workspace_blueprint_revisions"));
             Assert.True(TableExists(path, "workspace_execution_journals"));
             Assert.True(TableExists(path, "workspace_execution_attempts"));
+            Assert.True(TableExists(path, "explorer_grid_measurements"));
+            Assert.True(TableExists(path, "explorer_grid_display_authorizations"));
         }
     }
 
@@ -151,7 +169,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -198,7 +216,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutTemplateStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -252,7 +270,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutIconRuleStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         using var upgraded = OpenRawConnection(_dbPath);
         using var select = upgraded.CreateCommand();
         select.CommandText = @"
@@ -304,7 +322,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopClassificationRuleStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "desktop_classification_rules"));
         Assert.True(TableExists(_dbPath, "desktop_user_category_zone_preferences"));
         Assert.True(TableExists(_dbPath, "desktop_classification_evidence"));
@@ -355,7 +373,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopPendingActionStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
         Assert.True(TableExists(_dbPath, "desktop_semantic_understandings"));
         Assert.True(TableExists(_dbPath, "workspace_blueprints"));
@@ -403,7 +421,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "desktop_semantic_understandings"));
         Assert.True(TableExists(_dbPath, "workspace_blueprints"));
         Assert.True(TableExists(_dbPath, "workspace_blueprint_revisions"));
@@ -453,7 +471,7 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
 
         await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
 
-        Assert.Equal(9, ReadUserVersion(_dbPath));
+        Assert.Equal(13, ReadUserVersion(_dbPath));
         Assert.True(TableExists(_dbPath, "workspace_execution_journals"));
         Assert.True(TableExists(_dbPath, "workspace_execution_attempts"));
         using var upgraded = OpenRawConnection(_dbPath);
@@ -464,6 +482,169 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
             WHERE blueprint_id = '00000000-0000-0000-0000-000000000092';
         ";
         Assert.Equal("keep-v8", (string)select.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task V11Upgrade_RebuildsPendingQueueConstraintWithoutLosingColumnsOrIndex()
+    {
+        var bootstrap = new SqliteDesktopLayoutSnapshotStore(_dbPath);
+        await bootstrap.InitializeAsync();
+
+        // pending 表置为“缺失”并把版本回退到 10：下一次 Initialize 会先走 EnsureV7Schema。
+        // 用生成的 DDL 建出真正的 V10 表，再由 EnsureV11Schema 整表重建。
+        // 因此这里走的是真实升级路径，而不是手写的 V10 表。
+        using (var connection = OpenRawConnection(_dbPath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                DROP TABLE desktop_pending_actions;
+                PRAGMA user_version = 10;
+            ";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Equal(10, ReadUserVersion(_dbPath));
+        Assert.False(TableExists(_dbPath, "desktop_pending_actions"));
+
+        await new SqliteDesktopPendingActionStore(_dbPath).InitializeAsync();
+
+        Assert.Equal(13, ReadUserVersion(_dbPath));
+        Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
+        Assert.False(TableExists(_dbPath, "desktop_pending_actions_v11"));
+        Assert.True(IndexExists(_dbPath, "idx_pending_actions_created_at_utc"));
+
+        var tableSql = ReadTableSql(_dbPath, "desktop_pending_actions");
+        Assert.Contains("queue_reason IN (10,11,20,21,22,23,24)", tableSql);
+
+        // 重建不得丢失或重排列。
+        Assert.Equal(
+            new[]
+            {
+                "pending_action_id", "created_at_utc", "template_id",
+                "stable_id", "display_name", "file_extension", "item_kind",
+                "is_system_item", "is_file_system_item",
+                "proposed_category", "proposed_zone_id", "proposed_confidence",
+                "proposed_source", "explanation",
+                "authorization_basis", "queue_reason",
+            },
+            ReadColumnNames(_dbPath, "desktop_pending_actions"));
+
+        // 已经宽化的表在重跑 Initialize 时不得再次重建。
+        await new SqliteDesktopPendingActionStore(_dbPath).InitializeAsync();
+        Assert.Equal(13, ReadUserVersion(_dbPath));
+        Assert.Contains(
+            "queue_reason IN (10,11,20,21,22,23,24)",
+            ReadTableSql(_dbPath, "desktop_pending_actions"));
+    }
+
+    [Fact]
+    public async Task V12Upgrade_AddsDisplayAuthorizationTableWithoutTouchingExistingTables()
+    {
+        var bootstrap = new SqliteExplorerGridMeasurementStore(_dbPath);
+        await bootstrap.InitializeAsync();
+
+        // V11 的库里没有这张表：把表丢掉并把版本回退到 11，下一次 Initialize 必须走真实升级路径。
+        using (var connection = OpenRawConnection(_dbPath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                DROP TABLE explorer_grid_display_authorizations;
+                PRAGMA user_version = 11;
+            ";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Equal(11, ReadUserVersion(_dbPath));
+        Assert.False(TableExists(_dbPath, "explorer_grid_display_authorizations"));
+
+        await new SqliteExplorerGridDisplayAuthorizationStore(_dbPath).InitializeAsync();
+
+        Assert.Equal(13, ReadUserVersion(_dbPath));
+        Assert.True(TableExists(_dbPath, "explorer_grid_display_authorizations"));
+        Assert.True(IndexExists(_dbPath, "idx_grid_authorizations_device_recorded_desc"));
+        Assert.Equal(
+            new[]
+            {
+                "authorization_id", "device_name", "topology_fingerprint",
+                "state", "authorized_at_utc", "recorded_at_utc",
+            },
+            ReadColumnNames(_dbPath, "explorer_grid_display_authorizations"));
+
+        // V12 只加一张表：既有的证据表与待办表都必须原地还在。
+        Assert.True(TableExists(_dbPath, "explorer_grid_measurements"));
+        Assert.True(TableExists(_dbPath, "desktop_pending_actions"));
+
+        await new SqliteExplorerGridDisplayAuthorizationStore(_dbPath).InitializeAsync();
+        Assert.Equal(13, ReadUserVersion(_dbPath));
+    }
+
+    [Fact]
+    public async Task V13Upgrade_AddsOriginColumnAndBackfillsExistingSessions()
+    {
+        await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
+
+        // V12 的会话表里还没有 origin：换成一模一样但缺这一列的表、回退版本到 12，并留下一行既有会话。
+        // 下一次 Initialize 必须走真实的 ALTER TABLE 升级路径，而不是重建整张表。
+        // （列约束在这里从简：本测试只关心 ADD COLUMN 与回填，列名与 V4 建表语句保持一致。）
+        using (var connection = OpenRawConnection(_dbPath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = @"
+                DROP TABLE desktop_layout_recovery_sessions;
+                CREATE TABLE desktop_layout_recovery_sessions (
+                    session_id                  TEXT PRIMARY KEY NOT NULL,
+                    safety_snapshot_id          TEXT,
+                    target_device_name          TEXT,
+                    started_at_utc              TEXT,
+                    lifecycle                   INTEGER,
+                    requires_manual_recovery    INTEGER,
+                    is_position_uncertain       INTEGER,
+                    last_failed_step_index      INTEGER,
+                    source_restore_plan_json    TEXT,
+                    execution_plan_json         TEXT,
+                    plan_payload_format_version INTEGER,
+                    completed_forward_step_indexes_json         TEXT,
+                    completed_rollback_source_step_indexes_json TEXT,
+                    forward_failure_type        TEXT,
+                    forward_failure_message     TEXT,
+                    recovery_failure_type       TEXT,
+                    recovery_failure_message    TEXT,
+                    verification_result_json    TEXT,
+                    revision                    INTEGER,
+                    updated_at_utc              TEXT,
+                    forward_attempt_count       INTEGER,
+                    rollback_attempt_count      INTEGER
+                );
+                INSERT INTO desktop_layout_recovery_sessions (session_id)
+                    VALUES ('5f2a9c1e-0d3b-4a6f-9c2d-7b1e0a4d8f31');
+                PRAGMA user_version = 12;
+            ";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Equal(12, ReadUserVersion(_dbPath));
+        Assert.DoesNotContain("origin", ReadColumnNames(_dbPath, "desktop_layout_recovery_sessions"));
+
+        await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
+
+        Assert.Equal(13, ReadUserVersion(_dbPath));
+        Assert.Contains("origin", ReadColumnNames(_dbPath, "desktop_layout_recovery_sessions"));
+
+        using (var upgraded = OpenRawConnection(_dbPath))
+        {
+            using var backfilled = upgraded.CreateCommand();
+            backfilled.CommandText =
+                "SELECT origin FROM desktop_layout_recovery_sessions WHERE session_id = '5f2a9c1e-0d3b-4a6f-9c2d-7b1e0a4d8f31';";
+            Assert.Equal("organize", backfilled.ExecuteScalar() as string);
+
+            // origin 是受约束的枚举：升级完之后非法值必须被拒绝，否则撤销候选会被脏数据污染。
+            using var invalid = upgraded.CreateCommand();
+            invalid.CommandText = "UPDATE desktop_layout_recovery_sessions SET origin = 'bogus';";
+            Assert.Throws<SqliteException>(() => invalid.ExecuteNonQuery());
+        }
+
+        await new SqliteDesktopLayoutSnapshotStore(_dbPath).InitializeAsync();
+        Assert.Equal(13, ReadUserVersion(_dbPath));
     }
 
     [Fact]
@@ -697,6 +878,28 @@ public sealed class SqliteDesktopAgentSchemaTests : IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA user_version;";
         return (int)(long)command.ExecuteScalar()!;
+    }
+
+    private static string ReadTableSql(string path, string name)
+    {
+        using var connection = OpenRawConnection(path);
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = @name;";
+        command.Parameters.AddWithValue("@name", name);
+        return (string)command.ExecuteScalar()!;
+    }
+
+    private static string[] ReadColumnNames(string path, string name)
+    {
+        using var connection = OpenRawConnection(path);
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({name});";
+
+        var columns = new List<string>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            columns.Add(reader.GetString(1));
+        return columns.ToArray();
     }
 
     private static bool TableExists(string path, string name)

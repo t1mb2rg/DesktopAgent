@@ -20,7 +20,8 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
         Assert.Contains("MaxWorkspaceFrozenPreviewItemDots = 180", source, StringComparison.Ordinal);
 
         // Preview renderer 本身仍然以 0 Writer authority 加载。产品层成功接收后才单独开放一次 Apply ticket。
-        Assert.Contains("ApplyToDesktopButton.IsEnabled = false", source, StringComparison.Ordinal);
+        // 「入口是否开放」现在由就绪判定统一决定，这个 partial 不再自己写按钮。
+        Assert.Contains("RefreshApplyButtonFromCurrentEvidence()", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopShellIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("IDesktopIconPositionWriter", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DesktopLayoutDirectApplyService", source, StringComparison.Ordinal);
@@ -55,7 +56,15 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
         Assert.Contains("_workspaceFrozenPreviewApplyPreviewId", apply, StringComparison.Ordinal);
         Assert.Contains("preview.PreviewId", apply, StringComparison.Ordinal);
         Assert.Contains("HasWorkspaceFrozenPreviewApplyTicket", apply, StringComparison.Ordinal);
-        Assert.Contains("ApplyToDesktopButton.Content = \"应用这个布局\"", apply, StringComparison.Ordinal);
+        // 按钮文案跟着这条路径走，但它现在与判定住在同一处（Readiness 的唯一写者）。
+        var readiness = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "DesktopAgent.Application",
+            "DesktopLayouts",
+            "Workspaces",
+            "DesktopApplyReadiness.cs"));
+        Assert.Contains("应用这个布局", readiness, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceApplyConfirmation.Create(preview)", apply, StringComparison.Ordinal);
         Assert.Contains("_workspaceFrozenPreviewApplyPreviewId = null", apply, StringComparison.Ordinal);
         Assert.Contains("WorkspaceApplyService.ApplyAsync(confirmation)", apply, StringComparison.Ordinal);

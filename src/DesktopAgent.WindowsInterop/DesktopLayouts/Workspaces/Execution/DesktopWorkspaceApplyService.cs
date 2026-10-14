@@ -1,3 +1,4 @@
+using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
@@ -27,7 +28,8 @@ public sealed class DesktopWorkspaceApplyService
         IDesktopWorkspaceExecutionJournalStore workspaceJournalStore,
         IDesktopWorkspaceDynamicExecutionJournalStore dynamicWorkspaceJournalStore,
         IRecoverySessionStore legacyRecoveryStore,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        DesktopExplorerGridFactReader? gridFactReader = null)
     {
         ArgumentNullException.ThrowIfNull(snapshotStore);
         ArgumentNullException.ThrowIfNull(workspaceJournalStore);
@@ -56,7 +58,8 @@ public sealed class DesktopWorkspaceApplyService
             snapshotStore,
             workspaceJournalStore,
             dynamicWorkspaceJournalStore,
-            clock);
+            clock,
+            gridFactReader);
 
         _executeAsync = coordinator.ExecuteAsync;
     }

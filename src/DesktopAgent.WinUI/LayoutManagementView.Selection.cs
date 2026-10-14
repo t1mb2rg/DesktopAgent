@@ -1,4 +1,5 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -69,6 +70,7 @@ public sealed partial class LayoutManagementView
                     return;
             }
 
+            SetLayoutStage(DesktopLayoutStage.Design);
             SetLayoutInteractionMode(isEditing: true);
             ShowInfo(
                 "可以编辑了",

@@ -244,6 +244,45 @@ public sealed class M3AutomaticExecutionTriggerCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task RequestCurrentIfAutomatic_IgnoresSuggestionModeAndPokesOnlyOnceInAutomatic()
+    {
+        var suggestion = await DesktopSuggestionNotificationTestData.CreateSuggestionAsync();
+        var lifecycle = new DesktopLayoutSuggestionLifecycle();
+        var runtime = RuntimePolicy();
+        var calls = 0;
+        using var trigger = Trigger(
+            lifecycle,
+            runtime,
+            _ =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(FakeCycle(runtime.Snapshot, lifecycle.Snapshot));
+            });
+
+        trigger.Start();
+        lifecycle.Publish(suggestion);
+
+        // Suggestion 模式：等价于“没有人去托盘把模式切到 Automatic”，点火输入必须被忽略。
+        runtime.SetRequestedMode(DesktopAutomationMode.Suggestion);
+        trigger.RequestCurrentIfAutomatic();
+        await Task.Delay(50);
+        Assert.Equal(0, calls);
+
+        // 以 Automatic 启动（没人点托盘）时，周期性点火输入要能拉起一次 cycle。
+        runtime.SetRequestedMode(DesktopAutomationMode.Automatic);
+        trigger.RequestCurrentIfAutomatic();
+        await WaitForAsync(() => Volatile.Read(ref calls) == 1);
+
+        // 同一份建议重复点火不会重复执行。
+        trigger.RequestCurrentIfAutomatic();
+        trigger.RequestCurrentIfAutomatic();
+        await Task.Delay(50);
+        await trigger.StopAsync();
+
+        Assert.Equal(1, calls);
+    }
+
     private static M3AutomaticExecutionTriggerCoordinator Trigger(
         DesktopLayoutSuggestionLifecycle lifecycle,
         DesktopAutomationRuntimePolicy runtime,
