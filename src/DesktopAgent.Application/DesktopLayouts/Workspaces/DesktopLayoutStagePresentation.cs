@@ -37,7 +37,7 @@ public static class DesktopLayoutStagePresentation
     {
         // 阶段独占：只在它自己里面出现。
         ["PrepareStagePanel"] = [DesktopLayoutStage.Prepare],
-        ["WorkspaceLibrarySection"] = [DesktopLayoutStage.Design],
+        ["WorkspaceLibrarySection"] = [DesktopLayoutStage.Design, DesktopLayoutStage.Execute],
         ["LayoutEditorSurface"] = [DesktopLayoutStage.Design],
         ["LayoutCanvasCard"] = [DesktopLayoutStage.Execute],
 
