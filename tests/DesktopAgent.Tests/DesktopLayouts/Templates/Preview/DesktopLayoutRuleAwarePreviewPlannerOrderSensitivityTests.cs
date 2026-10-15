@@ -152,7 +152,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
 
         Assert.Equal(5, plan.AlreadyAtTargetCount);
         Assert.Equal(1, plan.MoveRequiredCount);
-        Assert.Equal("new", Assert.Single(plan.Items.Where(item => item.RequiresMove)).Icon.StableId);
+        Assert.Equal("new", Assert.Single(plan.Items, item => item.RequiresMove).Icon.StableId);
     }
 
     [Fact]
