@@ -137,7 +137,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
         var template = Template(Guid.NewGuid(), Guid.NewGuid());
         var icons = new[]
         {
-            Icon(0, "new", new PixelPoint(0, 480)),
+            Icon(0, "new", new PixelPoint(17, 480)),
             Icon(1, "a", Cells[0]),
             Icon(2, "b", Cells[1]),
             Icon(3, "c", Cells[2]),
