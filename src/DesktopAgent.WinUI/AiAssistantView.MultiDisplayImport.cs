@@ -35,9 +35,35 @@ public sealed partial class AiAssistantView
 
         try
         {
+            // “重新生成精确预览”必须重新读取物理桌面；不能复用 Full Understanding
+            // 当时冻结的图标坐标。仅在语义身份与显示拓扑仍有效时复用分类结果。
+            var capture = await AiDesktopUnderstandingService.CaptureObservationAsync(cts.Token);
+            if (!capture.IsCaptured || capture.Observation is null)
+            {
+                AiStatusBar.Severity = InfoBarSeverity.Warning;
+                AiStatusBar.Title = "当前桌面无法重新观察";
+                AiStatusBar.Message = capture.Issues.FirstOrDefault()?.Message ??
+                    "本次没有生成精确预览，也没有启动 Writer。请检查 Explorer 后重试。";
+                AiStatusBar.IsOpen = true;
+                return;
+            }
+
+            var freshness = DesktopWorkspacePlanningObservationGate.Evaluate(
+                latest.Observation,
+                capture.Observation);
+            if (!freshness.CanReuseUnderstanding)
+            {
+                AiStatusBar.Severity = InfoBarSeverity.Warning;
+                AiStatusBar.Title = "桌面已经变化，需要更新理解";
+                AiStatusBar.Message = freshness.BlockReason +
+                    " 当前没有生成新的精确预览，也没有启动 Writer。";
+                AiStatusBar.IsOpen = true;
+                return;
+            }
+
             var result = await _workspacePlanningService.PlanAsync(
                 latest.Draft,
-                latest.Observation,
+                capture.Observation,
                 _conversationState,
                 BuildWorkspaceSourceUserIntent(),
                 cts.Token);
