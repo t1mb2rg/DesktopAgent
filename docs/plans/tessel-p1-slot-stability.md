@@ -55,6 +55,16 @@ P-1 的目标不是让数字变小，而是证明：**不违反明确规则和�
 
 **Gate 判定：** 当前可进入进一步 review/只读对比演示，**不能标记 Physical Gate 通过，也不能合并成默认执行策略**。
 
+## 产品路径覆盖清单（避免误报）
+
+**传统模板链**（当前 P-1 适用）：`DesktopLayoutImpactPreviewService`（用户监督预览）与 `DesktopLayoutSuggestionBuilder`（自动建议）调用同一个 `DesktopLayoutRuleAwarePreviewPlanner.Plan`。这解释了 §31 的“增加一个图标触发 N 次重排”。`preserveExistingGridSlots` 目前仅是 Core 可选参数；两条**产品调用路径还没有共同启用它**。
+
+**AI Workspace 链**（本 PR 未修改）：`DesktopWorkspaceCompiler.Compile` 通过 `Category→Zone`、`ItemOverride` 和本机实测 `ExplorerNativeSlot` 做确定性分配。其当前代码先按 `StableId` 收集项目，再对未指定独立 anchor 的项目按 `StableId` 顺序依次绑定 `OrderSlots(...)` 的槽位；并**没有**引用本 PR 的稳定槽位候选。若新增项目影响 `StableId` 顺序，该链也需要单独评估“无谓挪动”风险，但尚未通过专项测试证实。
+
+因此完成 P-1 前还须分清两个结论：
+1. **模板 + 自动建议的一致性**：可由本 PR 候选加产品共同入口、预算与物理写入验收确认。
+2. **AI Workspace 的稳定性**：必须走其独立的语义/实测原生槽位 Compiler 审阅与测试。不得把传统模板的候选开关直接套在 Workspace 上，也不得复用旧的 Frozen Preview 权限。
+
 ## 禁止事项
 
 不得改变 `DesktopLayoutRuleAwarePlacementPlan` 已验证的引用身份与唯一坐标不变量；不得为减少写入而移动 Pin/Exclude、跨越用户未授权显示器、绕开图标恢复检查点或降低执行安全门；不因本 PR CI 通过就宣布自动整理完成。
