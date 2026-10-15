@@ -248,7 +248,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
             [
                 new DesktopLayoutZone(firstZoneId, "Left", new NormalizedRect(0, 0, 5000, 10000),
                     0, ZonePlacementFlow.ColumnMajor, 1),
-                new DesktopLayoutZone(secondZoneId, "Right", new NormalizedRect(5000, 0, 5000, 10000),
+                new DesktopLayoutZone(secondZoneId, "Right", new NormalizedRect(5000, 0, 10000, 10000),
                     1, ZonePlacementFlow.ColumnMajor, 1),
             ]);
         var icons = new[]
@@ -276,7 +276,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
             [
                 new DesktopLayoutZone(firstZoneId, "Left", new NormalizedRect(0, 0, 5000, 10000),
                     0, ZonePlacementFlow.ColumnMajor, 1),
-                new DesktopLayoutZone(secondZoneId, "Right", new NormalizedRect(5000, 0, 5000, 10000),
+                new DesktopLayoutZone(secondZoneId, "Right", new NormalizedRect(5000, 0, 10000, 10000),
                     1, ZonePlacementFlow.ColumnMajor, 1),
             ]);
         var icons = new[]
