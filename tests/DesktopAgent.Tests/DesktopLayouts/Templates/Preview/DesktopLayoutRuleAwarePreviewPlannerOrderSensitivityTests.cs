@@ -188,4 +188,51 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
         Assert.Single(plan.OutOfScopeIcons);
     }
 
+    [Fact]
+    public void StableCandidate_PinObstacleCannotBeDisplacedOrUsedAsTarget()
+    {
+        var template = Template(Guid.NewGuid(), Guid.NewGuid());
+        var rules = new DesktopLayoutIconRuleSet(template.TemplateId, [
+            DesktopLayoutIconRule.ForPin("pin"),
+        ]);
+        var icons = new[]
+        {
+            Icon(0, "new", new PixelPoint(17, 480)),
+            Icon(1, "pin", Cells[0]),
+            Icon(2, "b", Cells[1]),
+            Icon(3, "c", Cells[2]),
+        };
+
+        var plan = Plan(template, icons, stable: true, rules: rules);
+
+        Assert.Equal(1, plan.PinnedCount);
+        Assert.Equal(2, plan.AlreadyAtTargetCount);
+        Assert.Equal(1, plan.MoveRequiredCount);
+        Assert.Equal(Cells[3], plan.Items.Single(item => item.Icon.StableId == "new").TargetPosition);
+        Assert.Equal(DesktopLayoutRuleAwarePreviewPlacementState.Fixed,
+            plan.Items.Single(item => item.Icon.StableId == "pin").PlacementState);
+    }
+
+    [Fact]
+    public void StableCandidate_ZoneCapacityStillBlocksExtraDefaultIcon()
+    {
+        var id = Guid.NewGuid();
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "Limited", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            [new DesktopLayoutZone(id, "Z0", new NormalizedRect(0, 0, 10000, 10000),
+                0, ZonePlacementFlow.ColumnMajor, 2)]);
+        var icons = new[]
+        {
+            Icon(0, "a", Cells[0]),
+            Icon(1, "b", Cells[1]),
+            Icon(2, "c", Cells[2]),
+        };
+
+        var plan = Plan(template, icons, stable: true);
+
+        Assert.Equal(2, plan.AlreadyAtTargetCount);
+        Assert.Equal(1, plan.DefaultUnassignedCount);
+        Assert.False(plan.IsComplete);
+    }
+
 }
