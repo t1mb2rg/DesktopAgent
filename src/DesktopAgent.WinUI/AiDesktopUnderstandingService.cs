@@ -331,7 +331,7 @@ internal sealed class AiDesktopUnderstandingService
         await store.AddAsync(snapshot, cancellationToken);
     }
 
-    private static async Task<DesktopObservationCaptureResult> CaptureObservationAsync(
+    internal static async Task<DesktopObservationCaptureResult> CaptureObservationAsync(
         CancellationToken cancellationToken)
     {
         using var staExecutor = new StaThreadExecutor();
