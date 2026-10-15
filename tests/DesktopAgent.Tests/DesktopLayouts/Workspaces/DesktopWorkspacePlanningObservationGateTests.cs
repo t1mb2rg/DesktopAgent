@@ -61,7 +61,8 @@ public sealed class DesktopWorkspacePlanningObservationGateTests
     {
         var root = FindRepositoryRoot();
         var ui = File.ReadAllText(Path.Combine(root,
-            "src", "DesktopAgent.WinUI", "AiAssistantView.MultiDisplayImport.cs"));
+            "src", "DesktopAgent.WinUI", "AiAssistantView.MultiDisplayImport.cs"))
+            .Replace("\r\n", "\n", StringComparison.Ordinal);
         var capture = ui.IndexOf("CaptureObservationAsync(cts.Token)", StringComparison.Ordinal);
         var gate = ui.IndexOf("DesktopWorkspacePlanningObservationGate.Evaluate", StringComparison.Ordinal);
         var plan = ui.IndexOf("_workspacePlanningService.PlanAsync(", StringComparison.Ordinal);
