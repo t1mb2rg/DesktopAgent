@@ -226,6 +226,12 @@ public sealed partial class LayoutManagementView : UserControl
             return;
         }
 
+        if (_isLayoutEditing)
+        {
+            ShowInfo("正在编辑布局", "请先保存或取消当前编辑，再选择要使用的布局。当前布局没有切换。", InfoBarSeverity.Warning);
+            return;
+        }
+
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
         {
             ShowError("请选择布局", "先在左侧选一个要使用的布局。 ");
