@@ -176,6 +176,61 @@ public sealed class DesktopLayoutRuleAwareTargetSnapshotFactoryTests
         Assert.DoesNotContain(snapshot.Icons, icon => icon.StableId == "pin");
     }
 
+    [Fact]
+    public void StableCandidate_ExcludedObstacleIsNeverMovedOrReplaced()
+    {
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "Exclude", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            [new DesktopLayoutZone(Guid.NewGuid(), "Zone",
+                new NormalizedRect(0, 0, 10000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, null)]);
+        var rules = new DesktopLayoutIconRuleSet(template.TemplateId,
+            [DesktopLayoutIconRule.ForExclude("excluded")]);
+        var icons = new[]
+        {
+            I(0, "new", new PixelPoint(17, 480)),
+            I(1, "excluded", new PixelPoint(0, 0)),
+            I(2, "kept", new PixelPoint(0, 80)),
+        };
+
+        var preview = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, rules, [_dd], null, _spacing, icons,
+            preserveExistingGridSlots: true);
+        Assert.True(preview.IsComplete);
+        Assert.Equal(1, preview.ExcludedCount);
+        Assert.Equal(1, preview.AlreadyAtTargetCount);
+        Assert.Equal(1, preview.MoveRequiredCount);
+
+        var snapshot = DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
+            preview, Read(icons), new DesktopLayoutSnapshotFactory());
+        Assert.DoesNotContain(snapshot.Icons, icon => icon.StableId == "excluded");
+        Assert.Equal(new PixelPoint(0, 80),
+            snapshot.Icons.Single(icon => icon.StableId == "kept").PixelPosition);
+        Assert.Equal(new PixelPoint(0, 160),
+            snapshot.Icons.Single(icon => icon.StableId == "new").PixelPosition);
+    }
+
+    [Fact]
+    public void StableCandidate_ZeroSlotZoneCannotCreateExecutableSnapshot()
+    {
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "No slots", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            [new DesktopLayoutZone(Guid.NewGuid(), "Tiny",
+                new NormalizedRect(0, 0, 250, 250), 0,
+                ZonePlacementFlow.ColumnMajor, null)]);
+        var icons = new[] { I(0, "a", new PixelPoint(0, 0)) };
+
+        var preview = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, DesktopLayoutIconRuleSet.Empty(template.TemplateId),
+            [_dd], null, _spacing, icons, preserveExistingGridSlots: true);
+
+        Assert.False(preview.IsComplete);
+        Assert.Equal(1, preview.DefaultUnassignedCount);
+        Assert.Throws<ArgumentException>(() =>
+            DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
+                preview, Read(icons), new DesktopLayoutSnapshotFactory()));
+    }
+
     [Fact] public void Unassigned_Throws()
     {
         var zid2 = Guid.NewGuid();
