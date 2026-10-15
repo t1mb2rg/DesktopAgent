@@ -45,6 +45,8 @@ public sealed class DesktopWorkspaceApplyFreshCheckTests
         Assert.False(result.IsReady);
         Assert.Equal(DesktopWorkspaceApplyFreshCheckStatus.ItemStateChanged, result.Status);
         Assert.Contains(result.Issues, issue => issue.Contains("Visual Studio Code", StringComparison.Ordinal));
+        Assert.Contains(result.Issues, issue => issue.Contains("共 1 个项目", StringComparison.Ordinal));
+        Assert.Contains(result.Issues, issue => issue.Contains("位置 (30,50) → (31,50)", StringComparison.Ordinal));
     }
 
     [Fact]
