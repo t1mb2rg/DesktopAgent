@@ -490,7 +490,8 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
         string? selectedTargetDeviceName,
         PixelPoint iconSpacing,
         IReadOnlyList<DesktopIconSnapshotItem> icons,
-        IReadOnlySet<string>? explicitInboundStableIds = null)
+        IReadOnlySet<string>? explicitInboundStableIds = null,
+        bool preserveExistingGridSlots = false)
     {
         if (template is null) throw new ArgumentNullException(nameof(template));
         if (ruleSet is null) throw new ArgumentNullException(nameof(ruleSet));
@@ -529,7 +530,7 @@ public static class DesktopLayoutRuleAwarePreviewPlanner
             ruleSet,
             explicitInboundStableIds);
         var placementPlan = DesktopLayoutRuleAwarePlacementPlanner.Plan(
-            resolvedTemplate, resolutionPlan, iconSpacing);
+            resolvedTemplate, resolutionPlan, iconSpacing, preserveExistingGridSlots);
 
         // PlacementPlanner 可能依据 fresh 目标屏图标推断 Explorer 全局网格相位并重新 Resolve。
         // 显式迁入图标仍位于别的屏幕，不参与目标屏 grid phase 推断。
