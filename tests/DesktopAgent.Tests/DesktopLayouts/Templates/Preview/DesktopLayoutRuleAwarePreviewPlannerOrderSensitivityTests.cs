@@ -38,14 +38,17 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
 
     private static DesktopLayoutRuleAwarePreviewPlan Plan(
         DesktopLayoutTemplate template,
-        IReadOnlyList<DesktopIconSnapshotItem> icons)
+        IReadOnlyList<DesktopIconSnapshotItem> icons,
+        bool stable = false,
+        DesktopLayoutIconRuleSet? rules = null)
         => DesktopLayoutRuleAwarePreviewPlanner.Plan(
             template,
-            DesktopLayoutIconRuleSet.Empty(template.TemplateId),
+            rules ?? DesktopLayoutIconRuleSet.Empty(template.TemplateId),
             new[] { Display },
             null,
             Spacing,
-            icons);
+            icons,
+            preserveExistingGridSlots: stable);
 
     [Fact]
     public void FiveIconsSittingExactlyOnTheirCells_RequireNoMove()
@@ -107,4 +110,82 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
         Assert.Equal(6, plan.AlreadyAtTargetCount);
         Assert.Equal(0, plan.MoveRequiredCount);
     }
+    [Fact]
+    public void StableCandidate_NewIconInsertedFirst_DoesNotShuffleExistingGrid()
+    {
+        var template = Template(Guid.NewGuid(), Guid.NewGuid());
+        var icons = new[]
+        {
+            Icon(0, "new", Cells[5]),
+            Icon(1, "a", Cells[0]),
+            Icon(2, "b", Cells[1]),
+            Icon(3, "c", Cells[2]),
+            Icon(4, "d", Cells[3]),
+            Icon(5, "e", Cells[4]),
+        };
+
+        var plan = Plan(template, icons, stable: true);
+
+        Assert.Equal(6, plan.AlreadyAtTargetCount);
+        Assert.Equal(0, plan.MoveRequiredCount);
+        Assert.Equal(6, plan.Items.Select(item => item.TargetPosition).Distinct().Count());
+    }
+
+    [Fact]
+    public void StableCandidate_NewOutOfOrderIcon_MovesOnlyTheNewIcon()
+    {
+        var template = Template(Guid.NewGuid(), Guid.NewGuid());
+        var icons = new[]
+        {
+            Icon(0, "new", Cells[6]),
+            Icon(1, "a", Cells[0]),
+            Icon(2, "b", Cells[1]),
+            Icon(3, "c", Cells[2]),
+            Icon(4, "d", Cells[3]),
+            Icon(5, "e", Cells[4]),
+        };
+
+        var plan = Plan(template, icons, stable: true);
+
+        Assert.Equal(5, plan.AlreadyAtTargetCount);
+        Assert.Equal(1, plan.MoveRequiredCount);
+        Assert.Equal("new", Assert.Single(plan.Items.Where(item => item.RequiresMove)).Icon.StableId);
+    }
+
+    [Fact]
+    public void StableCandidate_ExplicitZoneOverrideTakesPriorityOverDefaultPosition()
+    {
+        var zoneId = Guid.NewGuid();
+        var template = Template(Guid.NewGuid(), zoneId);
+        var rules = new DesktopLayoutIconRuleSet(template.TemplateId, [
+            DesktopLayoutIconRule.ForZoneOverride("b", zoneId),
+        ]);
+        var icons = new[]
+        {
+            Icon(0, "a", Cells[1]),
+            Icon(1, "b", Cells[1]),
+        };
+
+        var plan = Plan(template, icons, stable: true, rules: rules);
+
+        Assert.Equal(1, plan.MoveRequiredCount);
+        Assert.Equal(Cells[1], plan.Items.Single(item => item.Icon.StableId == "b").TargetPosition);
+        Assert.Equal(Cells[0], plan.Items.Single(item => item.Icon.StableId == "a").TargetPosition);
+    }
+
+    [Fact]
+    public void StableCandidate_NeverPreservesPositionFromAnotherDisplay()
+    {
+        var template = Template(Guid.NewGuid(), Guid.NewGuid());
+        var icons = new[]
+        {
+            Icon(0, "a", Cells[4]) with { MonitorDeviceName = "DISPLAY2" },
+        };
+
+        var plan = Plan(template, icons, stable: true);
+
+        Assert.Equal(0, plan.MoveRequiredCount);
+        Assert.Single(plan.OutOfScopeItems);
+    }
+
 }
