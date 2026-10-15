@@ -14,7 +14,8 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
     public static DesktopLayoutRuleAwarePlacementPlan Plan(
         ResolvedDesktopLayoutTemplate resolvedTemplate,
         DesktopLayoutIconRuleResolutionPlan resolutionPlan,
-        PixelPoint iconSpacing)
+        PixelPoint iconSpacing,
+        bool preserveExistingGridSlots = false)
     {
         if (resolvedTemplate is null) throw new ArgumentNullException(nameof(resolvedTemplate));
         if (resolutionPlan is null) throw new ArgumentNullException(nameof(resolutionPlan));
@@ -104,6 +105,16 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
             zoneAvailableSlots[zid] = available;
         }
 
+        // P-1 可选的稳定槽位候选。默认仍保持 legacy 顺序语义，直到
+        // 产品预览/自动建议共享路径与真实执行验收完成后再启用。
+        if (preserveExistingGridSlots)
+        {
+            return PlanPreservingExistingGridSlots(
+                resolvedTemplate, resolutionPlan, iconSpacing,
+                excludedItems, pinnedItems, fixedObstacleRects,
+                zoneOrder, zoneAvailableSlots);
+        }
+
         var zoneOverrideConsumed = new Dictionary<Guid, int>();
         foreach (var (_, zone) in zoneOrder)
             zoneOverrideConsumed[zone.Zone.ZoneId] = 0;
@@ -180,6 +191,206 @@ public static class DesktopLayoutRuleAwarePlacementPlanner
             excludedItems, pinnedItems, fixedObstacleRects,
             overrideAssigned, overrideUnassigned,
             defaultAssigned, defaultUnassigned);
+    }
+
+    /// <summary>
+    /// P-1 稳定槽位候选：先落实所有显式 ZoneOverride，再落实默认图标。
+    /// 默认图标仍按原 Zone 顺序与容量分桶；仅在所属 Zone 内优先保留合法原生槽位。
+    /// 不能让“少挪动”越过显式 Rule、固定障碍、跨屏归属或最大容量。
+    /// </summary>
+    private static DesktopLayoutRuleAwarePlacementPlan PlanPreservingExistingGridSlots(
+        ResolvedDesktopLayoutTemplate resolvedTemplate,
+        DesktopLayoutIconRuleResolutionPlan resolutionPlan,
+        PixelPoint iconSpacing,
+        IReadOnlyList<DesktopLayoutRuleAwareFixedItem> excludedItems,
+        IReadOnlyList<DesktopLayoutRuleAwareFixedItem> pinnedItems,
+        IReadOnlyList<PixelRect> fixedObstacleRects,
+        IReadOnlyList<(int Index, ResolvedDesktopLayoutZone Zone)> zoneOrder,
+        IReadOnlyDictionary<Guid, List<AvailableSlot>> zoneAvailableSlots)
+    {
+        var usedSlots = zoneOrder.ToDictionary(
+            entry => entry.Zone.Zone.ZoneId,
+            _ => new HashSet<int>());
+        var overrideAssignedById = new Dictionary<string, DesktopLayoutRuleAwareAssignedItem>(
+            StringComparer.Ordinal);
+        var targetDisplayName = resolutionPlan.TargetDisplay.DeviceName;
+
+        // 显式 ZoneOverride 在默认项目之前占位：同一格存在竞争时，Ordinal 小者优先。
+        foreach (var match in resolutionPlan.ZoneOverrideMatches)
+        {
+            var zoneId = match.TargetZone!.ZoneId;
+            var zone = FindResolvedZoneById(resolvedTemplate, zoneId);
+            var used = usedSlots[zoneId];
+            if (used.Count >= zone.EffectiveCapacity ||
+                !TryGetLegalCurrentSlot(
+                    match.Icon, zone, targetDisplayName, iconSpacing, fixedObstacleRects,
+                    out var slot) ||
+                !used.Add(slot))
+            {
+                continue;
+            }
+
+            overrideAssignedById.Add(match.Icon.StableId, new DesktopLayoutRuleAwareAssignedItem(
+                match.Icon, zone, iconSpacing, slot,
+                DesktopLayoutRuleAwareAssignmentSource.Override, match.Rule));
+        }
+
+        var overrideUnassigned = new List<DesktopLayoutResolvedIconRule>();
+        foreach (var match in resolutionPlan.ZoneOverrideMatches)
+        {
+            if (overrideAssignedById.ContainsKey(match.Icon.StableId))
+                continue;
+
+            var zoneId = match.TargetZone!.ZoneId;
+            var zone = FindResolvedZoneById(resolvedTemplate, zoneId);
+            var used = usedSlots[zoneId];
+            var next = used.Count < zone.EffectiveCapacity
+                ? zoneAvailableSlots[zoneId].FirstOrDefault(slot => !used.Contains(slot.SlotIndex))
+                : null;
+            if (next is null)
+            {
+                overrideUnassigned.Add(match);
+                continue;
+            }
+
+            used.Add(next.SlotIndex);
+            overrideAssignedById.Add(match.Icon.StableId, new DesktopLayoutRuleAwareAssignedItem(
+                match.Icon, zone, iconSpacing, next.SlotIndex,
+                DesktopLayoutRuleAwareAssignmentSource.Override, match.Rule));
+        }
+
+        var overrideAssigned = resolutionPlan.ZoneOverrideMatches
+            .Where(match => overrideAssignedById.ContainsKey(match.Icon.StableId))
+            .Select(match => overrideAssignedById[match.Icon.StableId])
+            .ToArray();
+
+        // 分区归属仍与 legacy 一致：先考虑 ZoneOverride 占用，再按 Zone.SortOrder
+        // 为默认图标分桶。保留原位只决定桶内槽位，不偷换用户规定的区顺序。
+        var defaultsByZone = zoneOrder.ToDictionary(
+            entry => entry.Zone.Zone.ZoneId,
+            _ => new List<DesktopIconSnapshotItem>());
+        var defaultIcons = resolutionPlan.DefaultManagedIcons;
+        var nextDefault = 0;
+        foreach (var (_, zone) in zoneOrder)
+        {
+            var id = zone.Zone.ZoneId;
+            var occupied = usedSlots[id];
+            var available = zoneAvailableSlots[id];
+            var freeAvailable = available.Count(slot => !occupied.Contains(slot.SlotIndex));
+            var zoneBudget = Math.Min(
+                (long)freeAvailable,
+                zone.EffectiveCapacity - occupied.Count);
+            while (zoneBudget > 0 && nextDefault < defaultIcons.Count)
+            {
+                defaultsByZone[id].Add(defaultIcons[nextDefault++]);
+                zoneBudget--;
+            }
+        }
+
+        var assignedDefaultsById = new Dictionary<string, DesktopLayoutRuleAwareAssignedItem>(
+            StringComparer.Ordinal);
+        var defaultUnassigned = new List<DesktopIconSnapshotItem>();
+
+        foreach (var (_, zone) in zoneOrder)
+        {
+            var id = zone.Zone.ZoneId;
+            var group = defaultsByZone[id];
+            var used = usedSlots[id];
+
+            foreach (var icon in group)
+            {
+                if (!TryGetLegalCurrentSlot(
+                        icon, zone, targetDisplayName, iconSpacing, fixedObstacleRects,
+                        out var slot) ||
+                    !used.Add(slot))
+                {
+                    continue;
+                }
+
+                assignedDefaultsById.Add(icon.StableId, new DesktopLayoutRuleAwareAssignedItem(
+                    icon, zone, iconSpacing, slot,
+                    DesktopLayoutRuleAwareAssignmentSource.Default, null));
+            }
+
+            foreach (var icon in group)
+            {
+                if (assignedDefaultsById.ContainsKey(icon.StableId))
+                    continue;
+
+                var next = zoneAvailableSlots[id].FirstOrDefault(
+                    slot => !used.Contains(slot.SlotIndex));
+                if (next is null)
+                {
+                    defaultUnassigned.Add(icon);
+                    continue;
+                }
+
+                used.Add(next.SlotIndex);
+                assignedDefaultsById.Add(icon.StableId, new DesktopLayoutRuleAwareAssignedItem(
+                    icon, zone, iconSpacing, next.SlotIndex,
+                    DesktopLayoutRuleAwareAssignmentSource.Default, null));
+            }
+        }
+
+        for (; nextDefault < defaultIcons.Count; nextDefault++)
+            defaultUnassigned.Add(defaultIcons[nextDefault]);
+
+        var defaultAssigned = defaultIcons
+            .Where(icon => assignedDefaultsById.ContainsKey(icon.StableId))
+            .Select(icon => assignedDefaultsById[icon.StableId])
+            .ToArray();
+        defaultUnassigned.Sort((a, b) => a.Ordinal.CompareTo(b.Ordinal));
+
+        return new DesktopLayoutRuleAwarePlacementPlan(
+            resolvedTemplate, resolutionPlan, excludedItems.ToArray(), pinnedItems.ToArray(),
+            fixedObstacleRects.ToArray(), overrideAssigned, overrideUnassigned,
+            defaultAssigned, defaultUnassigned);
+    }
+
+    private static bool TryGetLegalCurrentSlot(
+        DesktopIconSnapshotItem icon,
+        ResolvedDesktopLayoutZone zone,
+        string targetDisplayName,
+        PixelPoint spacing,
+        IReadOnlyList<PixelRect> fixedObstacleRects,
+        out int slotIndex)
+    {
+        slotIndex = -1;
+        if (!string.Equals(icon.MonitorDeviceName, targetDisplayName, StringComparison.Ordinal))
+            return false;
+
+        var dx = (long)icon.PixelPosition.X - zone.PlacementOrigin.X;
+        var dy = (long)icon.PixelPosition.Y - zone.PlacementOrigin.Y;
+        if (dx < 0 || dy < 0 || dx % spacing.X != 0 || dy % spacing.Y != 0)
+            return false;
+
+        var col = dx / spacing.X;
+        var row = dy / spacing.Y;
+        if (col >= zone.ColumnCount || row >= zone.RowCount)
+            return false;
+
+        var index = zone.Zone.PlacementFlow == ZonePlacementFlow.ColumnMajor
+            ? col * zone.RowCount + row
+            : row * zone.ColumnCount + col;
+        if (index < 0 || index > int.MaxValue)
+            return false;
+
+        PixelRect targetCell;
+        try
+        {
+            targetCell = DesktopIconLayoutGeometry.CreateRectChecked(icon.PixelPosition, spacing);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        if (!DesktopIconLayoutGeometry.IsFullyContained(targetCell, zone.PixelBounds) ||
+            fixedObstacleRects.Any(obstacle => DesktopIconLayoutGeometry.Overlaps(targetCell, obstacle)))
+            return false;
+
+        slotIndex = (int)index;
+        return true;
     }
 
     private sealed class AvailableSlot
