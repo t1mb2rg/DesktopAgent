@@ -117,6 +117,39 @@ public sealed class ProductLayoutStagesContractTests
         Assert.Contains("需要重新校准", preparePanel, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void SavedWorkspaceLibrary_IsVisibleDuringDesignAndExecute_ButNotPreparation()
+    {
+        Assert.False(DesktopLayoutStagePresentation.IsVisibleInStage(
+            DesktopLayoutStage.Prepare, "WorkspaceLibrarySection"));
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(
+            DesktopLayoutStage.Design, "WorkspaceLibrarySection"));
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(
+            DesktopLayoutStage.Execute, "WorkspaceLibrarySection"));
+
+        // 设计详情是只读页面：从执行阶段打开时仍然切回设计阶段，
+        // 不得因列表可见而把旧设计资产直接提升为一次可执行的预览。
+        var detail = Read("src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceDetail.cs");
+        Assert.Contains("SetLayoutStage(DesktopLayoutStage.Design)", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("DesktopWorkspaceApplyService", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ActiveLayoutAction_ExplainsEditingLockBeforeReportingNoSelection()
+    {
+        var view = Read("src", "DesktopAgent.WinUI", "LayoutManagementView.xaml.cs");
+        var start = view.IndexOf("private async void SetActiveLayout_Click", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var selectedCheck = view.IndexOf(
+            "if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)",
+            start, StringComparison.Ordinal);
+        var editGuard = view.IndexOf("if (_isLayoutEditing)", start, StringComparison.Ordinal);
+
+        Assert.True(editGuard > start && editGuard < selectedCheck,
+            "编辑期间必须优先解释不能切换，而不是误报未选择布局。");
+        Assert.Contains("请先保存或取消当前编辑", view[start..selectedCheck], StringComparison.Ordinal);
+    }
+
     private static string Read(params string[] parts)
         => File.ReadAllText(Path.Combine([FindRepositoryRoot(), .. parts]));
 
