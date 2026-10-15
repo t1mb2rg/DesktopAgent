@@ -129,6 +129,53 @@ public sealed class DesktopLayoutRuleAwareTargetSnapshotFactoryTests
         Assert.Equal(new[] { 0, 1 }, snap.Icons.Select(i => i.Ordinal));
     }
 
+    [Fact]
+    public void StableCandidate_HighSlotSnapshotRetainsPlacementAndDoesNotExecutePinOrUnrelatedScreen()
+    {
+        var template = new DesktopLayoutTemplate(Guid.NewGuid(), "Stable", 1,
+            TargetDisplayBinding.ForPrimaryDisplay(),
+            [new DesktopLayoutZone(Guid.NewGuid(), "Zone",
+                new NormalizedRect(0, 0, 10000, 10000), 0,
+                ZonePlacementFlow.ColumnMajor, null)]);
+        var rules = new DesktopLayoutIconRuleSet(template.TemplateId,
+            [DesktopLayoutIconRule.ForPin("pin")]);
+        var icons = new[]
+        {
+            I(0, "new", new PixelPoint(17, 480)),
+            I(1, "pin", new PixelPoint(0, 0)),
+            I(2, "a", new PixelPoint(0, 80)),
+            I(3, "b", new PixelPoint(0, 400)),
+            I(4, "remote", new PixelPoint(2000, 0), "DISPLAY2"),
+        };
+
+        var preview = DesktopLayoutRuleAwarePreviewPlanner.Plan(
+            template, rules, [_dd], null, _spacing, icons,
+            preserveExistingGridSlots: true);
+
+        Assert.True(preview.IsComplete);
+        Assert.Equal(1, preview.MoveRequiredCount);
+        Assert.Equal(2, preview.AlreadyAtTargetCount);
+        Assert.Equal(1, preview.PinnedCount);
+        Assert.Single(preview.OutOfScopeIcons);
+
+        var snapshot = DesktopLayoutRuleAwareTargetSnapshotFactory.Create(
+            preview, Read(icons), new DesktopLayoutSnapshotFactory());
+
+        Assert.Equal(new[] { "new", "a", "b", "remote" },
+            snapshot.Icons.Select(icon => icon.StableId));
+        Assert.Equal(new PixelPoint(0, 80),
+            snapshot.Icons.Single(icon => icon.StableId == "a").PixelPosition);
+        Assert.Equal(new PixelPoint(0, 400),
+            snapshot.Icons.Single(icon => icon.StableId == "b").PixelPosition);
+        Assert.Equal(new PixelPoint(0, 160),
+            snapshot.Icons.Single(icon => icon.StableId == "new").PixelPosition);
+        Assert.Equal(new PixelPoint(2000, 0),
+            snapshot.Icons.Single(icon => icon.StableId == "remote").PixelPosition);
+        Assert.Equal("DISPLAY2",
+            snapshot.Icons.Single(icon => icon.StableId == "remote").MonitorDeviceName);
+        Assert.DoesNotContain(snapshot.Icons, icon => icon.StableId == "pin");
+    }
+
     [Fact] public void Unassigned_Throws()
     {
         var zid2 = Guid.NewGuid();
