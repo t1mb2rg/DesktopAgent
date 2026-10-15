@@ -38,6 +38,23 @@ P-1 的目标不是让数字变小，而是证明：**不违反明确规则和�
 
 在裁决前不擅自把 P-1 作为产品默认策略，不把 Core 候选接入自动 Writer；比较应使用同一批输入并列输出旧/新 Plan 及每项变动原因。
 
+## Functional Review / Architecture Review（2026-10-15）
+
+**已核实的代码边界：**
+
+- `DesktopLayoutRuleAwarePreviewPlanner.Plan(... preserveExistingGridSlots=true)` 只调用纯 Core PlacementPlanner；没有增加新的 Shell Writer、Confirmation、Restore、授权或自动执行入口。默认值仍是 `false`。
+- `DesktopLayoutRuleAwarePlacementPlan` 仍验证 Override / Default 的 Rule/Icon 引用身份、TargetPosition 唯一和固定障碍不重叠；`DesktopLayoutRuleAwarePreviewPlan` 逐项验证 TargetPosition / SlotIndex 与 PlacementPlan 完全相同。
+- `DesktopLayoutRuleAwareTargetSnapshotFactory.Create` 只在 `IsComplete` 时允许生成可执行目标。已提交从**高序号非连续合法槽位 → Preview → TargetSnapshot** 的综合测试；Pin / Exclude 不进入执行目标，OutOfScope 原位置及显示器保持不变。它没有要求槽位必须从零连续。
+- `DesktopLayoutTemplate` 已验证归一化 Zone 不重叠、SortOrder 唯一；`ResolvedDesktopLayoutTemplate` 又验证物理 Zone 不重叠及容量，所以不以“任意重叠区域”作为受支持输入。
+- 新的“零可用槽位”场景必须保持 `Unassigned`，随后目标快照工厂拒绝创建写入目标，不能回退到模糊坐标或猜测写入。
+
+**仍然阻断产品正式启用的两项条件：**
+
+1. **语义裁决**：跨 Zone 的“严格顺序分桶”与“最大稳定保留”只能选一种明确的产品合同，不能由监督执行/自动建议各自暗中选择。
+2. **物理一致性**：Core 合法槽位不等于已验证当前 Explorer 可执行落点。必须用实测网格事实和当次物理回读证明：Phase/Spacing、Pin/Exclude、跨屏 Scope、容量和 Writer 落点在同一次 Windows 场景中严格一致；不允许为了变绿而改大无人值守风险预算。
+
+**Gate 判定：** 当前可进入进一步 review/只读对比演示，**不能标记 Physical Gate 通过，也不能合并成默认执行策略**。
+
 ## 禁止事项
 
 不得改变 `DesktopLayoutRuleAwarePlacementPlan` 已验证的引用身份与唯一坐标不变量；不得为减少写入而移动 Pin/Exclude、跨越用户未授权显示器、绕开图标恢复检查点或降低执行安全门；不因本 PR CI 通过就宣布自动整理完成。
