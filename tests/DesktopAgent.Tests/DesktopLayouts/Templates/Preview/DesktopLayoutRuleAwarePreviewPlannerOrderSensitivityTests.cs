@@ -137,7 +137,7 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
         var template = Template(Guid.NewGuid(), Guid.NewGuid());
         var icons = new[]
         {
-            Icon(0, "new", Cells[6]),
+            Icon(0, "new", new PixelPoint(0, 480)),
             Icon(1, "a", Cells[0]),
             Icon(2, "b", Cells[1]),
             Icon(3, "c", Cells[2]),
@@ -179,13 +179,13 @@ public sealed class DesktopLayoutRuleAwarePreviewPlannerOrderSensitivityTests
         var template = Template(Guid.NewGuid(), Guid.NewGuid());
         var icons = new[]
         {
-            Icon(0, "a", Cells[4]) with { MonitorDeviceName = "DISPLAY2" },
+            new DesktopIconSnapshotItem(0, "a", "N_a", null, ItemKind.File, Cells[4], "DISPLAY2", false, true),
         };
 
         var plan = Plan(template, icons, stable: true);
 
         Assert.Equal(0, plan.MoveRequiredCount);
-        Assert.Single(plan.OutOfScopeItems);
+        Assert.Single(plan.OutOfScopeIcons);
     }
 
 }
