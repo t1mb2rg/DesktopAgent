@@ -90,6 +90,7 @@ public sealed partial class LayoutManagementView
         LayoutEmptyEditorState.Visibility = Visibility.Collapsed;
         LayoutPreviewDetails.Visibility = Visibility.Visible;
         SetLayoutInteractionMode(isEditing: true);
+        SetLayoutStage(DesktopAgent.Application.DesktopLayouts.Workspaces.DesktopLayoutStage.Execute);
         RefreshApplyButtonFromCurrentEvidence();
         FocusAiWorkspaceFrozenPreviewDisplay(0);
 
@@ -620,6 +621,7 @@ public sealed partial class LayoutManagementView
 
     private void ClearAiWorkspaceFrozenPreview()
     {
+        HideOverlay();
         _workspaceFrozenPreview = null;
         _activeWorkspaceFrozenPreviewDisplayIndex = -1;
     }

@@ -45,6 +45,61 @@ public sealed class DesktopWorkspaceApplyFreshCheckTests
         Assert.False(result.IsReady);
         Assert.Equal(DesktopWorkspaceApplyFreshCheckStatus.ItemStateChanged, result.Status);
         Assert.Contains(result.Issues, issue => issue.Contains("Visual Studio Code", StringComparison.Ordinal));
+        var issue = Assert.Single(result.Issues);
+        Assert.Contains("1 个项目", issue);
+        Assert.Contains("位置：预期 (30, 50)，实际 (31, 50)", issue);
+        Assert.DoesNotContain("所属显示器：", issue);
+        Assert.DoesNotContain("可移动状态：", issue);
+        Assert.DoesNotContain("以上", issue);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void Evaluate_DisplayOrMovabilityChanged_ReportsOnlyChangedFields(
+        bool changeDisplay,
+        bool changeMovability)
+    {
+        var fixture = CreateFixture();
+        var changed = fixture.Facts.Select(fact => fact.StableId == "a"
+            ? new DesktopWorkspaceCompilationItemFact(
+                fact.StableId,
+                changeDisplay ? "secondary_1" : fact.CurrentDisplayRef,
+                fact.PixelPosition,
+                changeMovability ? !fact.IsMovable : fact.IsMovable)
+            : fact).ToArray();
+
+        var result = DesktopWorkspaceApplyFreshCheck.Evaluate(
+            fixture.Confirmation, fixture.Geometry, changed);
+
+        Assert.Equal(DesktopWorkspaceApplyFreshCheckStatus.ItemStateChanged, result.Status);
+        var issue = Assert.Single(result.Issues);
+        Assert.Equal(changeDisplay, issue.Contains("所属显示器：预期 primary，实际 secondary_1", StringComparison.Ordinal));
+        Assert.Equal(changeMovability, issue.Contains("可移动状态：预期 可移动，实际 不可移动", StringComparison.Ordinal));
+        Assert.DoesNotContain("位置：", issue);
+    }
+
+    [Fact]
+    public void Evaluate_MoreThanFiveChanges_ReportsExactCountAndLimitsDetailInStableIdOrder()
+    {
+        var fixture = CreateFixture(itemCount: 6);
+        var changed = fixture.Facts.Reverse().Select(fact => new DesktopWorkspaceCompilationItemFact(
+            fact.StableId,
+            fact.CurrentDisplayRef,
+            new PixelPoint(fact.PixelPosition.X + 1, fact.PixelPosition.Y),
+            fact.IsMovable)).ToArray();
+
+        var result = DesktopWorkspaceApplyFreshCheck.Evaluate(
+            fixture.Confirmation, fixture.Geometry, changed);
+
+        Assert.Equal(DesktopWorkspaceApplyFreshCheckStatus.ItemStateChanged, result.Status);
+        var issue = Assert.Single(result.Issues);
+        Assert.Contains("6 个项目", issue);
+        Assert.Contains("仅列出前 5 项", issue);
+        Assert.Equal(5, issue.Split("位置：预期", StringSplitOptions.None).Length - 1);
+        Assert.Contains("Item e", issue);
+        Assert.DoesNotContain("Item f", issue);
     }
 
     [Fact]
@@ -118,7 +173,7 @@ public sealed class DesktopWorkspaceApplyFreshCheckTests
         Assert.DoesNotContain(properties, name => name.Contains("Candidate", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static Fixture CreateFixture()
+    private static Fixture CreateFixture(int itemCount = 2)
     {
         var observationId = Guid.Parse("73333333-3333-3333-3333-333333333333");
         var geometry = CreateGeometry(observationId);
@@ -154,20 +209,21 @@ public sealed class DesktopWorkspaceApplyFreshCheckTests
         var semantics = new DesktopSemanticUnderstanding(
             "两个开发项目位于主屏。",
             [new DesktopSemanticCategory("dev", "开发工具", "IDE 与终端")],
-            [
-                new DesktopSemanticAssignment("a", "dev", 1, "dev"),
-                new DesktopSemanticAssignment("b", "dev", 1, "dev"),
-            ]);
-        var facts = new[]
-        {
-            new DesktopWorkspaceCompilationItemFact("a", "primary", new PixelPoint(30, 50), isMovable: true),
-            new DesktopWorkspaceCompilationItemFact("b", "primary", new PixelPoint(110, 50), isMovable: true),
-        };
-        var presentations = new[]
-        {
-            new DesktopWorkspacePreviewItemPresentation("a", "Visual Studio Code"),
-            new DesktopWorkspacePreviewItemPresentation("b", "Windows Terminal"),
-        };
+            Enumerable.Range(0, itemCount).Select(index => new DesktopSemanticAssignment(
+                ((char)('a' + index)).ToString(), "dev", 1, "dev")));
+        var facts = Enumerable.Range(0, itemCount).Select(index => new DesktopWorkspaceCompilationItemFact(
+            ((char)('a' + index)).ToString(),
+            "primary",
+            new PixelPoint(30 + index % 5 * 80, 50 + index / 5 * 80),
+            isMovable: true)).ToArray();
+        var presentations = facts.Select(fact => new DesktopWorkspacePreviewItemPresentation(
+            fact.StableId,
+            fact.StableId switch
+            {
+                "a" => "Visual Studio Code",
+                "b" => "Windows Terminal",
+                _ => $"Item {fact.StableId}",
+            })).ToArray();
 
         var compile = DesktopWorkspaceCompiler.Compile(blueprint, semantics, geometry, facts);
         Assert.True(compile.Succeeded);

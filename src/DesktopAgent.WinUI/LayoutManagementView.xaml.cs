@@ -220,6 +220,12 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async void SetActiveLayout_Click(object sender, RoutedEventArgs e)
     {
+        if (_isLayoutEditing)
+        {
+            ShowInfo("正在编辑布局", "先保存或取消当前编辑，再设置当前布局。也可以点选其他布局后确认放弃编辑并切换。", InfoBarSeverity.Warning);
+            return;
+        }
+
         if (_zoneColorPreferencesDirty)
         {
             ShowInfo("分区颜色尚未应用", "先应用或还原当前颜色修改，再切换当前布局。", InfoBarSeverity.Informational);
@@ -312,7 +318,7 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async void ToggleOverlay_Click(object sender, RoutedEventArgs e)
     {
-        if (_overlayHost.IsVisible)
+        if (_overlayHost.IsVisible || _workspaceOverlayHosts.Any(static host => host.IsVisible))
         {
             HideOverlay();
             ShowInfo("桌面线框已隐藏", "", InfoBarSeverity.Informational);
@@ -321,6 +327,12 @@ public sealed partial class LayoutManagementView : UserControl
 
         try
         {
+            if (_workspaceFrozenPreview is not null)
+            {
+                await ShowFrozenWorkspaceOverlayAsync(_workspaceFrozenPreview);
+                return;
+            }
+
             if (!await EnsureDraftForSelectedLayoutAsync())
                 return;
 
@@ -428,6 +440,7 @@ public sealed partial class LayoutManagementView : UserControl
             _draft = RehydrateSavedDraft(template, draft.RuleSet, draft);
             LoadDraftIntoEditor(_draft);
             await RefreshLayoutsAsync(template.TemplateId);
+            SetLayoutInteractionMode(isEditing: false);
 
             var recoveryError = TryPersistAiMultiDisplayWorkspace();
 
@@ -658,6 +671,9 @@ public sealed partial class LayoutManagementView : UserControl
     private void HideOverlay()
     {
         _overlayHost.Hide();
+        foreach (var host in _workspaceOverlayHosts)
+            host.Dispose();
+        _workspaceOverlayHosts.Clear();
         OverlayToggleButton.Content = "▣ 桌面线框";
         OverlayStateText.Text = "线框关闭";
     }

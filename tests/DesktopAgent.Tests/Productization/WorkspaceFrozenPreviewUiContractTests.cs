@@ -141,7 +141,11 @@ public sealed class WorkspaceFrozenPreviewUiContractTests
         Assert.Contains("_workspaceFrozenPreview is not null", selection, StringComparison.Ordinal);
         Assert.Contains("isWorkspaceFrozenPreview", selection, StringComparison.Ordinal);
         Assert.Contains("SaveLayoutButton.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview", selection, StringComparison.Ordinal);
-        Assert.Contains("OverlayToggleButton.IsEnabled = !isAnyFrozenWorkspacePreview", selection, StringComparison.Ordinal);
+        Assert.Contains("OverlayToggleButton.IsEnabled = !isLegacyLogicalWorkspacePreview", selection, StringComparison.Ordinal);
+        var overlay = File.ReadAllText(Path.Combine(root, "src", "DesktopAgent.WinUI", "LayoutManagementView.WorkspaceOverlay.cs"));
+        Assert.Contains("DesktopWorkspaceOverlayProjection.Project", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnableWorkspaceFrozenPreviewApply", overlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApplyAsync", overlay, StringComparison.Ordinal);
         Assert.Contains("PreviewLayoutButton.IsEnabled = !isAnyFrozenWorkspacePreview", selection, StringComparison.Ordinal);
         Assert.Contains("_workspaceFrozenPreview is null", lifecycle, StringComparison.Ordinal);
     }

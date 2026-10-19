@@ -78,6 +78,7 @@ public sealed partial class LayoutManagementView
             WorkspaceLibraryEmptyText.Visibility = items.Count == 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            WorkspaceLibraryEmptyText.Text = "还没有工作区设计。到 AI 助手描述你希望怎样安排桌面，生成后会保存在这里。";
             WorkspaceLibraryStatusText.Text = items.Count == 0
                 ? "还没有保存的工作区设计"
                 : $"{items.Count} 个工作区 · 点击查看详情 · 只读设计资产";

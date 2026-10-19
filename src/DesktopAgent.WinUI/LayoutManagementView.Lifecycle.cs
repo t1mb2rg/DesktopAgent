@@ -14,6 +14,8 @@ public sealed partial class LayoutManagementView
         _workspaceFrozenPreview is null &&
         !_zoneColorPreferencesDirty &&
         !_overlayHost.IsVisible &&
+        !_workspaceOverlayHosts.Any(static host => host.IsVisible) &&
+        !_workspaceReuseInProgress &&
         _desktopZoneEditorWindow is null &&
         !_directApplyInProgress;
 }

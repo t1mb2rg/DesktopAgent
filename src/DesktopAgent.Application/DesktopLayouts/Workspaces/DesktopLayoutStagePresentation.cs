@@ -37,9 +37,9 @@ public static class DesktopLayoutStagePresentation
     {
         // 阶段独占：只在它自己里面出现。
         ["PrepareStagePanel"] = [DesktopLayoutStage.Prepare],
-        ["WorkspaceLibrarySection"] = [DesktopLayoutStage.Design],
+        ["WorkspaceLibrarySection"] = [DesktopLayoutStage.Prepare, DesktopLayoutStage.Design, DesktopLayoutStage.Execute],
         ["LayoutEditorSurface"] = [DesktopLayoutStage.Design],
-        ["LayoutCanvasCard"] = [DesktopLayoutStage.Execute],
+        ["LayoutCanvasCard"] = [DesktopLayoutStage.Design, DesktopLayoutStage.Execute],
 
         // 跨阶段共用：不属于任何单一阶段，但也不是"永远可见"。
         ["LayoutWorkbenchSurface"] = [DesktopLayoutStage.Design, DesktopLayoutStage.Execute],
@@ -54,17 +54,17 @@ public static class DesktopLayoutStagePresentation
 
     public static string Title(DesktopLayoutStage stage) => stage switch
     {
-        DesktopLayoutStage.Prepare => "准备",
-        DesktopLayoutStage.Design => "设计",
-        DesktopLayoutStage.Execute => "执行",
+        DesktopLayoutStage.Prepare => "设备准备",
+        DesktopLayoutStage.Design => "编辑模板",
+        DesktopLayoutStage.Execute => "预览与应用",
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "未知阶段。"),
     };
 
     public static string Hint(DesktopLayoutStage stage) => stage switch
     {
-        DesktopLayoutStage.Prepare => "先让这台机器可被信任：校准目标屏的图标网格，并确认它的站定授权。",
-        DesktopLayoutStage.Design => "决定图标摆成什么样：选一个布局或让 AI 生成草稿，改分区与目标屏。",
-        DesktopLayoutStage.Execute => "落到桌面：先预览，看清这次要移动什么，再应用。这里只执行你看过的结果。",
+        DesktopLayoutStage.Prepare => "校准、显示器授权与恢复工具。查看设计和预览不需要在这里反复准备。",
+        DesktopLayoutStage.Design => "从左侧选择模板，查看画布并编辑属性。保存后可进入预览与应用。",
+        DesktopLayoutStage.Execute => "检查当前桌面的预览与移动明细，确认后再应用；桌面变化时需要刷新预览。",
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "未知阶段。"),
     };
 

@@ -169,25 +169,35 @@ public static class DesktopWorkspaceApplyFreshCheck
 
         var freshById = factArray.ToDictionary(static fact => fact.StableId, StringComparer.Ordinal);
         var changed = new List<string>();
+        var changedCount = 0;
         foreach (var expected in preview.Items.OrderBy(static item => item.StableId, StringComparer.Ordinal))
         {
             var fresh = freshById[expected.StableId];
-            if (!string.Equals(expected.SourceDisplayRef, fresh.CurrentDisplayRef, StringComparison.Ordinal) ||
-                expected.SourcePixelPosition != fresh.PixelPosition ||
-                expected.IsMovable != fresh.IsMovable)
-            {
-                changed.Add(expected.DisplayName);
-                if (changed.Count == 5)
-                    break;
-            }
+            var differences = new List<string>();
+            if (!string.Equals(expected.SourceDisplayRef, fresh.CurrentDisplayRef, StringComparison.Ordinal))
+                differences.Add($"所属显示器：预期 {expected.SourceDisplayRef}，实际 {fresh.CurrentDisplayRef}");
+            if (expected.SourcePixelPosition != fresh.PixelPosition)
+                differences.Add(
+                    $"位置：预期 ({expected.SourcePixelPosition.X}, {expected.SourcePixelPosition.Y})，" +
+                    $"实际 ({fresh.PixelPosition.X}, {fresh.PixelPosition.Y})");
+            if (expected.IsMovable != fresh.IsMovable)
+                differences.Add($"可移动状态：预期 {(expected.IsMovable ? "可移动" : "不可移动")}，" +
+                                $"实际 {(fresh.IsMovable ? "可移动" : "不可移动")}");
+            if (differences.Count == 0)
+                continue;
+
+            changedCount++;
+            if (changed.Count < 5)
+                changed.Add($"{expected.DisplayName}（{string.Join("；", differences)}）");
         }
 
-        if (changed.Count > 0)
+        if (changedCount > 0)
         {
             return DesktopWorkspaceApplyFreshCheckResult.Rejected(
                 DesktopWorkspaceApplyFreshCheckStatus.ItemStateChanged,
-                $"{changed.Count} 个以上项目的当前位置、所属显示器或可移动状态已变化：" +
-                $"{string.Join("、", changed)}。请重新生成精确预览。 ");
+                $"{changedCount} 个项目的当前位置、所属显示器或可移动状态已变化" +
+                (changedCount > changed.Count ? $"（仅列出前 {changed.Count} 项）" : string.Empty) +
+                $"：{string.Join("、", changed)}。请重新生成精确预览。 ");
         }
 
         return DesktopWorkspaceApplyFreshCheckResult.Ready();

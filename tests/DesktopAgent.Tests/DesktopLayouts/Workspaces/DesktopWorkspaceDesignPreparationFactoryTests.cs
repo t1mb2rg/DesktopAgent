@@ -12,8 +12,8 @@ namespace DesktopAgent.Tests.DesktopLayouts.Workspaces;
 
 public sealed class DesktopWorkspaceDesignPreparationFactoryTests
 {
-    [Fact]
-    public void Create_ThreeDisplayTopology_LabelsLeftAndLowerConsistently_AndKeepsStableIdsLocal()
+    private static (DesktopUnderstandingDraft Understanding, DesktopObservation Observation,
+        DesktopLayoutConversationState Conversation) CreateFixture()
     {
         const string localStableId = "LOCAL-SENSITIVE-STABLE-ID";
         var observationId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -58,7 +58,6 @@ public sealed class DesktopWorkspaceDesignPreparationFactoryTests
             ],
             ConnectionMethod.FindWindowSW,
             TimeSpan.Zero);
-        var geometry = CreateGeometry(observationId);
         var understanding = new DesktopUnderstandingDraft(
             "用户希望把可移动项目放到下方副屏，主屏中央留白，左副屏保持现状。",
             "三屏桌面，包含开发工具、左屏资料和系统项目。",
@@ -101,6 +100,16 @@ public sealed class DesktopWorkspaceDesignPreparationFactoryTests
                     "保持壁纸中央可见"),
             ]);
 
+        return (understanding, observation, conversation);
+    }
+
+    [Fact]
+    public void Create_ThreeDisplayTopology_LabelsLeftAndLowerConsistently_AndKeepsStableIdsLocal()
+    {
+        const string localStableId = "LOCAL-SENSITIVE-STABLE-ID";
+        var (understanding, observation, conversation) = CreateFixture();
+        var observationId = observation.ObservationId;
+        var geometry = CreateGeometry(observationId);
         var preparation = DesktopWorkspaceDesignPreparationFactory.Create(
             understanding,
             observation,
@@ -125,6 +134,70 @@ public sealed class DesktopWorkspaceDesignPreparationFactoryTests
         Assert.Contains(preparation.Request.CriticalItems, item => !item.IsMovable && item.Label == "Recycle Bin");
         Assert.Contains(preparation.Request.CriticalItems, item => item.ItemRef == binding.ItemRef && item.Label == "VS Code");
     }
+
+    [Fact]
+    public void CreateFromFreshObservation_MovedAcrossDisplays_UsesFreshSourceFactsAndPreservesSemantics()
+    {
+        var (understanding, source, conversation) = CreateFixture();
+        var fresh = WithIcons(source, source.Icons.Select(icon => icon.StableId == "LEFT-ITEM"
+            ? icon with { PixelPosition = new PixelPoint(100, 1600), MonitorDeviceName = "\\\\.\\DISPLAY3" }
+            : icon));
+
+        var preparation = DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation(
+            understanding, source, fresh, CreateGeometry(fresh.ObservationId), conversation);
+
+        Assert.NotEqual(source.ObservationId, preparation.SourceSnapshot.ObservationId);
+        Assert.Equal(fresh.ObservationId, preparation.SourceSnapshot.ObservationId);
+        var fact = Assert.Single(preparation.ItemFacts, item => item.StableId == "LEFT-ITEM");
+        Assert.Equal("secondary_2", fact.CurrentDisplayRef);
+        Assert.Equal(new PixelPoint(100, 1600), fact.PixelPosition);
+        Assert.Contains(fact, preparation.SourceSnapshot.ItemFacts);
+        Assert.Contains(preparation.SemanticUnderstanding.Assignments,
+            item => item.StableId == "LEFT-ITEM" && item.CategoryKey == "docs");
+        Assert.Equal(new PixelPoint(-1800, 100), source.Icons.Single(icon => icon.StableId == "LEFT-ITEM").PixelPosition);
+    }
+
+    [Theory]
+    [InlineData("rename")]
+    [InlineData("kind")]
+    [InlineData("system")]
+    [InlineData("add")]
+    [InlineData("remove")]
+    public void CreateFromFreshObservation_SemanticFactsChanged_RequiresNewUnderstanding(string change)
+    {
+        var (understanding, source, conversation) = CreateFixture();
+        var icons = source.Icons.ToList();
+        switch (change)
+        {
+            case "rename": icons[0] = icons[0] with { DisplayName = "Renamed" }; break;
+            case "kind": icons[0] = icons[0] with { ItemKind = ItemKind.SystemItem }; break;
+            case "system": icons[0] = icons[0] with { IsSystemItem = true }; break;
+            case "add": icons.Add(icons[0] with { StableId = "NEW-ITEM" }); break;
+            case "remove": icons.RemoveAt(0); break;
+        }
+        var fresh = WithIcons(source, icons);
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation(
+                understanding, source, fresh, CreateGeometry(fresh.ObservationId), conversation));
+
+        Assert.Contains("请先重新理解桌面", error.Message);
+    }
+
+    [Fact]
+    public void CreateFromFreshObservation_OldGeometryCannotBeCombinedWithFreshPositions()
+    {
+        var (understanding, source, conversation) = CreateFixture();
+        var fresh = WithIcons(source, source.Icons);
+
+        Assert.Throws<ArgumentException>(() =>
+            DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation(
+                understanding, source, fresh, CreateGeometry(source.ObservationId), conversation));
+    }
+
+    private static DesktopObservation WithIcons(DesktopObservation source, IEnumerable<DesktopIconDescriptor> icons)
+        => new(Guid.NewGuid(), DateTimeOffset.UtcNow, source.Displays, source.PositioningCapabilities,
+            icons.ToArray(), source.IconReadConnectionMethod, source.IconReadTime);
 
     private static IReadOnlyList<DisplayDescriptor> CreateDisplays()
         => new[]

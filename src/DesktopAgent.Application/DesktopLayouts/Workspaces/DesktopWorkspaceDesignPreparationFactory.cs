@@ -28,6 +28,31 @@ public sealed record DesktopWorkspaceDesignPreparation(
 /// </summary>
 public static class DesktopWorkspaceDesignPreparationFactory
 {
+    /// <summary>
+    /// 复用语义理解，以本次读取的几何和位置生成新的预览起点。
+    /// 项目语义事实变化时必须先重新理解；纯位置变化不使分类失效。
+    /// </summary>
+    public static DesktopWorkspaceDesignPreparation CreateFromFreshObservation(
+        DesktopUnderstandingDraft understanding,
+        DesktopObservation understandingObservation,
+        DesktopObservation freshObservation,
+        ExplorerWorkspaceGeometry freshGeometry,
+        DesktopLayoutConversationState conversationState)
+    {
+        ArgumentNullException.ThrowIfNull(understandingObservation);
+        ArgumentNullException.ThrowIfNull(freshObservation);
+        if (!string.Equals(
+                DesktopSemanticUnderstandingSourceFingerprint.Create(understandingObservation),
+                DesktopSemanticUnderstandingSourceFingerprint.Create(freshObservation),
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "桌面项目的名称、类型或集合自上次理解后发生变化，请先重新理解桌面，再生成精确预览。");
+        }
+
+        return Create(understanding, freshObservation, freshGeometry, conversationState);
+    }
+
     public static DesktopWorkspaceDesignPreparation Create(
         DesktopUnderstandingDraft legacyUnderstanding,
         DesktopObservation observation,

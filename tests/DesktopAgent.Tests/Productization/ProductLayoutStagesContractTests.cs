@@ -16,7 +16,6 @@ public sealed class ProductLayoutStagesContractTests
         "GridProbeButton",
         "GridDisplayAuthorizationsButton",
         "ReconcileRecoveryButton",
-        "OverlayToggleButton",
     ];
 
     [Fact]
@@ -91,10 +90,11 @@ public sealed class ProductLayoutStagesContractTests
         Assert.Contains("StageHintText", stageBar, StringComparison.Ordinal);
 
         var actionRow = Slice(xaml, "x:Name=\"LayoutActionRow\"", "</Grid>");
-        Assert.Equal(3, Count(actionRow, "<Button"));
+        Assert.Equal(2, Count(actionRow, "<Button"));
         Assert.Contains("PreviewLayoutButton", actionRow, StringComparison.Ordinal);
         Assert.Contains("ApplyToDesktopButton", actionRow, StringComparison.Ordinal);
-        Assert.Contains("SaveLayoutButton", actionRow, StringComparison.Ordinal);
+        Assert.DoesNotContain("SaveLayoutButton", actionRow, StringComparison.Ordinal);
+        Assert.Contains("SaveLayoutButton", Slice(xaml, "x:Name=\"LayoutEditorPanel\"", "</StackPanel>"), StringComparison.Ordinal);
 
         var preparePanel = Slice(xaml, "x:Name=\"PrepareStagePanel\"", "</Border>");
         foreach (var name in MachineStepButtonNames)
@@ -115,6 +115,32 @@ public sealed class ProductLayoutStagesContractTests
         Assert.Contains("实测", preparePanel, StringComparison.Ordinal);
         Assert.Contains("站定授权", preparePanel, StringComparison.Ordinal);
         Assert.Contains("需要重新校准", preparePanel, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SavedDesigns_AreDiscoverableDuringDesignAndExecute()
+    {
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Design, "WorkspaceLibrarySection"));
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Execute, "WorkspaceLibrarySection"));
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Prepare, "WorkspaceLibrarySection"));
+    }
+
+    [Fact]
+    public void Editing_KeepsCanvasVisible_WhileExecutionHidesTemplateInspector()
+    {
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Design, "LayoutCanvasCard"));
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Design, "LayoutEditorSurface"));
+        Assert.True(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Execute, "LayoutCanvasCard"));
+        Assert.False(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Execute, "LayoutEditorSurface"));
+        Assert.False(DesktopLayoutStagePresentation.IsVisibleInStage(DesktopLayoutStage.Prepare, "LayoutWorkbenchSurface"));
+    }
+
+    [Fact]
+    public void ReadOnlyOverlay_IsAvailableAcrossStagesInsteadOfInsidePrepareOnly()
+    {
+        var xaml = Read("src", "DesktopAgent.WinUI", "LayoutManagementView.xaml");
+        Assert.Contains("OverlayToggleButton", Slice(xaml, "x:Name=\"LayoutStageBar\"", "</Border>"), StringComparison.Ordinal);
+        Assert.DoesNotContain("OverlayToggleButton", Slice(xaml, "x:Name=\"PrepareStagePanel\"", "</Border>"), StringComparison.Ordinal);
     }
 
     private static string Read(params string[] parts)

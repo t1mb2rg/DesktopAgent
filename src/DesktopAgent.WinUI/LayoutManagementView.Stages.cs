@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 
 namespace DesktopAgent.WinUI;
 
@@ -55,7 +56,9 @@ public sealed partial class LayoutManagementView
             // 读不到授权不该拦住面板。
         }
 
-        SetLayoutStage(stage);
+        // 异步读取期间用户可能通过首次设置入口明确选择了阶段。
+        if (!_layoutStageInitialized)
+            SetLayoutStage(stage);
     }
 
     private void ApplyLayoutStage(DesktopLayoutStage stage)
@@ -77,14 +80,7 @@ public sealed partial class LayoutManagementView
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-        // 工作台三栏：左（我的布局）两个阶段都在；中（画布）只归执行；右（编辑器）只归设计。
-        LayoutWorkbenchSurface.ColumnDefinitions[1].MinWidth = stage == DesktopLayoutStage.Execute ? 420 : 0;
-        LayoutWorkbenchSurface.ColumnDefinitions[1].Width = stage == DesktopLayoutStage.Execute
-            ? new GridLength(1, GridUnitType.Star)
-            : new GridLength(0);
-        LayoutWorkbenchSurface.ColumnDefinitions[2].Width = stage == DesktopLayoutStage.Design
-            ? new GridLength(1, GridUnitType.Star)
-            : new GridLength(0);
+        UpdateWorkbenchSizing(stage);
 
         StagePrepareButton.Content = DesktopLayoutStagePresentation.StageButtonContent(
             DesktopLayoutStage.Prepare,
@@ -102,4 +98,23 @@ public sealed partial class LayoutManagementView
         => DesktopLayoutStagePresentation.IsVisibleInStage(stage, elementName)
             ? Visibility.Visible
             : Visibility.Collapsed;
+
+    private void LayoutWorkspaceSurface_SizeChanged(object sender, SizeChangedEventArgs e)
+        => UpdateWorkbenchSizing(_layoutStage);
+
+    private void UpdateWorkbenchSizing(DesktopLayoutStage stage)
+    {
+        var availableWidth = LayoutWorkspaceSurface.ActualWidth > 0
+            ? LayoutWorkspaceSurface.ActualWidth : 1200;
+        var stackInspector = stage == DesktopLayoutStage.Design && availableWidth < 900;
+        LayoutWorkspaceSurface.ColumnDefinitions[0].Width = new GridLength(availableWidth < 1000 ? 220 : 268);
+        LayoutWorkbenchSurface.ColumnDefinitions[0].MinWidth = stackInspector ? 240 : 320;
+        LayoutWorkbenchSurface.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        LayoutWorkbenchSurface.ColumnDefinitions[1].MinWidth = 0;
+        LayoutWorkbenchSurface.ColumnDefinitions[1].Width = stage == DesktopLayoutStage.Design && !stackInspector
+            ? new GridLength(320) : new GridLength(0);
+        Grid.SetRow(LayoutEditorSurface, stackInspector ? 1 : 0);
+        Grid.SetColumn(LayoutEditorSurface, stackInspector ? 0 : 1);
+        LayoutEditorSurface.MaxHeight = stackInspector ? 240 : double.PositiveInfinity;
+    }
 }

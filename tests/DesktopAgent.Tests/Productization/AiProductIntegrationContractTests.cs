@@ -160,9 +160,9 @@ public sealed class AiProductIntegrationContractTests
         Assert.Contains("全部项目", xaml, StringComparison.Ordinal);
         Assert.Contains("可能需要几分钟", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("代表性样本", xaml, StringComparison.Ordinal);
-        Assert.Contains("只生成语义草案", xaml, StringComparison.Ordinal);
-        Assert.Contains("不调用 Writer", xaml, StringComparison.Ordinal);
-        Assert.Contains("不会移动任何桌面图标", xaml, StringComparison.Ordinal);
+        Assert.Contains("分析和设计不会移动图标", xaml, StringComparison.Ordinal);
+        Assert.Contains("检查每块屏幕的布局", xaml, StringComparison.Ordinal);
+        Assert.Contains("确认是否应用", xaml, StringComparison.Ordinal);
         Assert.Contains("正在建立桌面语义模型", codeBehind, StringComparison.Ordinal);
         Assert.Contains("正在重新理解当前桌面", codeBehind, StringComparison.Ordinal);
         Assert.Contains("CancelAnalysis_Click", codeBehind, StringComparison.Ordinal);

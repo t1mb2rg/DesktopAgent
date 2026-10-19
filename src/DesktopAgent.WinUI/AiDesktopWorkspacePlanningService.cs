@@ -3,6 +3,7 @@ using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Application.Intelligence;
+using DesktopAgent.Application.DesktopObservations;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Equivalence;
@@ -14,6 +15,9 @@ using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Persistence.Productization;
 using DesktopAgent.WindowsInterop.Intelligence;
+using DesktopAgent.WindowsInterop.DesktopIcons;
+using DesktopAgent.WindowsInterop.DesktopObservations;
+using DesktopAgent.WindowsInterop.Displays;
 
 namespace DesktopAgent.WinUI;
 
@@ -48,7 +52,7 @@ internal sealed record AiDesktopWorkspacePlanningProductResult(
 
 /// <summary>
 /// ADR-0005 Workspace Blueprint 产品级只读入口。
-/// 使用已有同一次 Full Understanding + Observation，生成 Explorer-native Frozen Preview；
+/// 复用语义仍匹配的 Full Understanding，以 fresh Observation 生成 Explorer-native Frozen Preview；
 /// 成功且通过独立 equivalence 后，把本轮完整 immutable Blueprint revision history 写入 Workspace Library。
 /// Provider-safe design guidance 与 durable SourceUserIntent 明确分离：前者可包含 request-local item refs，
 /// 后者只保存用户实际表达过的布局要求。Library persistence 从不保存 Exact Plan / Frozen Preview /
@@ -89,9 +93,30 @@ internal sealed class AiDesktopWorkspacePlanningService
                 providerStatus: IntelligenceProviderStatus.NotConfigured);
         }
 
+        // 缓存的 Observation 只证明语义理解的来源，不能成为新预览的几何起点。
+        // 在 AI 设计之前重新读取；最终 Apply 仍独立执行严格 fresh check。
+        DesktopObservationCaptureResult capture;
+        using (var staExecutor = new StaThreadExecutor())
+        {
+            var observationSource = new WindowsDesktopObservationSource(
+                new NativeDisplayTopologyReader(),
+                new DesktopShellIconReader(),
+                new DesktopShellIconPositioningCapabilitiesReader(),
+                staExecutor);
+            capture = await observationSource.CaptureAsync(cancellationToken);
+        }
+        if (!capture.IsCaptured || capture.Observation is null)
+        {
+            return Failure(
+                AiDesktopWorkspacePlanningProductStatus.PreparationFailed,
+                message: "无法重新读取当前桌面，未生成精确预览：" +
+                         string.Join("；", capture.Issues.Select(static issue => issue.Message)));
+        }
+
+        var freshObservation = capture.Observation;
         var geometryResult = DesktopExplorerWorkspaceGeometryAdapter.Build(
-            observation,
-            await TryReadGridFactsAsync(observation, cancellationToken).ConfigureAwait(false));
+            freshObservation,
+            await TryReadGridFactsAsync(freshObservation, cancellationToken).ConfigureAwait(false));
         if (!geometryResult.Succeeded || geometryResult.Geometry is null)
         {
             return Failure(
@@ -104,9 +129,10 @@ internal sealed class AiDesktopWorkspacePlanningService
         DesktopWorkspaceDesignPreparation preparation;
         try
         {
-            preparation = DesktopWorkspaceDesignPreparationFactory.Create(
+            preparation = DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation(
                 understanding,
                 observation,
+                freshObservation,
                 geometryResult.Geometry,
                 conversationState);
         }

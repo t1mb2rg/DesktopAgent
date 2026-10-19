@@ -14,6 +14,17 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         Assert.Contains("ContractRepairingDesktopWorkspaceDesigner", service, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceDesignLoopCoordinator", service, StringComparison.Ordinal);
         Assert.Contains("DesktopWorkspaceFrozenPreviewFactory.Create", service, StringComparison.Ordinal);
+        Assert.Contains("DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation", service, StringComparison.Ordinal);
+        Assert.Contains("var freshObservation = capture.Observation;", service, StringComparison.Ordinal);
+        Assert.Contains("TryReadGridFactsAsync(freshObservation, cancellationToken)", service, StringComparison.Ordinal);
+        Assert.Contains("                observation,\n                freshObservation,\n                geometryResult.Geometry,",
+            service.Replace("\r\n", "\n", StringComparison.Ordinal), StringComparison.Ordinal);
+        var captureIndex = service.IndexOf("observationSource.CaptureAsync", StringComparison.Ordinal);
+        var geometryIndex = service.IndexOf("DesktopExplorerWorkspaceGeometryAdapter.Build", StringComparison.Ordinal);
+        var preparationIndex = service.IndexOf("DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation", StringComparison.Ordinal);
+        var designIndex = service.IndexOf("coordinator.DesignAndCompileAsync", StringComparison.Ordinal);
+        Assert.True(captureIndex >= 0 && captureIndex < geometryIndex);
+        Assert.True(geometryIndex < preparationIndex && preparationIndex < designIndex);
 
         foreach (var forbidden in new[]
                  {

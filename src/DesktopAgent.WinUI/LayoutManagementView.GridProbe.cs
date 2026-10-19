@@ -24,7 +24,7 @@ public sealed partial class LayoutManagementView
         if (_gridProbeRunning)
         {
             _gridProbeCancellation?.Cancel();
-            WorkspaceLibraryStatusText.Text = "校准：正在停止扫描，完成恢复与临时文件清理后结束…";
+            GridPreparationStatusText.Text = "校准：正在停止扫描，完成恢复与临时文件清理后结束…";
             return;
         }
 
@@ -86,7 +86,7 @@ public sealed partial class LayoutManagementView
         LayoutStatusBar.IsOpen = false;
 
         var logDirectory = ExplorerGridProbeSession.LogDirectoryFor(DesktopAgentDataPaths.DefaultDatabasePath);
-        var progress = new Progress<string>(message => WorkspaceLibraryStatusText.Text = $"校准中：{message}");
+        var progress = new Progress<string>(message => GridPreparationStatusText.Text = $"校准中：{message}");
 
         try
         {
@@ -132,7 +132,7 @@ public sealed partial class LayoutManagementView
         var factLine = result.Recorded.Facts.Count > 0
             ? $"已写入 {result.Recorded.Facts.Count} 条实测网格事实。"
             : "未写入网格事实（原因见报告）——这些屏只能监督执行。";
-        WorkspaceLibraryStatusText.Text = $"校准结果：实测 {result.MeasuredDisplayCount}/{total} 块显示器；{factLine}";
+        GridPreparationStatusText.Text = $"校准结果：实测 {result.MeasuredDisplayCount}/{total} 块显示器；{factLine}";
 
         var panel = new StackPanel { Spacing = 10 };
         panel.Children.Add(new TextBlock
@@ -169,11 +169,11 @@ public sealed partial class LayoutManagementView
                 var package = new DataPackage();
                 package.SetText(result.ReportText);
                 Clipboard.SetContent(package);
-                WorkspaceLibraryStatusText.Text = "报告已复制到剪贴板。";
+                GridPreparationStatusText.Text = "报告已复制到剪贴板。";
             }
             catch (Exception exception)
             {
-                WorkspaceLibraryStatusText.Text = $"复制报告失败：{exception.GetType().Name}: {exception.Message}";
+                GridPreparationStatusText.Text = $"复制报告失败：{exception.GetType().Name}: {exception.Message}";
             }
 
             args.Cancel = true;

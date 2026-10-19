@@ -10,6 +10,7 @@ public sealed partial class LayoutManagementView
 {
     private DesktopWorkspaceBlueprintAssetSummary? _workspaceDetailAsset;
     private IReadOnlyList<DesktopWorkspaceBlueprintRevisionRecord> _workspaceDetailRevisions = [];
+    private DesktopLayoutStage _workspaceDetailReturnStage = DesktopLayoutStage.Design;
 
     private async void WorkspaceBlueprintList_ItemClick(object sender, ItemClickEventArgs e)
     {
@@ -76,8 +77,8 @@ public sealed partial class LayoutManagementView
             .ToArray();
 
         // 看设计资产属于"设计"这一步：先把阶段切过去，再让详情面占用整块地方。
+        _workspaceDetailReturnStage = CurrentLayoutStage;
         SetLayoutStage(DesktopLayoutStage.Design);
-        WorkspaceLibrarySection.Visibility = Visibility.Collapsed;
         LayoutWorkbenchSurface.Visibility = Visibility.Collapsed;
         WorkspaceDetailSurface.Visibility = Visibility.Visible;
         WorkspaceRevisionList.SelectedIndex = 0;
@@ -93,6 +94,7 @@ public sealed partial class LayoutManagementView
         WorkspaceRevisionList.ItemsSource = null;
         _workspaceDetailAsset = null;
         _workspaceDetailRevisions = [];
+        SetLayoutStage(_workspaceDetailReturnStage);
     }
 
     private void WorkspaceRevisionList_SelectionChanged(object sender, SelectionChangedEventArgs e)

@@ -220,6 +220,13 @@ public sealed partial class MainWindow : Window
     private async void CompleteFirstRun_Click(object sender, RoutedEventArgs e)
         => await SaveSettingsAsync(markFirstRunCompleted: true);
 
+    private void OpenGridPreparation_Click(object sender, RoutedEventArgs e)
+    {
+        OpenSectionFromTray("layouts");
+        _layoutManagementView?.SetLayoutStage(
+            DesktopAgent.Application.DesktopLayouts.Workspaces.DesktopLayoutStage.Prepare);
+    }
+
     private async Task SaveSettingsAsync(bool markFirstRunCompleted)
     {
         SettingsStatusBar.IsOpen = false;

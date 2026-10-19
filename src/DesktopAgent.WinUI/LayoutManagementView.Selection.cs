@@ -9,10 +9,11 @@ public sealed partial class LayoutManagementView
 {
     private bool _suppressTemplateSelectionChanged;
     private bool _isLayoutEditing;
+    private bool _layoutSelectionChangeActive;
 
     private async void LayoutTemplateList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressTemplateSelectionChanged)
+        if (_suppressTemplateSelectionChanged || _layoutSelectionChangeActive)
             return;
 
         if (LayoutTemplateList.SelectedItem is not LayoutTemplateListItem selected)
@@ -25,7 +26,38 @@ public sealed partial class LayoutManagementView
                 return;
 
             RestoreSelectionToCurrentDraft();
-            ShowInfo("正在编辑布局", "先保存或取消当前编辑，再切换到其他布局。", InfoBarSeverity.Informational);
+            _layoutSelectionChangeActive = true;
+            LayoutTemplateList.IsEnabled = false;
+            try
+            {
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = "切换布局？",
+                    Content = _draft is not null
+                        ? "当前布局尚在编辑。切换会放弃未保存的修改；取消后可以先保存。"
+                        : "切换会关闭当前精确预览；再次应用前需要重新生成预览。",
+                    PrimaryButtonText = "放弃当前编辑并切换",
+                    CloseButtonText = "保留当前编辑",
+                    DefaultButton = ContentDialogButton.Close,
+                };
+                if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+                    return;
+
+                SetSelectedTemplateWithoutNotification(selected);
+                if (await LoadSelectedLayoutForPassiveViewAsync(selected))
+                    SetLayoutInteractionMode(isEditing: false);
+            }
+            catch (Exception ex)
+            {
+                RestoreSelectionToCurrentDraft();
+                ShowError("无法切换布局", ex.Message);
+            }
+            finally
+            {
+                LayoutTemplateList.IsEnabled = true;
+                _layoutSelectionChangeActive = false;
+            }
             return;
         }
 
@@ -97,7 +129,10 @@ public sealed partial class LayoutManagementView
         SetSelectedTemplateWithoutNotification(null);
         NewLayout_Click(sender, e);
         if (_draft is not null)
+        {
+            SetLayoutStage(DesktopLayoutStage.Design);
             SetLayoutInteractionMode(isEditing: true);
+        }
     }
 
     private void CancelLayoutEditWithMode_Click(object sender, RoutedEventArgs e)
@@ -151,7 +186,12 @@ public sealed partial class LayoutManagementView
         LayoutPresetCombo.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview;
         ApplyPresetButton.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview;
         SaveLayoutButton.IsEnabled = isEditing && !isAnyFrozenWorkspacePreview;
-        OverlayToggleButton.IsEnabled = !isAnyFrozenWorkspacePreview;
+        OverlayToggleButton.IsEnabled = !isLegacyLogicalWorkspacePreview;
+        SetActiveLayoutButton.IsEnabled = !isEditing;
+        LayoutSelectionHintText.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
+        LayoutSelectionHintText.Text = isAnyFrozenWorkspacePreview
+            ? "当前是只读精确预览。可随时查看桌面线框；点选模板可确认关闭预览并切换。保存的工作区设计在上方设计库。"
+            : "正在编辑：先保存或取消编辑；点选其他模板可确认放弃修改并切换。工作区设计在上方设计库。";
         PreviewLayoutButton.IsEnabled = !isAnyFrozenWorkspacePreview;
         CancelLayoutEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
         EditLayoutButton.Content = isEditing ? "桌面编辑" : "编辑";

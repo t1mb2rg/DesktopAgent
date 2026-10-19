@@ -131,7 +131,7 @@ public sealed partial class MainWindow
         HomeRadarView.SetState(state);
         HomeRadarFreshnessText.Text = state.FreshnessText;
         HomeRadarStatusText.Text = state.StatusMessage
-            ?? "点击“打开布局”查看和调整空间。";
+            ?? "点击“打开设计库”查看和调整空间。";
 
         var snapshot = state.Snapshot;
         if (snapshot is null)
