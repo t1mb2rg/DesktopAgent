@@ -91,7 +91,14 @@ python tools/security/history_privacy_inventory.py
 - `release.yml` 使用 `dotnet publish` 生成自包含目录并 zip，Inno Setup `[Files]` 递归打包该发布目录。因此**必须检查产出的 zip 实体内容**，单凭 csproj 的静态结构不能证明最终包里没有配置文件。
 - 发行脚本的 `Upload test diagnostics` 会在 CI 中保留短期 TRX/诊断资产。需要检查旧发行运行及公开后历史日志的暴露范围，不能假设 private 状态延续。
 
-**待办：** 下载并展开 1.0.0、1.0.1 Release ZIP 与安装器，审查实际文件清单、意外本机配置、第三方许可和可执行资源；保留 SHA256 与经过脱敏的审核记录。
+**待办：** 下载并展开 1.0.0、1.0.1 Release ZIP 与安装器，审查实际文件清单、意外本机配置、第三方许可和可执行资源；保留 SHA256 与经过脱敏的审核记录。现已提供本地 ZIP 初筛工具（需要自己下载真实发布包）：
+
+```powershell
+python tools/security/release_zip_audit.py "C:\path\to\Tessel-1.0.1-win-x64.zip"
+# 私有报告：artifacts/open-source-audit/release-zip-audit.json
+```
+
+它检查可疑数据库/密钥/运行时配置文件、压缩包路径、安全敏感文本和 PDB 标记。**不会检查 Inno Setup 安装器内部及编译后 DLL/EXE 的所有二进制字符串或 PE 元数据，也不能替代人工审阅**。不能在 CI 没有真实 ZIP 的情况下将此任务勾选为完成。
 
 ### PR 与 Actions 抽样
 
