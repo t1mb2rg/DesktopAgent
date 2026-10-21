@@ -49,7 +49,7 @@ def main() -> int:
     process = subprocess.Popen(
         ["git", "log", "--all", "--full-history", "--diff-merges=first-parent",
          "--no-ext-diff", "--no-color", "--format=PRIVACY_COMMIT:%H",
-         "--binary", "-p"],
+         "-p"],
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
