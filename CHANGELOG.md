@@ -3,6 +3,27 @@
 本文件记录 Tessel（DesktopAgent）的重要变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-10-21
+
+给产品换上正式图标，并补齐开发者文档。
+
+### 新增
+
+- 产品图标：窗口标题栏、系统托盘、可执行文件与安装器四处统一使用同一个 `tessel.ico`。
+  图标在启动时从运行中的可执行文件提取，不需要额外文件随包分发；任何一步取不到都只会
+  退回系统默认图标，不会影响启动。
+
+### 文档
+
+- README 重写为面向使用者的版本（配四张界面截图），工程细节迁到 `docs/development.md`。
+- 新增 `docs/architecture.md`（分层与一次真实写入的完整时序）、`docs/pitfalls.md`
+  （15 个真实阻断点的现象、根因与解法）、`docs/grid-measurement.md`（桌面网格识别的完整推导）。
+- 新增 `docs/roadmap.md` 与 `CONTRIBUTING.md`。
+
+### 说明
+
+本次发布不含行为变更，桌面网格、预览、应用与撤销的既有安全约束一条未动。
+
 ## [1.0.0] - 2026-10-21
 
 首个正式发布版本。这一版把产品从「布局管理器」推进到「以 AI 对话为中心的工作区设计」，
