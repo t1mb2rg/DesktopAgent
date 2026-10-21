@@ -19,6 +19,16 @@
 .PARAMETER Launch
     Start the published executable after a successful publish.
 
+.PARAMETER SkipTrim
+    Keep the unused Windows App SDK machine-learning payload (onnxruntime,
+    DirectML, Microsoft.Windows.AI.*). Dropping it saves roughly 40 MB.
+
+.PARAMETER SkipInstaller
+    Do not build the Inno Setup installer.
+
+.PARAMETER IsccPath
+    Path to ISCC.exe. Default: %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Clean
 
@@ -30,7 +40,10 @@ param(
     [string]$Version,
     [switch]$SkipTests,
     [switch]$Clean,
-    [switch]$Launch
+    [switch]$Launch,
+    [switch]$SkipTrim,
+    [switch]$SkipInstaller,
+    [string]$IsccPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +55,7 @@ $solution = Join-Path $repoRoot 'DesktopAgent.sln'
 $appProject = Join-Path $repoRoot 'src\DesktopAgent.WinUI\DesktopAgent.WinUI.csproj'
 $testProject = Join-Path $repoRoot 'tests\DesktopAgent.Tests\DesktopAgent.Tests.csproj'
 $releaseRoot = Join-Path $repoRoot 'artifacts\release'
+$installerScript = Join-Path $repoRoot 'tools\installer\tessel.iss'
 
 function Write-Step([string]$message) {
     Write-Host ''
@@ -120,6 +134,36 @@ if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
     -p:PublishReadyToRun=false -p:PublishTrimmed=false -o $publishDir --nologo
 Assert-LastExit 'publish'
 
+# ---------------------------------------------------------------- trim
+if (-not $SkipTrim) {
+    Write-Step 'Trim unused Windows App SDK payload'
+    # The Windows App SDK carries a full machine-learning stack (ONNX Runtime,
+    # DirectML, the Microsoft.Windows.AI.* surface). Tessel only uses XAML,
+    # so the payload is dead weight: ~40 MB on disk and ~15 MB in the zip.
+    $trimPatterns = @(
+        'onnxruntime.dll',
+        'DirectML.dll',
+        'Microsoft.ML.OnnxRuntime.dll',
+        'Microsoft.Windows.AI.*',
+        'Microsoft.Windows.Vision*',
+        'Microsoft.Windows.Internal.Vision*'
+    )
+    $removedFiles = 0
+    $removedBytes = 0
+    foreach ($pattern in $trimPatterns) {
+        Get-ChildItem $publishDir -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            $removedBytes += $_.Length
+            $removedFiles++
+            Remove-Item $_.FullName -Force
+        }
+    }
+    Write-Host ("  removed {0} file(s), {1} MB" -f $removedFiles, [math]::Round($removedBytes / 1MB, 1))
+}
+else {
+    Write-Host ''
+    Write-Host '== Trim skipped (-SkipTrim)' -ForegroundColor DarkYellow
+}
+
 # ---------------------------------------------------------------- verify + zip
 Write-Step 'Verify'
 $exe = Join-Path $publishDir 'DesktopAgent.WinUI.exe'
@@ -140,10 +184,44 @@ Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $zipPath -Co
 $zipMb = [math]::Round((Get-Item $zipPath).Length / 1MB, 1)
 Write-Host "  $zipPath ($zipMb MB)"
 
+# ---------------------------------------------------------------- installer
+$setupPath = $null
+if (-not $SkipInstaller) {
+    Write-Step 'Installer (Inno Setup)'
+    if (-not $IsccPath) {
+        $candidates = @(
+            (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+        )
+        $IsccPath = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    }
+    if (-not $IsccPath -or -not (Test-Path $IsccPath)) {
+        throw 'ISCC.exe not found. Install Inno Setup 6, pass -IsccPath, or use -SkipInstaller.'
+    }
+    if (-not (Test-Path $installerScript)) {
+        throw "Installer script not found: $installerScript"
+    }
+    Write-Host "  compiler   : $IsccPath"
+    & $IsccPath "/DAppVersion=$Version" "/DSourceDir=$publishDir" "/DOutputDir=$releaseRoot" $installerScript |
+        Select-String -Pattern 'Successful|Error|Warning|Output' | ForEach-Object { '  ' + $_.Line.Trim() }
+    Assert-LastExit 'Inno Setup'
+    $setupPath = Get-ChildItem $releaseRoot -Filter "Tessel-Setup-$Version*.exe" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $setupPath) { throw "Installer was not produced in $releaseRoot" }
+    $setupMb = [math]::Round($setupPath.Length / 1MB, 1)
+    Write-Host "  $($setupPath.FullName) ($setupMb MB)"
+}
+else {
+    Write-Host ''
+    Write-Host '== Installer skipped (-SkipInstaller)' -ForegroundColor DarkYellow
+}
+
 Write-Host ''
 Write-Host "Release v$Version ready." -ForegroundColor Green
-Write-Host "  folder : $publishDir"
-Write-Host "  zip    : $zipPath"
+Write-Host "  folder    : $publishDir"
+Write-Host "  zip       : $zipPath"
+if ($setupPath) { Write-Host "  installer : $($setupPath.FullName)" }
 Write-Host ''
 Write-Host 'Deploy on a target machine: unzip anywhere and run DesktopAgent.WinUI.exe.'
 Write-Host 'First run requires the full desktop grid calibration for every display.'

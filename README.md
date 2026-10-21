@@ -2,9 +2,36 @@
 
 DesktopAgent 是一个面向 Windows 11 的本地桌面管理 Agent。目标是在不接管 Explorer 原生桌面的前提下，通过确定性规则与可选 AI 建议理解桌面项目用途，提供分区、布局、待确认工作流，并在安全策略允许时进入受控执行链。
 
-> 当前状态：**v1.0 Core Feature Freeze 已激活；M5-05 Daily Workflow + Layout Management 已完成，正在推进 M5-06 Diagnostics / Workbench Split。**
+> 当前版本：**1.0.0**。产品主线已改为「以 AI 对话为中心的工作区设计」，具备校准、设计、预览、应用、撤销的完整闭环。
+> 变更见 [CHANGELOG.md](CHANGELOG.md)，已知限制见下方「已知限制」。
 
-2026-10-20 本地重构进度：正在把产品改为以 AI 对话为主入口，已接入强制校准、共享设计草稿与撤销、流式对话、顶部拓扑展示和保存/精确预览操作卡片。分区拖动与真实网格吸附、仅分析变化项目，以及新版完整真机验收仍未完成，当前不是发布就绪状态。最新本地 Release 测试为 2534 项通过；下方 GitHub Actions 数字是历史远端基线，不代表本次代码已获远端验证。范围与限制见 `docs/experiments/2026-10-20-ai-workspace-session-and-chat.md`。
+## 下载与安装
+
+1. 从 [Releases](https://github.com/t1mb2rg/DesktopAgent/releases) 下载 `Tessel-Setup-<版本>.exe`。
+2. 双击安装。默认装到当前用户目录（`%LOCALAPPDATA%\Programs\Tessel`），**不需要管理员权限**。
+   也可以选择「下载 zip 解压即用」的绿色包。
+3. 首次启动会要求**校准全部显示器的桌面网格**：产品会临时创建并移动专用测试图标完成测量，
+   需要单独确认；取消或失败不会跳过校准。
+4. 校准通过后进入 AI 助手页，描述你想要的桌面样子即可。
+
+校准必须在**当前显示环境下**完成；之后如果改了分辨率、缩放、显示排列或任务栏位置，需要重新校准。
+
+### 数据放在哪
+
+| 内容 | 路径 |
+| --- | --- |
+| 数据库（设计、会话、恢复检查点） | `%LOCALAPPDATA%\Tessel\desktop-agent.db` |
+| 设置与外观 | `%LOCALAPPDATA%\Tessel\settings.json` |
+| 校准事实 | `%LOCALAPPDATA%\Tessel\grid-calibration-environment.json` |
+| 当前设计草稿 | `%LOCALAPPDATA%\Tessel\workspace-session.json` |
+| API Key | Windows DPAPI Secret Store（不落明文） |
+
+从旧版本升级时数据目录不变，直接覆盖安装即可。
+
+### 卸载
+
+设置 → 应用 → 已安装的应用 → Tessel → 卸载，或运行安装目录下的 `unins000.exe`。
+卸载**只删除程序本体**，`%LOCALAPPDATA%\Tessel` 下的数据会保留；确认不再需要时手动删除该目录。
 
 ## 当前产品形态
 
@@ -14,11 +41,13 @@ DesktopAgent 现在明确分为两个 Surface。
 
 正式产品壳，面向日常使用：
 
-- 概览 / AI 助手 / 待确认 / 布局 / 设置；
+- 桌面 / 设计库 / AI 助手 / 待处理 / 设置；
 - 单实例与 Windows 托盘常驻；
 - 关闭主窗口后继续驻留，托盘可直接打开页面或退出；
-- 布局模板、主动布局偏好、Fresh Impact Preview；
-- Desktop Zone Overlay，支持 Light / Standard / Strong / Custom；
+- AI 对话式工作区设计（理解一次，之后轻量对话调整）；
+- 设计库：保存、按版本查看、删除；
+- 单屏布局模板与 Fresh Impact Preview；
+- Desktop Zone Overlay，支持 Light / Standard / Strong / Custom，改外观后线框实时生效；
 - Ring ColorPicker、全局颜色和逐 Zone 独立颜色；
 - Pending Queue 只读产品页；
 - Automation Mode 与 AI Provider 设置。
@@ -101,19 +130,50 @@ dotnet build DesktopAgent.sln -c Release
 dotnet test tests\DesktopAgent.Tests\DesktopAgent.Tests.csproj -c Release --no-build
 ```
 
+## 构建与打包
+
+```powershell
+# 开发调试
+dotnet build DesktopAgent.sln -c Debug -p:Platform=x64
+
+# 全量测试
+dotnet test tests\DesktopAgent.Tests\DesktopAgent.Tests.csproj -c Release -p:Platform=x64
+
+# 一条命令出发布包（构建 + 测试 + 自包含发布 + 裁剪 + zip + 安装器）
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Clean
+```
+
+`publish.ps1` 产物都在 `artifacts\release\`：
+
+| 产物 | 说明 |
+| --- | --- |
+| `Tessel-<版本>-win-x64\` | 自包含发布目录，解压即用 |
+| `Tessel-<版本>-win-x64.zip` | 绿色包 |
+| `Tessel-Setup-<版本>.exe` | 安装器（需要 Inno Setup 6） |
+
+常用开关：`-SkipTests`、`-SkipTrim`、`-SkipInstaller`、`-Version x.y.z`、`-Launch`、`-IsccPath`。
+
 ## 当前验证基线
 
-最近一次真正启动并完整执行的 GitHub Actions 为 **#344**：
+- Release 全量测试 **2587 / 2587 通过**（0 失败、0 跳过）；
+- GitHub Actions `build` 工作流：restore → Debug 构建 → Release 构建 → Release 测试；
+- 真机验收在 Windows 11 三屏环境完成：校准往返、跨屏汇聚与一键回滚、设计库增删、
+  线框外观实时刷新、安装 → 启动 → 卸载。
 
-- Restore PASS
-- Debug build PASS
-- Release build PASS
-- Release tests PASS
-- **1841 / 1841 PASS**
-- 121 条既有 baseline warnings
-- 0 errors
+历史 Actions 曾因 GitHub billing / spending-limit 外部 Gate 无法启动 runner，那段时间的代码由本机
+build 与真实 Windows 验证承担；当前远端 CI 已恢复正常。
 
-后续 Actions 因 GitHub billing / spending-limit 外部 Gate 无法启动 runner，因此最新 M5-05 / M5-06 代码暂由本机 build 与真实 Windows Gate 承担 freshness validation。外部 CI 阻塞不视为代码失败。
+## 已知限制
+
+- **无人值守自动执行未启用。** 引擎、安全门与「记住这块屏」授权都在代码里，但产品壳默认只到
+  「建议 / 协助」级别；开启属于实验特性，需要显式验收钥匙，本轮未纳入发布形态。
+- 只有 x64 构建，没有 arm64。
+- 没有自动更新；升级方式是重新运行新版安装器覆盖安装。
+- 校准会临时创建并移动专用测试图标，必须由用户单独确认。
+- 界面与真机验收在 Windows 11 三屏环境完成，其他多屏组合尚未逐一验收。
+- 已知崩溃根因未完全定位：极少数情况下「应用到桌面」可能让进程异常退出（`0xc000027b`），
+  应用前会保存安全检查点，桌面上的写入是 fail-closed 的；如果遇到请反馈
+  `%TEMP%\tessel-product-crash.log`。
 
 ## 已冻结的安全原则
 
@@ -140,10 +200,10 @@ M5-02  Pending Queue / Confirm / Remember COMPLETE
 M5-03  WinUI Product Shell                COMPLETE
 M5-04  First-run / Settings / AI Config   COMPLETE
 M5-05  Daily Workflow / Layout Management COMPLETE
-M5-06  Diagnostics / Workbench Split      ACTIVE
+M5-06  Diagnostics / Workbench Split      COMPLETE
 M5-07  Performance / Long-run Stability   NEXT
-M5-08  Packaging / Install / Upgrade
-M5-09  Product E2E / RC
+M5-08  Packaging / Install / Upgrade       COMPLETE (1.0.0)
+M5-09  Product E2E / RC                   NEXT
 ```
 
 M5-06 不新增 Writer 能力，重点是让正式产品壳与工程诊断工具在身份、常驻职责和 UI 语义上彻底分开。
