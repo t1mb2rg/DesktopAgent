@@ -20,13 +20,32 @@ public sealed class DesktopZoneOverlayHost : IDisposable
     private static DesktopOverlayAppearanceSettings _defaultAppearance =
         DesktopOverlayAppearanceSettings.Standard;
 
+    private static EventHandler<DesktopOverlayAppearanceSettings>? _defaultAppearanceChanged;
+
     private nint _fillWindow;
     private nint _chromeWindow;
     private bool _disposed;
 
+    private DisplayDescriptor? _lastDisplay;
+    private IReadOnlyList<DesktopLayoutZone>? _lastZones;
+    private IReadOnlyDictionary<Guid, uint>? _lastZoneColors;
+
+    public DesktopZoneOverlayHost()
+    {
+        _defaultAppearanceChanged += OnDefaultAppearanceChanged;
+    }
+
+    /// <summary>产品外观偏好变化时触发，用于让已经显示中的线框立即换成新外观。</summary>
+    public static event EventHandler<DesktopOverlayAppearanceSettings> DefaultAppearanceChanged
+    {
+        add => _defaultAppearanceChanged += value;
+        remove => _defaultAppearanceChanged -= value;
+    }
+
     /// <summary>
     /// 当前进程中新建 Overlay 使用的产品外观快照。设置页只在读取/应用已持久化偏好后更新它。
     /// 显式传入 appearance 的桌面临时预览不受此值限制。
+    /// 值发生变化时会让所有已显示的线框用新外观重建，否则设置页改了偏好也要等重新打开线框才生效。
     /// </summary>
     public static DesktopOverlayAppearanceSettings DefaultAppearance
     {
@@ -34,8 +53,33 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         set
         {
             ArgumentNullException.ThrowIfNull(value);
+            var previous = _defaultAppearance;
             _defaultAppearance = value;
+            if (SameAppearance(previous, value))
+                return;
+
+            _defaultAppearanceChanged?.Invoke(null, value);
         }
+    }
+
+    private static bool SameAppearance(
+        DesktopOverlayAppearanceSettings left,
+        DesktopOverlayAppearanceSettings right)
+        => left.Preset == right.Preset
+            && left.BorderThicknessDip.Equals(right.BorderThicknessDip)
+            && left.BorderOpacity.Equals(right.BorderOpacity)
+            && left.FillOpacity.Equals(right.FillOpacity)
+            && left.CornerRadiusDip.Equals(right.CornerRadiusDip)
+            && left.ZoneColorRgb == right.ZoneColorRgb;
+
+    private void OnDefaultAppearanceChanged(
+        object? sender,
+        DesktopOverlayAppearanceSettings appearance)
+    {
+        if (_disposed || !IsVisible || _lastDisplay is null || _lastZones is null)
+            return;
+
+        Show(_lastDisplay, _lastZones, appearance, _lastZoneColors);
     }
 
     public bool IsVisible =>
@@ -67,6 +111,10 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
         var colorSnapshot = SnapshotZoneColorOverrides(zoneColorOverrides);
 
+        _lastDisplay = display;
+        _lastZones = zones;
+        _lastZoneColors = colorSnapshot;
+
         Hide();
         var windows = NativeOverlayWindow.Create(display, zones, appearance, colorSnapshot);
         _fillWindow = windows.FillWindow;
@@ -92,6 +140,10 @@ public sealed class DesktopZoneOverlayHost : IDisposable
             return;
 
         _disposed = true;
+        _defaultAppearanceChanged -= OnDefaultAppearanceChanged;
+        _lastDisplay = null;
+        _lastZones = null;
+        _lastZoneColors = null;
         Hide();
         GC.SuppressFinalize(this);
     }
