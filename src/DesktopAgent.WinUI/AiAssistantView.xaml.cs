@@ -1,10 +1,14 @@
-﻿using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.Intelligence;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Editing;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Windows.System;
+using Windows.UI.Core;
 
 namespace DesktopAgent.WinUI;
 
@@ -105,6 +109,24 @@ public sealed partial class AiAssistantView : UserControl
             SetBusy(false);
         }
     }
+
+    private void AiGuidanceTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Handled || e.Key != VirtualKey.Enter)
+            return;
+
+        // Shift+Enter 保留为换行；输入法正在组合时也不拦截，让 IME 自行上屏。
+        var shiftState = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
+        if ((shiftState & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down)
+            return;
+
+        e.Handled = true;
+        AnalyzeDesktop_Click(AiAnalyzeButton, new RoutedEventArgs());
+    }
+
+    // TextBox 内部会先行消费 Enter，所以真正的拦截必须走隧道的 PreviewKeyDown。
+    private void AiGuidanceTextBox_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+        => AiGuidanceTextBox_KeyDown(sender, e);
 
     private async void AnalyzeDesktop_Click(object sender, RoutedEventArgs e)
     {

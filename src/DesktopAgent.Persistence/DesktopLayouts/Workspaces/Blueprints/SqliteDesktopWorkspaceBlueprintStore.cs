@@ -317,6 +317,31 @@ public sealed class SqliteDesktopWorkspaceBlueprintStore : IDesktopWorkspaceBlue
         return Task.FromResult<IReadOnlyList<DesktopWorkspaceBlueprintAssetSummary>>(results);
     }
 
+    public Task<bool> ArchiveAsync(
+        Guid blueprintId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (blueprintId == Guid.Empty)
+            throw new ArgumentException("BlueprintId 不能是空 Guid。", nameof(blueprintId));
+
+        using var connection = CreateConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            UPDATE workspace_blueprints
+               SET is_archived = 1,
+                   updated_at_utc = CASE
+                       WHEN updated_at_utc > @updated_at_utc THEN updated_at_utc
+                       ELSE @updated_at_utc
+                   END
+             WHERE blueprint_id = @blueprint_id
+               AND is_archived = 0;
+        ";
+        command.Parameters.AddWithValue("@updated_at_utc", FormatTimestamp(DateTimeOffset.UtcNow));
+        command.Parameters.AddWithValue("@blueprint_id", blueprintId.ToString("D"));
+        return Task.FromResult(command.ExecuteNonQuery() > 0);
+    }
+
     private static void InsertRevision(
         SqliteConnection connection,
         SqliteTransaction transaction,

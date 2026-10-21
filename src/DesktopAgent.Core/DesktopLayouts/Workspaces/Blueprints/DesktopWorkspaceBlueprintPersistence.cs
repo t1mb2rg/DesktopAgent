@@ -113,4 +113,13 @@ public interface IDesktopWorkspaceBlueprintStore
         bool includeArchived = false,
         int limit = 50,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 把设计从设计库移除（归档）。只翻转资产的 <c>is_archived</c>，不删 immutable revisions，
+    /// 因此历史版本仍可审计，也允许将来恢复；不触碰桌面图标，也不影响执行记录。
+    /// 返回 false 表示该资产不存在或已被归档。
+    /// </summary>
+    Task<bool> ArchiveAsync(
+        Guid blueprintId,
+        CancellationToken cancellationToken = default);
 }

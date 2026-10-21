@@ -56,7 +56,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="300" />
                         </Grid.ColumnDefinitions>
-                        <Border Padding="18" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource TesselBrandBorderBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <Border Padding="18" CornerRadius="12" BorderThickness="1" BorderBrush="{StaticResource TesselBrandBorderBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                             <Grid RowSpacing="10">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -89,28 +89,28 @@
                             </Grid>
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="10">
-                            <Border Padding="15" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Tapped="CurrentLayoutCard_Tapped">
+                            <Border Padding="15" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Tapped="CurrentLayoutCard_Tapped">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="当前布局" FontWeight="SemiBold" Opacity="0.68" />
                                     <TextBlock x:Name="HomeCurrentLayoutText" Text="正在读取…" FontSize="20" TextTrimming="CharacterEllipsis" />
                                     <TextBlock x:Name="HomeCurrentLayoutDetailText" Text="正在读取布局摘要。" TextWrapping="Wrap" Opacity="0.56" />
                                 </StackPanel>
                             </Border>
-                            <Border Padding="15" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Tapped="AutomationCard_Tapped">
+                            <Border Padding="15" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Tapped="AutomationCard_Tapped">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="自动化" FontWeight="SemiBold" Opacity="0.68" />
                                     <TextBlock x:Name="HomeAutomationModeText" Text="Assisted" FontSize="20" />
                                     <TextBlock Text="需要你的地方会留给你决定。" TextWrapping="Wrap" Opacity="0.56" />
                                 </StackPanel>
                             </Border>
-                            <Border Padding="15" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Tapped="PendingCard_Tapped">
+                            <Border Padding="15" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Tapped="PendingCard_Tapped">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="待确认" FontWeight="SemiBold" Opacity="0.68" />
                                     <TextBlock x:Name="HomePendingCountText" Text="—" FontSize="20" />
                                     <TextBlock x:Name="HomePendingDetailText" Text="正在读取待确认队列。" TextWrapping="Wrap" Opacity="0.56" />
                                 </StackPanel>
                             </Border>
-                            <Border Padding="15" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <Border Padding="15" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="桌面概况" FontWeight="SemiBold" Foreground="{StaticResource TesselBrandBrush}" Opacity="0.82" />
                                     <TextBlock x:Name="HomeDesktopHealthText" Text="等待桌面观察" FontSize="20" FontWeight="SemiBold" />
@@ -119,7 +119,7 @@
                             </Border>
                         </StackPanel>
                     </Grid>
-                    <Border Grid.Row="2" Margin="0,12,0,0" Padding="14,11" CornerRadius="8" BorderThickness="1" BorderBrush="{StaticResource TesselBrandBorderBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Border Grid.Row="2" Margin="0,12,0,0" Padding="14,11" CornerRadius="12" BorderThickness="1" BorderBrush="{StaticResource TesselBrandBorderBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
@@ -148,7 +148,7 @@
                         <TextBlock Text="AI 助手" FontSize="28" FontWeight="SemiBold" />
                         <TextBlock Text="讨论布局、规则和整理习惯。" Opacity="0.62" />
                     </StackPanel>
-                    <Border Grid.Row="1" Margin="0,24,0,16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Border Grid.Row="1" Margin="0,24,0,16" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" MaxWidth="520" Padding="40">
                             <TextBlock Text="✦" FontSize="44" HorizontalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                             <TextBlock Text="从一句话开始" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" />
@@ -197,7 +197,7 @@
                         <ListView x:Name="PendingList" Visibility="Collapsed" SelectionMode="None">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Margin="0,0,0,8" Padding="16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                                    <Border Margin="0,0,0,8" Padding="16" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                         <Grid RowSpacing="7" ColumnSpacing="16">
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto" />
@@ -236,7 +236,7 @@
                                     <Button Content="第一步：前往校准桌面网格" Click="OpenGridPreparation_Click" />
                                 </InfoBar.ActionButton>
                             </InfoBar>
-                            <Border Padding="16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <Border Padding="16" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Automation Mode" FontSize="18" FontWeight="SemiBold" />
                                     <ComboBox x:Name="AutomationModeCombo" Header="自动化模式" SelectedIndex="1">
@@ -247,7 +247,7 @@
                                     <TextBlock Text="Automatic 仍不会让 AI-only 判断直接执行。" TextWrapping="Wrap" Opacity="0.58" />
                                 </StackPanel>
                             </Border>
-                            <Border Padding="16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                            <Border Padding="16" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="AI Provider" FontSize="18" FontWeight="SemiBold" />
                                     <ToggleSwitch x:Name="AiEnabledToggle" Header="启用 AI" OffContent="关闭" OnContent="启用" />

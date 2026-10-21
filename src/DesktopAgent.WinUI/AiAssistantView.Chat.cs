@@ -126,20 +126,27 @@ public sealed partial class AiAssistantView
         foreach (var message in snapshot.Messages)
         {
             var content = new StackPanel { Spacing = 6, MaxWidth = 820 };
+            var isUser = message.Role == DesktopWorkspaceMessageRole.User;
             content.Children.Add(new TextBlock
             {
                 Text = message.Role == DesktopWorkspaceMessageRole.User ? "你" :
                     message.Role == DesktopWorkspaceMessageRole.LocalResult ? "操作结果" : "Tessel",
-                FontSize = 12, Opacity = 0.55,
+                FontSize = 11, Opacity = 0.5,
             });
             content.Children.Add(message.Role == DesktopWorkspaceMessageRole.Assistant
                 ? ChatMarkdownRenderer.Render(message.Text)
                 : new TextBlock { Text = message.Text, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 15 });
-            AiChatMessages.Children.Add(new Border { Child = content, Padding = new Thickness(16),
-                CornerRadius = new CornerRadius(8), HorizontalAlignment = message.Role == DesktopWorkspaceMessageRole.User
-                    ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            AiChatMessages.Children.Add(new Border
+            {
+                Child = content,
+                Padding = new Thickness(16, 13, 16, 13),
+                CornerRadius = new CornerRadius(12),
+                HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+                BorderThickness = new Thickness(1),
+                BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(22, 128, 128, 128)),
                 Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(
-                    message.Role == DesktopWorkspaceMessageRole.User ? (byte)35 : (byte)18, 128, 128, 128)) });
+                    isUser ? (byte)42 : (byte)16, 128, 128, 128)),
+            });
         }
         AiWelcomePanel.Visibility = snapshot.Messages.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderChatTopology();

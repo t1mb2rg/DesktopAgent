@@ -343,6 +343,44 @@ public sealed class SqliteDesktopWorkspaceBlueprintStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ArchiveAsync_HidesAssetFromLibraryButKeepsImmutableRevisions()
+    {
+        var store = CreateStore();
+        await store.InitializeAsync();
+
+        var id = Guid.NewGuid();
+        var createdAt = new DateTimeOffset(2026, 8, 28, 1, 0, 0, TimeSpan.Zero);
+        await store.CreateAsync(
+            "要删除的设计",
+            new DesktopWorkspaceBlueprintRevisionRecord(MakeBlueprint(id, 1, null, "v1"), createdAt));
+
+        Assert.True(await store.ArchiveAsync(id));
+
+        Assert.Empty(await store.ListAsync());
+
+        var withArchived = await store.ListAsync(includeArchived: true);
+        var asset = Assert.Single(withArchived);
+        Assert.True(asset.IsArchived);
+
+        // 归档只翻转资产的 is_archived，不销毁历史版本，也不让 updated_at 倒退到 created_at 之前。
+        var revision = await store.GetRevisionAsync(id, 1);
+        Assert.NotNull(revision);
+        Assert.True(asset.UpdatedAtUtc >= asset.CreatedAtUtc);
+
+        // 重复归档是幂等的，返回 false 且不产生第二份记录。
+        Assert.False(await store.ArchiveAsync(id));
+        Assert.Single(await store.ListAsync(includeArchived: true));
+
+        // 未归档的资产不受影响。
+        var otherId = Guid.NewGuid();
+        await store.CreateAsync(
+            "保留的设计",
+            new DesktopWorkspaceBlueprintRevisionRecord(MakeBlueprint(otherId, 1, null, "keep"), createdAt));
+        var active = Assert.Single(await store.ListAsync());
+        Assert.Equal(otherId, active.BlueprintId);
+    }
+
+    [Fact]
     public async Task NewV9Stores_UseSharedInitializer_Idempotently()
     {
         var understandingDb = Path.Combine(_tempDir, "understanding-shared.db");
