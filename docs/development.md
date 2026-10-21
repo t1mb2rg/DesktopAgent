@@ -183,6 +183,7 @@ M5-06 不新增 Writer 能力，重点是让正式产品壳与工程诊断工具
 | 目录 | 内容 |
 | --- | --- |
 | [`architecture.md`](architecture.md) | 架构分层、一次写入的完整数据流、六个核心概念、六道安全闸、关键实现细节 |
+| [`grid-measurement.md`](grid-measurement.md) | 桌面网格识别专篇：三要素、主动探测流程、双证据交叉验证、事实→坐标换算、拓扑指纹与校准门 |
 | [`pitfalls.md`](pitfalls.md) | 15 个真实阻断点：现象 / 定位 / 根因 / 解法 / 教训，按 Shell、撤销、预览、自动化、工程分组 |
 | [`decisions/`](decisions/) | 关键技术决策与其理由 |
 | [`experiments/`](experiments/) | 逐轮实验记录，含真机验收证据与失败复盘（94 篇） |

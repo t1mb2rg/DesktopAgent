@@ -98,6 +98,8 @@
 
 - **架构与关键实现**：[`docs/architecture.md`](docs/architecture.md) —— 分层职责、数据流、
   六道安全闸、坐标换算与设计会话等核心机制
+- **桌面网格识别**：[`docs/grid-measurement.md`](docs/grid-measurement.md) —— 项目最难的一块：
+  间距可以问、原点只能测，双证据如何交叉验证，以及为什么「测不到的屏就不写事实」
 - **我们踩过的坑**：[`docs/pitfalls.md`](docs/pitfalls.md) —— 15 个真实阻断点：现象、定位过程、
   根因、解法与可迁移的教训（含失败与误判，不是变更日志）
 - 历史实验与真机验收记录：[`docs/experiments/`](docs/experiments/)
