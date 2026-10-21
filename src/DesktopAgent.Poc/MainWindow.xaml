@@ -153,6 +153,29 @@
                     </StackPanel>
                 </DockPanel>
             </TabItem>
+            <TabItem Header="Explorer Grid Physical Probe v1">
+                <DockPanel Margin="4">
+                    <StackPanel DockPanel.Dock="Left" MaxWidth="590">
+                        <TextBlock FontSize="15" FontWeight="SemiBold"
+                                   Text="Explorer Grid Physical Probe v1 — 仅限 Diagnostics Workbench" />
+                        <TextBlock x:Name="GridProbeStatusText" Margin="0,2,12,0" Foreground="Gray"
+                                   TextWrapping="Wrap"
+                                   Text="每屏创建一个本次运行专用的临时 .url 快捷方式，执行完整横线、完整纵线和四角验证；不会把既有桌面图标移到新的位置——若 Explorer 在运行期间挪动了它们，收尾时会把它们放回运行前的位置并复核（报告里为 UserIconsRepaired/unrepaired）。" />
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <CheckBox x:Name="GridProbeConsentCheckBox" VerticalAlignment="Center"
+                                  Width="230" Margin="0,0,8,0"
+                                  Checked="GridProbeConsentChanged" Unchecked="GridProbeConsentChanged">
+                            <TextBlock TextWrapping="Wrap"
+                                       Text="我确认：这是实机写入诊断；运行期间不手动改动桌面或显示器拓扑" />
+                        </CheckBox>
+                        <Button x:Name="RunGridProbeButton" Width="110" Height="32" Margin="0,0,8,0"
+                                Click="RunGridProbe_Click" Content="运行 Probe" IsEnabled="False" />
+                        <Button x:Name="CancelGridProbeButton" Width="90" Height="32"
+                                Click="CancelGridProbe_Click" Content="停止" IsEnabled="False" />
+                    </StackPanel>
+                </DockPanel>
+            </TabItem>
         </TabControl>
 
         <!-- ── 10 快照标题 ── -->
@@ -206,6 +229,64 @@
                          Text="等待读取显示器信息。" />
                 <TextBlock x:Name="TargetText" Grid.Row="2" Margin="0,4,0,0"
                            FontWeight="SemiBold" Foreground="#0078D4" Text="" />
+            </Grid>
+        </Border>
+
+        <!-- ═══ 跨重启恢复状态区域 ═══ -->
+        <Border Grid.Row="12" Grid.RowSpan="3" Panel.ZIndex="20"
+                Margin="0" Padding="12" CornerRadius="6"
+                Background="#FFF8E1" BorderBrush="#FFB74D" BorderThickness="1"
+                x:Name="RecoveryBorder" Visibility="Collapsed"
+                IsVisibleChanged="RecoveryBorder_IsVisibleChanged">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <DockPanel Grid.Row="0" LastChildFill="True">
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button x:Name="RecoveryRefreshButton" Width="90" Height="28" Margin="0,0,8,0"
+                                Content="重新检查" Click="RecoveryRefresh_Click" />
+                        <Button x:Name="RecoveryCopyDiagnosticsButton" Width="110" Height="28"
+                                Content="复制恢复诊断" Click="RecoveryCopyDiagnostics_Click" />
+                    </StackPanel>
+                    <TextBlock FontWeight="SemiBold" FontSize="14" Foreground="#E65100"
+                               VerticalAlignment="Center" Text="检测到未解决的恢复会话" />
+                </DockPanel>
+
+                <TextBlock x:Name="RecoveryStatusText" Grid.Row="1" Margin="0,6,0,8" FontSize="12"
+                           Foreground="#6D4C41" TextWrapping="Wrap" />
+
+                <DataGrid x:Name="RecoverySessionsGrid" Grid.Row="2"
+                          AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                          SelectionMode="Single" SelectionUnit="FullRow" RowHeight="27"
+                          SelectionChanged="RecoverySessionsGrid_SelectionChanged">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="会话" Width="80" Binding="{Binding SessionIdShort}" />
+                        <DataGridTextColumn Header="显示器" Width="120" Binding="{Binding TargetDeviceName}" />
+                        <DataGridTextColumn Header="开始时间" Width="150" Binding="{Binding StartedAtLocal}" />
+                        <DataGridTextColumn Header="Lifecycle" Width="150" Binding="{Binding Lifecycle}" />
+                        <DataGridTextColumn Header="处置" Width="110" Binding="{Binding Handling}" />
+                        <DataGridTextColumn Header="安全分类" Width="*" Binding="{Binding Safety}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <TextBox x:Name="RecoverySessionDetailsText" Grid.Row="3" Margin="0,8,0,8"
+                         MinHeight="72" MaxHeight="105" IsReadOnly="True" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto" Background="#FFFFF8" BorderBrush="#E0C080"
+                         Padding="6" Text="请选择一个恢复会话。" />
+
+                <DockPanel Grid.Row="4">
+                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="#795548"
+                               Text="一次只处理一个会话；每次处理前都会重新读取当前持久化状态和真实桌面。" />
+                    <Button x:Name="RecoveryRestoreButton" DockPanel.Dock="Right"
+                            Width="165" Height="30" Margin="12,0,0,0" IsEnabled="False"
+                            Content="检查并恢复选中会话" Click="RecoveryRestoreSelected_Click" />
+                </DockPanel>
             </Grid>
         </Border>
     </Grid>

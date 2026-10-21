@@ -28,15 +28,14 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
         foreach (var item in previewPlan.Items)
         {
             var icon = item.Icon;
-            PixelPoint targetPos;
-            string? mon;
 
             switch (item.PlacementState)
             {
                 case DesktopLayoutRuleAwarePreviewPlacementState.Fixed:
-                    targetPos = item.CurrentPosition;
-                    mon = targetDeviceName;
-                    break;
+                    // Exclude / Pin 是“明确不参与执行”的当前事实，不是恢复目标。
+                    // 它们仍保留在 currentReadResult 中，Restore Planner 会把它们当作真实占位者
+                    // 参与碰撞 / 阻断判断，但 Writer 永远不会把它们当成待恢复项目。
+                    continue;
 
                 case DesktopLayoutRuleAwarePreviewPlacementState.Unassigned:
                     throw new InvalidOperationException(
@@ -44,23 +43,20 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
 
                 case DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget:
                 case DesktopLayoutRuleAwarePreviewPlacementState.MoveRequired:
-                    targetPos = item.TargetPosition!.Value;
-                    mon = targetDeviceName;
+                    descriptors.Add(new DesktopIconDescriptor(
+                        icon.StableId,
+                        icon.DisplayName,
+                        icon.ParsingName,
+                        icon.ItemKind,
+                        item.TargetPosition!.Value,
+                        targetDeviceName,
+                        icon.IsSystemItem,
+                        icon.IsFileSystemItem));
                     break;
 
                 default:
                     throw new InvalidOperationException($"未处理的 PlacementState: {item.PlacementState}");
             }
-
-            descriptors.Add(new DesktopIconDescriptor(
-                icon.StableId,
-                icon.DisplayName,
-                icon.ParsingName,
-                icon.ItemKind,
-                targetPos,
-                mon,
-                icon.IsSystemItem,
-                icon.IsFileSystemItem));
         }
 
         // OutOfScope: keep current position and monitor
@@ -77,7 +73,7 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
                 oos.IsFileSystemItem));
         }
 
-        // Sort to restore InputIcons order
+        // Sort to preserve InputIcons relative order after Fixed items are removed.
         var itemBySid = new Dictionary<string, int>(StringComparer.Ordinal);
         for (var i = 0; i < previewPlan.InputIcons.Count; i++)
             itemBySid[previewPlan.InputIcons[i].StableId] = i;
@@ -106,10 +102,23 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
         DesktopLayoutSnapshot snapshot,
         DesktopLayoutRuleAwarePreviewPlan previewPlan)
     {
-        if (snapshot.Icons.Count != previewPlan.InputIconCount)
-            throw new InvalidOperationException(
-                $"目标快照图标数量 ({snapshot.Icons.Count}) != PreviewPlan.InputIconCount ({previewPlan.InputIconCount})。");
+        var fixedStableIds = previewPlan.Items
+            .Where(item => item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.Fixed)
+            .Select(item => item.Icon.StableId)
+            .ToHashSet(StringComparer.Ordinal);
 
+        var expectedInputIcons = previewPlan.InputIcons
+            .Where(icon => !fixedStableIds.Contains(icon.StableId))
+            .ToList();
+
+        if (snapshot.Icons.Count != expectedInputIcons.Count)
+            throw new InvalidOperationException(
+                $"目标快照图标数量 ({snapshot.Icons.Count}) != 可执行目标 + OOS 数量 ({expectedInputIcons.Count})。"
+                + $" Fixed={fixedStableIds.Count}。"
+            );
+
+        var previewItemsBySid = previewPlan.Items
+            .ToDictionary(item => item.Icon.StableId, StringComparer.Ordinal);
         var seenSids = new HashSet<string>(StringComparer.Ordinal);
         var targetPositions = new HashSet<PixelPoint>();
         var targetMon = previewPlan.TargetDisplay.DeviceName;
@@ -117,7 +126,7 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
         for (var i = 0; i < snapshot.Icons.Count; i++)
         {
             var si = snapshot.Icons[i];
-            var pi = previewPlan.InputIcons[i];
+            var pi = expectedInputIcons[i];
 
             if (si.Ordinal != i)
                 throw new InvalidOperationException($"目标快照 Ordinal[{i}] 不连续。");
@@ -125,12 +134,10 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
                 throw new InvalidOperationException($"目标快照 StableId[{i}] 不匹配。");
             if (!seenSids.Add(si.StableId))
                 throw new InvalidOperationException($"目标快照 StableId \"{si.StableId}\" 重复。");
+            if (fixedStableIds.Contains(si.StableId))
+                throw new InvalidOperationException($"Fixed 图标不允许进入执行目标快照: {si.StableId}。");
 
-            // 找到对应的 PreviewItem
-            DesktopLayoutRuleAwarePreviewItem? item = null;
-            foreach (var pItem in previewPlan.Items)
-                if (ReferenceEquals(pItem.Icon, pi)) { item = pItem; break; }
-            if (item is null)
+            if (!previewItemsBySid.TryGetValue(si.StableId, out var item))
             {
                 // OutOfScope
                 if (!string.Equals(si.MonitorDeviceName ?? "", pi.MonitorDeviceName ?? "", StringComparison.Ordinal))
@@ -141,24 +148,24 @@ public static class DesktopLayoutRuleAwareTargetSnapshotFactory
                 continue;
             }
 
-            // Target display icons
+            if (!item.IsAssigned || !item.TargetPosition.HasValue)
+                throw new InvalidOperationException($"非 Assigned 图标意外进入执行目标快照: {si.StableId}。");
+
+            // Target display managed icons
             if (!string.Equals(si.MonitorDeviceName, targetMon, StringComparison.Ordinal))
                 throw new InvalidOperationException(
                     $"目标显示器图标 MonitorDeviceName 不一致: {si.StableId}。");
 
-            if (item.IsAssigned)
+            if (si.PixelPosition != item.TargetPosition.Value)
+                throw new InvalidOperationException($"Assigned 图标位置不等于 TargetPosition: {si.StableId}。");
+
+            if (item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget
+                && si.PixelPosition != item.CurrentPosition)
             {
-                if (si.PixelPosition != item.TargetPosition!.Value)
-                    throw new InvalidOperationException($"Assigned 图标位置不等于 TargetPosition: {si.StableId}。");
+                throw new InvalidOperationException($"AlreadyAtTarget 图标 TargetPosition != Current: {si.StableId}。");
             }
 
-            if (item.IsAssigned && item.PlacementState == DesktopLayoutRuleAwarePreviewPlacementState.AlreadyAtTarget)
-            {
-                if (si.PixelPosition != item.CurrentPosition)
-                    throw new InvalidOperationException($"AlreadyAtTarget 图标 TargetPosition != Current: {si.StableId}。");
-            }
-
-            // 目标显示器内目标坐标唯一
+            // 目标显示器内执行目标坐标唯一
             if (!targetPositions.Add(si.PixelPosition))
                 throw new InvalidOperationException(
                     $"目标显示器内目标坐标重复: ({si.PixelPosition.X},{si.PixelPosition.Y})。");

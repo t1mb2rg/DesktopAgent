@@ -4,7 +4,6 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main, develop]
 
 permissions:
   contents: read
@@ -12,6 +11,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -25,8 +25,29 @@ jobs:
       - name: Restore
         run: dotnet restore DesktopAgent.sln
 
-      - name: Build
+      - name: Build Debug
+        run: dotnet build DesktopAgent.sln --configuration Debug --no-restore
+
+      - name: Build Release
         run: dotnet build DesktopAgent.sln --configuration Release --no-restore
 
-      - name: Test
-        run: dotnet test tests/DesktopAgent.Tests/DesktopAgent.Tests.csproj --configuration Release --no-build
+      - name: Test Release with hang diagnostics
+        run: >-
+          dotnet test tests/DesktopAgent.Tests/DesktopAgent.Tests.csproj
+          --configuration Release
+          --no-build
+          --results-directory TestResults
+          --logger "trx;LogFileName=DesktopAgent.Tests.trx"
+          --diag TestResults/vstest-diag.log
+          --blame-hang
+          --blame-hang-timeout 2m
+          --blame-hang-dump-type mini
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics
+          path: TestResults/**
+          if-no-files-found: ignore
+          retention-days: 7

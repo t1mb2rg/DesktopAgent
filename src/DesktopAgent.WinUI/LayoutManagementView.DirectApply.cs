@@ -1,0 +1,357 @@
+using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+using DesktopAgent.Persistence.DesktopLayouts;
+using DesktopAgent.WindowsInterop.DesktopLayouts.Restore.Execution;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
+
+namespace DesktopAgent.WinUI;
+
+public sealed partial class LayoutManagementView
+{
+    private readonly SqliteDesktopLayoutSnapshotStore _directApplySnapshotStore =
+        new(DesktopAgentDataPaths.DefaultDatabasePath);
+    private readonly SqliteRecoverySessionStore _directApplyRecoveryStore =
+        new(DesktopAgentDataPaths.DefaultDatabasePath);
+
+    private DesktopLayoutDirectApplyService? _directApplyService;
+    private bool _directApplyInProgress;
+
+    private DesktopLayoutDirectApplyService DirectApplyService =>
+        _directApplyService ??= new DesktopLayoutDirectApplyService(
+            _directApplySnapshotStore,
+            _directApplyRecoveryStore,
+            _workspaceExecutionJournalStore,
+            _workspaceDynamicExecutionJournalStore,
+            gridFactReader: _workspaceGridFactReader,
+            calibration: ProductGridCalibration.Calibration);
+
+    private async void ApplyToDesktop_Click(object sender, RoutedEventArgs e)
+    {
+        // async void 事件处理器里逃出去的异常会被 XAML 框架变成 WinRT stowed exception
+        // （0xc000027b，故障模块 Microsoft.UI.Xaml.dll）并直接 fail-fast：进程整个消失，
+        // 事件日志里既没有异常类型也没有调用栈。这里兜住、落日志，并把它变成一条
+        // 用户看得见的错误——"应用"这条路径的失败必须永远是可解释的。
+        try
+        {
+            await ApplyToDesktopCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            ProductCrashDiagnostics.Write("LayoutManagementView.ApplyToDesktop_Click", ex, handled: true);
+            InvalidateDirectApplyEvidence("应用流程发生未预期异常 · 已暂停继续应用");
+            ShowError(
+                "应用流程发生未预期异常",
+                $"{ex.GetType().Name}: {ex.Message}。为安全起见，请先检查恢复状态，不要重复执行。");
+        }
+    }
+
+    private async Task ApplyToDesktopCoreAsync()
+    {
+        var designRevision = _designSession.Session.Snapshot().Revision;
+        if (_directApplyInProgress)
+            return;
+
+        // 新 Workspace Frozen Preview 拥有自己的 confirmation / fresh-check / journal / writer 生命周期。
+        // 这里仅做产品路由，绝不把 Workspace 重新投影回旧单屏 Direct Apply Candidate。
+        if (_workspaceFrozenPreview is not null)
+        {
+            await ApplyWorkspaceFrozenPreviewAsync();
+            return;
+        }
+
+        if (_latestPreview is null)
+        {
+            RefreshApplyButtonFromCurrentEvidence();
+            ShowInfo(
+                "请先预览",
+                "“应用到桌面”只执行你刚刚看过并确认的预览。先点击“预览”读取当前桌面。",
+                InfoBarSeverity.Informational);
+            return;
+        }
+
+        DesktopLayoutEditDraft currentDraft;
+        try
+        {
+            currentDraft = BuildDraftFromEditor();
+        }
+        catch (Exception ex)
+        {
+            ShowError("当前布局不可执行", ex.Message);
+            return;
+        }
+
+        if (!DesktopLayoutDirectApplyPreparationService.HasSameExecutionSemantics(
+                currentDraft,
+                _latestPreview.FrozenDraft))
+        {
+            InvalidateDirectApplyEvidence("布局已变化 · 请重新预览");
+            ShowInfo(
+                "布局在预览后发生了变化",
+                "Writer 未启动。请重新预览当前布局，再决定是否应用到桌面。",
+                InfoBarSeverity.Warning);
+            return;
+        }
+
+        DesktopLayoutDirectApplyPreparation preparation;
+        try
+        {
+            preparation = DesktopLayoutDirectApplyPreparationService.CreateFromPreview(_latestPreview);
+        }
+        catch (Exception ex)
+        {
+            InvalidateDirectApplyEvidence("预览无法建立执行候选 · 请重新预览");
+            ShowError("当前预览不能执行", ex.Message);
+            return;
+        }
+
+        if (!preparation.IsReady || preparation.Candidate is null)
+        {
+            var issues = preparation.CandidateBuildResult.Issues.Count == 0
+                ? "当前预览不能生成安全执行候选。"
+                : string.Join("；", preparation.CandidateBuildResult.Issues.Select(issue => issue.Message));
+            InvalidateDirectApplyEvidence("执行候选不可用 · 请重新预览");
+            ShowInfo("当前预览不能应用", issues, InfoBarSeverity.Warning);
+            return;
+        }
+
+        var candidate = preparation.Candidate;
+        if (candidate.IsNoOp || candidate.MoveRequiredCount == 0)
+        {
+            RefreshApplyButtonFromCurrentEvidence();
+            ShowInfo("已经在目标位置", "当前预览没有需要移动的桌面图标。", InfoBarSeverity.Success);
+            return;
+        }
+
+        if (!candidate.IsExecutable)
+        {
+            // 只有生成过安全执行候选才知道"不可执行"；这条理由绑当次证据，换预览即失效。
+            BlockApplyForCurrentEvidence(DesktopApplyBlockReason.PreviewNotExecutable);
+            ShowInfo(
+                "当前计划不可执行",
+                BuildNonExecutableCandidateMessage(candidate),
+                InfoBarSeverity.Warning);
+            return;
+        }
+
+        var stagingText = candidate.UsesTemporaryStaging
+            ? "是。计划包含循环，一个或多个图标会先进入临时中转位置。"
+            : "否。";
+        var crossDisplayText = preparation.Preview.Plan.InboundMoveRequiredCount > 0
+            ? $"{preparation.Preview.Plan.InboundMoveRequiredCount} 个。它们会从其他显示器迁入当前目标屏。"
+            : "0 个。";
+
+        var confirmContent =
+            $"布局：{currentDraft.Name}\n" +
+            $"目标显示器：{candidate.TargetDeviceName}\n" +
+            $"预计移动：{candidate.MoveRequiredCount} 个图标\n" +
+            $"其中跨屏迁入：{crossDisplayText}\n" +
+            $"执行步骤：{candidate.ExecutionStepCount}\n" +
+            $"使用临时中转：{stagingText}\n\n" +
+            "确认后 Tessel 会再次读取当前桌面并重新规划。" +
+            "只有 fresh Candidate 与本次预览语义完全一致，且安全闸门再次通过，才会启动 Writer。\n\n" +
+            "Writer 前会创建并回读安全快照与恢复检查点；失败时可能自动回滚。";
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "应用布局到真实桌面？",
+            Content = new TextBlock
+            {
+                Text = confirmContent,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 520,
+            },
+            PrimaryButtonText = "应用到桌面",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+        };
+
+        var choice = await dialog.ShowAsync();
+        if (choice != ContentDialogResult.Primary)
+        {
+            ShowInfo("已取消", "没有移动任何桌面图标。", InfoBarSeverity.Informational);
+            return;
+        }
+
+        if (designRevision != _designSession.Session.Snapshot().Revision || !ReferenceEquals(_latestPreview, preparation.Preview))
+        {
+            ShowInfo("预览已经变化", "确认期间设计或预览已修改，Writer 未启动。请重新预览。", InfoBarSeverity.Warning);
+            return;
+        }
+        _directApplyInProgress = true;
+        RefreshApplyButtonFromCurrentEvidence();
+        LayoutCanvasStatusText.Text = "正在 fresh 验证并准备安全执行…";
+
+        try
+        {
+            var result = await DirectApplyService.ApplyAsync(preparation);
+            if (result.IsSuccess && preparation.ExplicitInboundStableIds.Count > 0)
+            {
+                CommitSuccessfulCrossDisplayMigrations(
+                    candidate.TargetDeviceName,
+                    preparation.ExplicitInboundStableIds);
+            }
+
+            InvalidateDirectApplyEvidence("应用流程已结束 · 请重新预览当前桌面");
+            PresentDirectApplyResult(
+                result,
+                candidate.MoveRequiredCount,
+                preparation.Preview.Plan.InboundMoveRequiredCount);
+        }
+        catch (OperationCanceledException)
+        {
+            InvalidateDirectApplyEvidence("应用已取消 · 请重新预览");
+            ShowInfo("应用已取消", "Writer 未启动或已由安全执行层收敛。请重新预览。", InfoBarSeverity.Warning);
+        }
+        catch (Exception ex)
+        {
+            InvalidateDirectApplyEvidence("执行状态未知 · 已暂停继续应用");
+            ShowError(
+                "应用流程发生未预期异常",
+                $"{ex.GetType().Name}: {ex.Message}。为安全起见，请先检查恢复状态，不要重复执行。" );
+        }
+        finally
+        {
+            _directApplyInProgress = false;
+            RefreshApplyButtonFromCurrentEvidence();
+        }
+    }
+
+    private static string BuildNonExecutableCandidateMessage(
+        DesktopAgent.Core.DesktopLayouts.Templates.Execution.DesktopLayoutRuleAwareExecutionCandidate candidate)
+    {
+        var reasons = new List<string>();
+
+        if (candidate.RestorePlan.HasBlockingErrors)
+        {
+            reasons.Add(
+                $"Restore 阻断 {candidate.RestorePlan.BlockedCount} 项、缺失 {candidate.RestorePlan.MissingCount} 项。");
+
+            reasons.AddRange(candidate.RestorePlan.Items
+                .Where(item => item.BlockReason is not null)
+                .Take(3)
+                .Select(item => $"{item.DisplayName}：{item.BlockReason}"));
+
+            reasons.AddRange(candidate.RestorePlan.Issues
+                .Take(3)
+                .Select(issue => $"{issue.Code}：{issue.Message}"));
+        }
+
+        if (!candidate.ExecutionPlan.IsExecutable)
+        {
+            reasons.AddRange(candidate.ExecutionPlan.Issues
+                .Take(3)
+                .Select(issue => $"{issue.Code}：{issue.Message}"));
+        }
+
+        if (reasons.Count == 0)
+            reasons.Add("候选状态不一致，但 Core 没有返回具体 issue。");
+
+        return "安全执行候选未通过 Core 校验，Writer 未启动。" +
+            string.Join(" ", reasons) +
+            " 请保留当前画面，不要重复应用。";
+    }
+
+    private void PresentDirectApplyResult(
+        DesktopLayoutDirectApplyResult result,
+        int confirmedMoveCount,
+        int confirmedCrossDisplayMoveCount)
+    {
+        var crossDisplaySuffix = confirmedCrossDisplayMoveCount > 0
+            ? $" 其中 {confirmedCrossDisplayMoveCount} 个完成跨屏迁入。"
+            : string.Empty;
+
+        switch (result.Outcome)
+        {
+            case DesktopLayoutDirectApplyOutcome.Completed:
+                ShowInfo(
+                    "布局已应用到桌面",
+                    $"本次确认计划预计移动 {confirmedMoveCount} 个图标；安全执行与独立验证已完成。{crossDisplaySuffix}",
+                    InfoBarSeverity.Success);
+                return;
+
+            case DesktopLayoutDirectApplyOutcome.CompletedNoOp:
+                ShowInfo(
+                    "桌面已经就位",
+                    $"进入最终执行层时已无需移动，Writer 没有产生额外位移。{crossDisplaySuffix}",
+                    InfoBarSeverity.Success);
+                return;
+
+            case DesktopLayoutDirectApplyOutcome.UnresolvedRecoveryBlocked:
+                ShowInfo(
+                    "检测到未完成恢复",
+                    IssueText(result, "上一次桌面操作尚未完成恢复。新的真实写入已被安全阻断。"),
+                    InfoBarSeverity.Error);
+                return;
+
+            case DesktopLayoutDirectApplyOutcome.PreviewChanged:
+            case DesktopLayoutDirectApplyOutcome.AuthorizationTypeChanged:
+                ShowInfo(
+                    "桌面状态在确认后发生变化",
+                    IssueText(result, "Writer 未启动。请重新预览并重新确认。"),
+                    InfoBarSeverity.Warning);
+                return;
+
+            case DesktopLayoutDirectApplyOutcome.FreshObservationUnavailable:
+            case DesktopLayoutDirectApplyOutcome.FreshCandidateRejected:
+            case DesktopLayoutDirectApplyOutcome.ScopeRejected:
+            case DesktopLayoutDirectApplyOutcome.PreparationNotReady:
+                ShowInfo(
+                    "安全检查拒绝执行",
+                    IssueText(result, "Writer 未启动。请重新预览后再试。"),
+                    InfoBarSeverity.Warning);
+                return;
+
+            case DesktopLayoutDirectApplyOutcome.ExecutionFailed:
+                if (result.RequiresManualRecovery || result.IsPositionUncertain)
+                {
+                    ShowInfo(
+                        "执行未安全收敛，需要处理恢复状态",
+                        IssueText(result, "Tessel 已阻断继续写入。不要重复应用布局。"),
+                        InfoBarSeverity.Error);
+                    return;
+                }
+
+                var execution = result.ExecutionResult;
+                if (execution?.Status == DesktopAgent.Core.DesktopLayouts.Restore.Execution.TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack)
+                {
+                    ShowInfo(
+                        "应用失败，但已回滚",
+                        IssueText(result, "桌面已执行安全回滚。请重新预览。"),
+                        InfoBarSeverity.Warning);
+                    return;
+                }
+
+                ShowInfo(
+                    "布局未应用",
+                    IssueText(result, "执行层拒绝或失败；请重新预览。"),
+                    InfoBarSeverity.Warning);
+                return;
+
+            default:
+                ShowInfo(
+                    "布局未应用",
+                    IssueText(result, $"结果：{result.Outcome}。请重新预览。"),
+                    InfoBarSeverity.Warning);
+                return;
+        }
+    }
+
+    private void InvalidateDirectApplyEvidence(string status)
+    {
+        _latestPreview = null;
+        _previewItems.Clear();
+        RefreshApplyButtonFromCurrentEvidence();
+        LayoutPreviewDetails.Visibility = Visibility.Collapsed;
+        ResetPreviewSummary();
+        LayoutCanvasStatusText.Text = status;
+        RenderLayoutCanvas();
+    }
+
+    private static string IssueText(DesktopLayoutDirectApplyResult result, string fallback)
+        => result.Issues.Count == 0
+            ? fallback
+            : $"{fallback} {string.Join("；", result.Issues.Take(3))}";
+}

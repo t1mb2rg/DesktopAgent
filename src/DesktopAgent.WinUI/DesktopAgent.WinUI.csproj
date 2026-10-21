@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RootNamespace>DesktopAgent.WinUI</RootNamespace>
+    <AssemblyName>DesktopAgent.WinUI</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <!--
+      unpackaged 发布必须自带 Windows App SDK 运行时，否则目标机没装 Runtime 时
+      会弹「Windows App SDK unavailable」。这里写死在可执行项目内（不用命令行 -p:，
+      全局属性会传播到类库并触发 "should not be applied to a class library"）。
+    -->
+    <WindowsAppSDKSelfContained Condition="'$(WindowsAppSDKSelfContained)' == ''">true</WindowsAppSDKSelfContained>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DesktopAgent.Core\DesktopAgent.Core.csproj" />
+    <ProjectReference Include="..\DesktopAgent.Application\DesktopAgent.Application.csproj" />
+    <ProjectReference Include="..\DesktopAgent.Persistence\DesktopAgent.Persistence.csproj" />
+    <ProjectReference Include="..\DesktopAgent.WindowsInterop\DesktopAgent.WindowsInterop.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="ThirdPartyNotices.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,10 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <RootNamespace>DesktopAgent.Tests</RootNamespace>
     <AssemblyName>DesktopAgent.Tests</AssemblyName>
+
+    <!-- Tests exercise pure parsers/contracts only; the generic xUnit host must not start WinAppSDK. -->
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+    <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DesktopAgent.Core\DesktopAgent.Core.csproj" />
+    <ProjectReference Include="..\..\src\DesktopAgent.Application\DesktopAgent.Application.csproj" />
     <ProjectReference Include="..\..\src\DesktopAgent.WindowsInterop\DesktopAgent.WindowsInterop.csproj" />
     <ProjectReference Include="..\..\src\DesktopAgent.Persistence\DesktopAgent.Persistence.csproj" />
     <ProjectReference Include="..\..\src\DesktopAgent.Poc\DesktopAgent.Poc.csproj" />

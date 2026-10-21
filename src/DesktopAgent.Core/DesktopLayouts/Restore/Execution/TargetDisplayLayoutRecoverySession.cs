@@ -28,6 +28,9 @@ public sealed record TargetDisplayLayoutRecoverySession
     public bool IsPositionUncertain { get; }
     public string Status { get; }
 
+    /// <summary>这次写入的来路（整理 / 撤销按检查点还原），落库时原样写进恢复会话行。</summary>
+    public RecoverySessionOrigin Origin { get; }
+
     public TargetDisplayLayoutRecoverySession(
         Guid sessionId,
         Guid safetySnapshotId,
@@ -40,7 +43,8 @@ public sealed record TargetDisplayLayoutRecoverySession
         int? lastFailedStepIndex,
         bool requiresManualRecovery,
         bool isPositionUncertain,
-        string status)
+        string status,
+        RecoverySessionOrigin origin = RecoverySessionOrigin.Organize)
     {
         ArgumentNullException.ThrowIfNull(targetDeviceName);
         ArgumentNullException.ThrowIfNull(sourceRestorePlan);
@@ -66,6 +70,7 @@ public sealed record TargetDisplayLayoutRecoverySession
         RequiresManualRecovery = requiresManualRecovery;
         IsPositionUncertain = isPositionUncertain;
         Status = status;
+        Origin = origin;
     }
 
     /// <summary>创建恢复计划的深度冻结副本。</summary>

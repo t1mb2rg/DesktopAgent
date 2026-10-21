@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>DesktopAgent.WindowsInterop</RootNamespace>
@@ -11,18 +11,21 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DesktopAgent.Core\DesktopAgent.Core.csproj" />
+    <ProjectReference Include="..\DesktopAgent.Application\DesktopAgent.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.106">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.3.1" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="DesktopAgent.Poc" />
+    <InternalsVisibleTo Include="DesktopAgent.Diagnostics" />
     <InternalsVisibleTo Include="DesktopAgent.Tests" />
-    <InternalsVisibleTo Include="DesktopAgent.Poc" />
   </ItemGroup>
 
   <!-- NativeMethods.txt for CsWin32 source generation -->

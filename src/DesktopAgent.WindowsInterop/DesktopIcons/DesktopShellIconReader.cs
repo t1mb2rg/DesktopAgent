@@ -37,7 +37,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
                 if (hr < 0) throw new COMException("IEnumIDList.Next failed", hr);
                 if (hr == 1 || fetched == 0) break;
                 enumIndex++;
-                try { var icon = ReadSingleIcon(ctx.FolderView, ctx.DesktopFolder, pidl); if (icon is not null) icons.Add(icon); }
+                try { var icon = ReadSingleIcon(ctx.FolderView, ctx.DesktopFolder, pidl, ctx.CoordinateSpace); if (icon is not null) icons.Add(icon); }
                 catch (Exception ex)
                 {
                     failedCount++; var hresultStr = ex is COMException ce ? $" HR=0x{ce.ErrorCode:X8}" : "";
@@ -94,6 +94,10 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
         object dispatch = shellWindows.FindWindowSW(SWC_DESKTOP, SWFO_NEEDDISPATCH, out int hwnd)
             ?? throw new InvalidOperationException("[1] FindWindowSW 返回 null。");
         ctx.SetDispatch(dispatch); var hwndClass = GetWindowClassName((nint)hwnd);
+
+        // 桌面列表视图横跨整个虚拟桌面，IFolderView 的坐标以它的客户区原点为基准。
+        // 记下原点，读取时换算成屏幕坐标（产品其余部分一律用屏幕坐标）。
+        ctx.SetViewCoordinateSpace(DesktopViewCoordinateSpace.ForWindow((nint)hwnd));
 
         var sp = dispatch as IServiceProvider ?? throw new InvalidOperationException("[2] 不支持 IServiceProvider。");
         int hr = sp.QueryService(SID_STopLevelBrowser, IidIShellBrowser, out var browserObj);
@@ -158,6 +162,7 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
             {
                 candidateCtx.SetBrowser(browser);
                 candidateCtx.SetShellView(shellView);
+                candidateCtx.SetViewCoordinateSpace(DesktopViewCoordinateSpace.ForWindow(hwnd));
                 FolderViewAcquisition acq;
                 try { acq = AcquireFolderView(shellView, (int)hwnd, hwndClass); }
                 catch (Exception ex)
@@ -407,10 +412,16 @@ public sealed class DesktopShellIconReader : IDesktopIconReader
     //  图标读取
     // ═══════════════════════════════════════════════════════════
 
-    internal static DesktopIconDescriptor? ReadSingleIcon(IFolderView2Compat folderView, IShellFolder desktopFolder, nint pidl)
+    internal static DesktopIconDescriptor? ReadSingleIcon(
+        IFolderView2Compat folderView,
+        IShellFolder desktopFolder,
+        nint pidl,
+        DesktopViewCoordinateSpace coordinateSpace)
     {
         var hr = folderView.GetItemPosition(pidl, out Point pt); if (hr < 0) throw new COMException("GetItemPosition failed", hr);
-        var position = new PixelPoint(pt.X, pt.Y);
+        // GetItemPosition 给的是视图客户区坐标；产品其余部分（显示器 Bounds、区域矩形、
+        // 计划与快照）用屏幕坐标，必须在这里换算，否则多屏机器上每个图标都会偏一个原点。
+        var position = coordinateSpace.ToScreen(new PixelPoint(pt.X, pt.Y));
         var displayName = GetDisplayNameSafe(desktopFolder, pidl, SHGDN_NORMAL);
         var parsingName = GetDisplayNameSafe(desktopFolder, pidl, SHGDN_FORPARSING);
         var attributes = GetItemAttributes(desktopFolder, pidl);
@@ -468,10 +479,15 @@ internal sealed class DesktopViewContext : IDisposable
     private ComIdentityRelation _folderViewIdentityRelation = ComIdentityRelation.Unknown;
     private IShellFolder? _desktopFolder;
     private IEnumIDList? _enumerator;
+    private DesktopViewCoordinateSpace? _coordinateSpace;
     private bool _disposed;
 
     public IFolderView2Compat FolderView => _folderView!;
     public IShellFolder DesktopFolder => _desktopFolder!;
+
+    /// <summary>IFolderView 视图坐标 ↔ 屏幕坐标的换算。没记到原点时退化为虚拟桌面左上角。</summary>
+    public DesktopViewCoordinateSpace CoordinateSpace =>
+        _coordinateSpace ?? DesktopViewCoordinateSpace.FromVirtualScreen();
 
     public void SetDispatch(object d) { ThrowIfDisposed(); ThrowIfAlreadySet(_dispatch); _dispatch = d; }
     public void SetBrowser(IShellBrowser b) { ThrowIfDisposed(); ThrowIfAlreadySet(_browser); _browser = b; }
@@ -482,6 +498,14 @@ internal sealed class DesktopViewContext : IDisposable
 
     public void SetDesktopFolder(IShellFolder sf) { ThrowIfDisposed(); ThrowIfAlreadySet(_desktopFolder); _desktopFolder = sf; }
     public void SetEnumerator(IEnumIDList e) { ThrowIfDisposed(); ThrowIfAlreadySet(_enumerator); _enumerator = e; }
+
+    public void SetViewCoordinateSpace(DesktopViewCoordinateSpace space)
+    {
+        ThrowIfDisposed();
+        if (_coordinateSpace is not null)
+            throw new InvalidOperationException("DesktopViewContext coordinate space already set.");
+        _coordinateSpace = space;
+    }
 
     private static void ThrowIfAlreadySet(object? field) { if (field is not null) throw new InvalidOperationException("DesktopViewContext field already set — overwrite would leak a COM object."); }
     private void ThrowIfDisposed() { ObjectDisposedException.ThrowIf(_disposed, this); }

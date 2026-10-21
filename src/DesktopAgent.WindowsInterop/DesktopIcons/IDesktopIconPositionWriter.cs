@@ -5,17 +5,12 @@ namespace DesktopAgent.WindowsInterop.DesktopIcons;
 
 /// <summary>
 /// 桌面图标位置写入接口。
+/// Writer 同时具备只读能力查询，但 M3-A 等只读路径只应依赖
+/// IDesktopIconPositioningCapabilitiesReader，避免获得真实写入口。
 /// 所有方法必须在 STA 线程上调用。
 /// </summary>
-public interface IDesktopIconPositionWriter
+public interface IDesktopIconPositionWriter : IDesktopIconPositioningCapabilitiesReader
 {
-    /// <summary>
-    /// 读取桌面图标定位能力信息（自动排列状态和间距）。
-    /// 不修改桌面，不调用 SelectAndPositionItems。
-    /// 必须在 STA 线程调用。
-    /// </summary>
-    DesktopIconPositioningCapabilities GetCapabilities();
-
     /// <summary>
     /// 将单个桌面图标移动至指定物理像素坐标。
     /// 自动排列开启时拒绝移动。只支持一次移动一个图标。

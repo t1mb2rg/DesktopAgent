@@ -1,6 +1,22 @@
 namespace DesktopAgent.Core.DesktopLayouts.Restore.Execution;
 
 /// <summary>
+/// 这次写入的来路：是用户的一次整理，还是「撤销上次整理」按检查点还原。
+///
+/// 撤销入口的候选是「最近一次成功收尾的写盘」。如果连撤销自己写下去的那一笔也算候选，
+/// 用户点第二次「撤销」就会把桌面重新整理一遍——2026-10-14 的真机演练里确实发生了。
+/// 来路只有写盘时知道（事后靠数据推断不可靠），所以它必须落在写入行上。
+/// </summary>
+public enum RecoverySessionOrigin
+{
+    /// <summary>用户的一次整理（直接应用到桌面 / 工作区设计应用到桌面）。</summary>
+    Organize = 0,
+
+    /// <summary>「撤销上次整理」按检查点还原时写下去的那一笔。</summary>
+    CheckpointRestore = 1,
+}
+
+/// <summary>
 /// 不可变的恢复会话持久化聚合。
 /// 包含跨重启恢复所需的全部证据：Session 标头、双向计划冻结副本、
 /// 全部 Forward/Rollback 尝试、已完成步骤索引、独立验证结果、
@@ -16,10 +32,14 @@ public sealed record RecoverySessionRecord
     public string TargetDeviceName { get; init; } = string.Empty;
     public DateTimeOffset StartedAtUtc { get; init; }
 
-    // ── 生命周期与标志 ──
+    /// <summary>
+    /// 这次写入的来路。默认 <see cref="RecoverySessionOrigin.Organize"/>：
+    /// 既有历史行与不传来路的旧调用都是整理写入。
+    /// </summary>
+    public RecoverySessionOrigin Origin { get; init; } = RecoverySessionOrigin.Organize;
+
+    // ── 生命周期 ──
     public RecoverySessionLifecycle Lifecycle { get; init; }
-    public bool RequiresManualRecovery { get; init; }
-    public bool IsPositionUncertain { get; init; }
     public int? LastFailedStepIndex { get; init; }
 
     // ── 计划冻结副本（init 时立即深拷贝） ──
@@ -104,86 +124,6 @@ public sealed record RecoverySessionRecord
             throw new ArgumentException(
                 $"{fieldName} 必须为 UTC (Offset=0)，实际 Offset={value.Offset}。");
     }
-
-    // ═══════════════════════════════════════════════════
-    //  工厂与序列化
-    // ═══════════════════════════════════════════════════
-
-    /// <summary>
-    /// 从现有 RecoverySession 和 RunResult 创建完整持久化聚合。
-    /// 所有集合深度复制。
-    /// </summary>
-    public static RecoverySessionRecord FromExecutionResult(
-        TargetDisplayLayoutRecoverySession session,
-        TargetDisplayLayoutExecutionRunResult result)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-        ArgumentNullException.ThrowIfNull(result);
-
-        var lifecycle = DeriveLifecycle(result.Status);
-
-        return new RecoverySessionRecord
-        {
-            SessionId = session.SessionId,
-            SafetySnapshotId = session.SafetySnapshotId,
-            TargetDeviceName = session.TargetDeviceName,
-            StartedAtUtc = session.StartedAtUtc,
-            Lifecycle = lifecycle,
-            RequiresManualRecovery = result.RequiresManualRecovery,
-            IsPositionUncertain = result.IsPositionUncertain,
-            LastFailedStepIndex = result.FailedStepIndex,
-            SourceRestorePlan = session.SourceRestorePlan,
-            ExecutionPlan = session.ExecutionPlan,
-            ForwardAttempts = Array.AsReadOnly(result.ForwardAttempts.ToArray()),
-            RollbackAttempts = Array.AsReadOnly(result.RollbackAttempts.ToArray()),
-            CompletedForwardStepIndexes = Array.AsReadOnly(
-                session.CompletedForwardStepIndexes.ToArray()),
-            CompletedRollbackSourceStepIndexes = Array.AsReadOnly(
-                session.CompletedRollbackSourceStepIndexes.ToArray()),
-            ForwardFailureType = result.ForwardFailureType,
-            ForwardFailureMessage = result.ForwardFailureMessage,
-            RecoveryFailureType = result.RecoveryFailureType,
-            RecoveryFailureMessage = result.RecoveryFailureMessage,
-            VerificationResult = result.VerificationResult,
-            Revision = 1,
-            UpdatedAtUtc = DateTimeOffset.UtcNow,
-        };
-    }
-
-    public static RecoverySessionLifecycle DeriveLifecycle(TargetDisplayLayoutExecutionRunStatus status) =>
-        status switch
-        {
-            TargetDisplayLayoutExecutionRunStatus.Completed
-                or TargetDisplayLayoutExecutionRunStatus.CompletedNoOp
-                => RecoverySessionLifecycle.Completed,
-
-            TargetDisplayLayoutExecutionRunStatus.FailedAndRolledBack
-                => RecoverySessionLifecycle.FailedAndRolledBack,
-
-            TargetDisplayLayoutExecutionRunStatus.FailedRollbackIncomplete
-                => RecoverySessionLifecycle.FailedRollbackIncomplete,
-
-            TargetDisplayLayoutExecutionRunStatus.PositionUncertain
-                => RecoverySessionLifecycle.PositionUncertain,
-
-            TargetDisplayLayoutExecutionRunStatus.FailedBeforeWrite
-                => throw new ArgumentException(
-                    $"RunStatus.{status} 无对应 RecoverySession，不应调用 DeriveLifecycle。"),
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(status), status, $"未定义的 RunStatus 值：{status}。"),
-        };
-
-    public static string DeriveStatus(RecoverySessionLifecycle lifecycle) =>
-        lifecycle switch
-        {
-            RecoverySessionLifecycle.Ready => "Ready",
-            RecoverySessionLifecycle.Executing => "Executing",
-            RecoverySessionLifecycle.Completed => "Completed",
-            RecoverySessionLifecycle.FailedAndRolledBack => "FailedAndRolledBack",
-            RecoverySessionLifecycle.FailedRollbackIncomplete => "FailedRollbackIncomplete",
-            RecoverySessionLifecycle.PositionUncertain => "PositionUncertain",
-            _ => "Unknown",
-        };
 
     // ═══════════════════════════════════════════════════
     //  完整性验证
@@ -273,11 +213,9 @@ public sealed record RecoverySessionRecord
                 }
                 var step = ExecutionPlan.Steps[a.SourceStepIndex];
 
-                // StableId 交叉验证
                 if (!string.Equals(a.ExpectedStableId, step.StableId, StringComparison.Ordinal))
                     errors.Add($"Attempt #{a.AttemptIndex} ExpectedStableId \"{a.ExpectedStableId}\" ≠ Step[{a.SourceStepIndex}].StableId \"{step.StableId}\"。");
 
-                // 坐标验证
                 if (a.Phase == TargetDisplayLayoutExecutionAttemptPhase.Forward)
                 {
                     if (a.ExpectedPreviousPosition != step.FromPosition)
@@ -285,7 +223,7 @@ public sealed record RecoverySessionRecord
                     if (a.RequestedPosition != step.ToPosition)
                         errors.Add($"Forward Attempt #{a.AttemptIndex} RequestedPosition={a.RequestedPosition} ≠ Step[{a.SourceStepIndex}].To={step.ToPosition}。");
                 }
-                else // Rollback
+                else
                 {
                     if (a.RequestedPosition != step.FromPosition)
                         errors.Add($"Rollback Attempt #{a.AttemptIndex} RequestedPosition={a.RequestedPosition} ≠ Step[{a.SourceStepIndex}].From={step.FromPosition}。");
@@ -293,7 +231,6 @@ public sealed record RecoverySessionRecord
                         errors.Add($"Rollback Attempt #{a.AttemptIndex} ExpectedPreviousPosition={a.ExpectedPreviousPosition} ≠ Step[{a.SourceStepIndex}].To={step.ToPosition}。");
                 }
 
-                // Outcome 坐标一致性
                 if (a.Outcome == TargetDisplayLayoutExecutionAttemptOutcome.ExactSuccess)
                 {
                     if (a.ActualPosition != a.RequestedPosition)
@@ -370,7 +307,6 @@ public sealed record RecoverySessionRecord
             if (ExecutionPlan.UsesTemporaryStaging != (actualStagingIn > 0))
                 errors.Add($"ExecutionPlan UsesTemporaryStaging={ExecutionPlan.UsesTemporaryStaging}，实际 staging steps={actualStagingIn}。");
 
-            // ── Staging Assignments 验证 ──
             foreach (var sa in ExecutionPlan.StagingAssignments)
             {
                 if (sa.EnterStepIndex < 0 || sa.EnterStepIndex >= ExecutionPlan.Steps.Count)
@@ -404,7 +340,6 @@ public sealed record RecoverySessionRecord
                 }
             }
 
-            // Staging StableId 唯一性
             var stagingIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var sa in ExecutionPlan.StagingAssignments)
             {
@@ -412,7 +347,6 @@ public sealed record RecoverySessionRecord
                     errors.Add($"StagingAssignment StableId=\"{sa.StableId}\" 重复。");
             }
 
-            // EnterStepIndex / ExitStepIndex 唯一性
             var enterIndexes = new HashSet<int>();
             var exitIndexes = new HashSet<int>();
             foreach (var sa in ExecutionPlan.StagingAssignments)
@@ -423,7 +357,6 @@ public sealed record RecoverySessionRecord
                     errors.Add($"ExitStepIndex {sa.ExitStepIndex} 被多个 StagingAssignment 引用。");
             }
 
-            // 每个 staging step 的 StepIndex 必须恰好被 assignment 引用
             foreach (var step in ExecutionPlan.Steps)
             {
                 if (step.Kind == TargetDisplayLayoutExecutionStepKind.MoveToTemporaryStaging)
@@ -437,41 +370,6 @@ public sealed record RecoverySessionRecord
                         errors.Add($"MoveFromTemporaryStagingToTarget StepIndex={step.StepIndex} 未被任何 StagingAssignment 的 ExitStepIndex 引用。");
                 }
             }
-        }
-
-        // ── 状态标志一致性 ──
-        if (Lifecycle == RecoverySessionLifecycle.Ready
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("Ready 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.Executing)
-        {
-            if (RequiresManualRecovery)
-                errors.Add("Executing 状态下 RequiresManualRecovery 必须为 false。");
-            if (IsPositionUncertain)
-                errors.Add("Executing 状态下 IsPositionUncertain 必须为 false。");
-        }
-
-        if (Lifecycle == RecoverySessionLifecycle.Completed
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("Completed 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.FailedAndRolledBack
-            && (RequiresManualRecovery || IsPositionUncertain))
-            errors.Add("FailedAndRolledBack 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须为 false。");
-
-        if (Lifecycle == RecoverySessionLifecycle.FailedRollbackIncomplete)
-        {
-            if (!RequiresManualRecovery)
-                errors.Add("FailedRollbackIncomplete 状态下 RequiresManualRecovery 必须为 true。");
-            if (IsPositionUncertain)
-                errors.Add("FailedRollbackIncomplete 状态下 IsPositionUncertain 必须为 false。");
-        }
-
-        if (Lifecycle == RecoverySessionLifecycle.PositionUncertain)
-        {
-            if (!RequiresManualRecovery || !IsPositionUncertain)
-                errors.Add("PositionUncertain 状态下 RequiresManualRecovery 和 IsPositionUncertain 必须都为 true。");
         }
 
         // ── 失败证据 ──

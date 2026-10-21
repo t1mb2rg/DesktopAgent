@@ -776,9 +776,24 @@ public static class TargetDisplayLayoutExecutionPlanner
         }
 
         var spacing = capabilities.Spacing;
-        for (long y = targetDisplay.WorkArea.Top; y <= targetDisplay.WorkArea.Bottom - spacing.Y; y += spacing.Y)
-        {
-            for (long x = targetDisplay.WorkArea.Left; x <= targetDisplay.WorkArea.Right - spacing.X; x += spacing.X)
+
+// staging 不能假定 Explorer 网格从 WorkArea 左上角开始。
+// 真实桌面网格可能带稳定相位，例如 spacing=93x122，
+// 但实际位置遵循 x=16+n*93, y=2+m*122。
+// 使用当前已被 Shell 稳定观察到的位置作为网格相位参考。
+        var firstX = FirstGridCoordinateAtOrAfter(
+            targetDisplay.WorkArea.Left,
+            currentPosition.X,
+            spacing.X);
+
+        var firstY = FirstGridCoordinateAtOrAfter(
+            targetDisplay.WorkArea.Top,
+            currentPosition.Y,
+            spacing.Y);
+
+for (long y = firstY; y <= targetDisplay.WorkArea.Bottom - spacing.Y; y += spacing.Y)
+{
+    for (long x = firstX; x <= targetDisplay.WorkArea.Right - spacing.X; x += spacing.X)
             {
                 var candidate = new PixelPoint((int)x, (int)y);
 
@@ -812,6 +827,18 @@ public static class TargetDisplayLayoutExecutionPlanner
         }
         return null;
     }
+    private static long FirstGridCoordinateAtOrAfter(
+    int minimum,
+    int referenceCoordinate,
+    int spacing)
+{
+    var offset = ((long)referenceCoordinate - minimum) % spacing;
+
+    if (offset < 0)
+        offset += spacing;
+
+    return (long)minimum + offset;
+}
 
     // ═══ Cycles 比较辅助 ═══
 

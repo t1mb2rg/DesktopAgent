@@ -45,3 +45,6 @@ appsettings.local.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+## 本地工具状态（Serena MCP 等）
+.serena/

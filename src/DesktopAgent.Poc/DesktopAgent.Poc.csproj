@@ -1,17 +1,38 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>DesktopAgent.Poc</RootNamespace>
-    <AssemblyName>DesktopAgent.Poc</AssemblyName>
+    <AssemblyName>DesktopAgent.Diagnostics</AssemblyName>
+    <Product>DesktopAgent Diagnostics Workbench</Product>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!--
+      M5-06 keeps the historical project path / namespace for compatibility, while the produced
+      executable identity is DesktopAgent.Diagnostics. A full source-path rename would widen the
+      regression surface without improving the product/diagnostics runtime boundary.
+    -->
+
+    <!--
+      04C intentionally disables Windows App SDK module auto-initializers.
+      DesktopAgent.exe performs explicit bootstrap/deployment initialization in App startup.
+      This prevents xUnit from triggering WinAppSDK process initialization merely by loading
+      the PoC assembly as a referenced test dependency.
+    -->
+    <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+    <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DesktopAgent.Core\DesktopAgent.Core.csproj" />
+    <ProjectReference Include="..\DesktopAgent.Application\DesktopAgent.Application.csproj" />
     <ProjectReference Include="..\DesktopAgent.WindowsInterop\DesktopAgent.WindowsInterop.csproj" />
     <ProjectReference Include="..\DesktopAgent.Persistence\DesktopAgent.Persistence.csproj" />
   </ItemGroup>

@@ -63,6 +63,11 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
         }
     }
 
+    /// <summary>
+    /// 把图标移动到<strong>屏幕坐标</strong> targetPosition。
+    /// IFolderView 的 SelectAndPositionItems / GetItemPosition 用的是视图客户区坐标，
+    /// 这里统一换算：写入前 ToView，回读后 ToScreen。
+    /// </summary>
     public DesktopIconMoveResult MoveDesktopIcon(string stableId, PixelPoint targetPosition)
     {
         if (stableId is null)
@@ -74,6 +79,9 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
         var (ctx, connectionMethod, primaryEx) = DesktopShellIconReader.FindDesktopView(shellWindows);
         using (ctx)
         {
+            // IFolderView 用视图客户区坐标；本类的对外契约是屏幕坐标。
+            var coordinateSpace = ctx.CoordinateSpace;
+
             // ── 连接后第一次自动排列检查 ──
             if (ReadAutoArrangeState(ctx.FolderView))
                 throw new InvalidOperationException(
@@ -141,7 +149,7 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
                         try
                         {
                             descriptor = DesktopShellIconReader.ReadSingleIcon(
-                                ctx.FolderView, ctx.DesktopFolder, pidl)
+                                ctx.FolderView, ctx.DesktopFolder, pidl, coordinateSpace)
                                 ?? throw new InvalidOperationException(
                                     "ReadSingleIcon 返回 null。");
                         }
@@ -182,7 +190,7 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
                 // ── 保存移动前位置 ──
                 hr = ctx.FolderView.GetItemPosition(matchedPidl, out Point prevPt);
                 if (hr < 0) throw new COMException("GetItemPosition (previous) failed", hr);
-                var previousPosition = new PixelPoint(prevPt.X, prevPt.Y);
+                var previousPosition = coordinateSpace.ToScreen(new PixelPoint(prevPt.X, prevPt.Y));
 
                 // ── 移动前第二次自动排列检查（缩小竞态窗口）──
                 if (ReadAutoArrangeState(ctx.FolderView))
@@ -191,14 +199,15 @@ public sealed class DesktopShellIconPositionWriter : IDesktopIconPositionWriter
 
                 // ── 执行移动 ──
                 var pidls = new[] { matchedPidl };
-                var pts = new[] { new System.Drawing.Point(targetPosition.X, targetPosition.Y) };
+                var viewTarget = coordinateSpace.ToView(targetPosition);
+                var pts = new[] { new System.Drawing.Point(viewTarget.X, viewTarget.Y) };
                 hr = ctx.FolderView.SelectAndPositionItems(1, pidls, pts, SVSI_POSITIONITEM);
                 if (hr < 0) throw new COMException("SelectAndPositionItems failed", hr);
 
                 // ── 读取移动后实际位置 ──
                 hr = ctx.FolderView.GetItemPosition(matchedPidl, out Point actualPt);
                 if (hr < 0) throw new COMException("GetItemPosition (actual) failed", hr);
-                var actualPosition = new PixelPoint(actualPt.X, actualPt.Y);
+                var actualPosition = coordinateSpace.ToScreen(new PixelPoint(actualPt.X, actualPt.Y));
 
                 return new DesktopIconMoveResult(
                     stableId,

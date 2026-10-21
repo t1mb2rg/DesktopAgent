@@ -1,0 +1,240 @@
+<UserControl
+    x:Class="DesktopAgent.WinUI.OverlayAppearanceSettingsView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Loaded="OverlayAppearanceSettingsView_Loaded"
+    Unloaded="OverlayAppearanceSettingsView_Unloaded">
+
+    <Border Padding="16"
+            CornerRadius="10"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+        <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="360" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Spacing="12">
+                <StackPanel Spacing="3">
+                    <TextBlock Text="桌面分区框"
+                               FontSize="18"
+                               FontWeight="SemiBold" />
+                    <TextBlock Text="先选一个风格，再按自己的桌面慢慢调。"
+                               TextWrapping="Wrap"
+                               Opacity="0.58" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <RadioButton x:Name="LightPresetButton"
+                                 GroupName="OverlayAppearancePreset"
+                                 Content="轻量"
+                                 Checked="LightPresetButton_Checked" />
+                    <RadioButton x:Name="StandardPresetButton"
+                                 GroupName="OverlayAppearancePreset"
+                                 Content="标准"
+                                 Checked="StandardPresetButton_Checked" />
+                    <RadioButton x:Name="StrongPresetButton"
+                                 GroupName="OverlayAppearancePreset"
+                                 Content="明显"
+                                 Checked="StrongPresetButton_Checked" />
+                </StackPanel>
+
+                <Expander Header="高级自定义" IsExpanded="True">
+                    <StackPanel Spacing="10" Padding="0,8,0,0">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="边框粗细" />
+                            <TextBlock x:Name="BorderThicknessValueText"
+                                       Grid.Column="1"
+                                       Opacity="0.58" />
+                        </Grid>
+                        <Slider x:Name="BorderThicknessSlider"
+                                Minimum="1"
+                                Maximum="8"
+                                StepFrequency="0.5"
+                                ValueChanged="AppearanceSlider_ValueChanged" />
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="边框透明度" />
+                            <TextBlock x:Name="BorderOpacityValueText"
+                                       Grid.Column="1"
+                                       Opacity="0.58" />
+                        </Grid>
+                        <Slider x:Name="BorderOpacitySlider"
+                                Minimum="10"
+                                Maximum="100"
+                                StepFrequency="1"
+                                ValueChanged="AppearanceSlider_ValueChanged" />
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="框内透明度" />
+                            <TextBlock x:Name="FillOpacityValueText"
+                                       Grid.Column="1"
+                                       Opacity="0.58" />
+                        </Grid>
+                        <Slider x:Name="FillOpacitySlider"
+                                Minimum="0"
+                                Maximum="35"
+                                StepFrequency="1"
+                                ValueChanged="AppearanceSlider_ValueChanged" />
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="圆角" />
+                            <TextBlock x:Name="CornerRadiusValueText"
+                                       Grid.Column="1"
+                                       Opacity="0.58" />
+                        </Grid>
+                        <Slider x:Name="CornerRadiusSlider"
+                                Minimum="0"
+                                Maximum="32"
+                                StepFrequency="1"
+                                ValueChanged="AppearanceSlider_ValueChanged" />
+
+                        <Grid ColumnSpacing="8" Margin="0,2,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="分区颜色"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="OverlayColorHexText"
+                                       Grid.Column="1"
+                                       VerticalAlignment="Center"
+                                       Opacity="0.58" />
+                        </Grid>
+
+                        <Button HorizontalAlignment="Left">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border x:Name="OverlayColorSwatch"
+                                        Width="18"
+                                        Height="18"
+                                        CornerRadius="9"
+                                        BorderBrush="#40FFFFFF"
+                                        BorderThickness="1" />
+                                <TextBlock Text="选择颜色"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <Flyout>
+                                    <ColorPicker x:Name="OverlayColorPicker"
+                                                 ColorSpectrumShape="Ring"
+                                                 IsAlphaEnabled="False"
+                                                 ColorChanged="OverlayColorPicker_ColorChanged" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
+                </Expander>
+
+                <TextBlock x:Name="AppearanceModeText"
+                           Text="标准"
+                           FontSize="12"
+                           Opacity="0.58" />
+
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="DesktopPreviewButton"
+                            Content="在桌面上预览"
+                            Click="DesktopPreviewButton_Click" />
+                    <Button Content="应用"
+                            Click="ApplyAppearanceButton_Click" />
+                    <Button Content="取消"
+                            Click="CancelAppearanceButton_Click" />
+                </StackPanel>
+
+                <InfoBar x:Name="AppearanceStatusBar"
+                         IsOpen="False"
+                         IsClosable="True" />
+            </StackPanel>
+
+            <Border Grid.Column="1"
+                    Padding="14"
+                    CornerRadius="10"
+                    Background="{ThemeResource LayerFillColorDefaultBrush}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <TextBlock Text="实时预览"
+                                   FontWeight="SemiBold" />
+                        <TextBlock HorizontalAlignment="Right"
+                                   Text="示意桌面"
+                                   FontSize="11"
+                                   Opacity="0.45" />
+                    </Grid>
+
+                    <Border Height="300"
+                            CornerRadius="10"
+                            Background="#20242B">
+                        <Grid Margin="14" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border x:Name="PreviewLeftZone">
+                                <Grid>
+                                    <Grid Margin="14">
+                                        <Border x:Name="PreviewLeftLabel"
+                                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                Padding="9,5"
+                                                CornerRadius="10"
+                                                Background="#AA202020">
+                                            <TextBlock x:Name="PreviewLeftLabelText"
+                                                       Text="工作区"
+                                                       Foreground="White"
+                                                       FontSize="12" />
+                                        </Border>
+                                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Top">
+                                            <TextBlock Text="📄" FontSize="24" />
+                                            <TextBlock Text="📁" FontSize="24" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <Border x:Name="PreviewRightZone"
+                                    Grid.Column="1">
+                                <Grid>
+                                    <Grid Margin="14">
+                                        <Border x:Name="PreviewRightLabel"
+                                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                Padding="9,5"
+                                                CornerRadius="10"
+                                                Background="#AA202020">
+                                            <TextBlock x:Name="PreviewRightLabelText"
+                                                       Text="临时区"
+                                                       Foreground="White"
+                                                       FontSize="12" />
+                                        </Border>
+                                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Top">
+                                            <TextBlock Text="📷" FontSize="24" />
+                                            <TextBlock Text="📦" FontSize="24" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="小预览实时变化；“在桌面上预览”只临时显示示例分区，不会移动图标。"
+                               TextWrapping="Wrap"
+                               FontSize="11"
+                               Opacity="0.5" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

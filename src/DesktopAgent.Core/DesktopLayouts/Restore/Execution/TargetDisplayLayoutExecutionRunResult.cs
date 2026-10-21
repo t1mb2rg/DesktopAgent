@@ -73,6 +73,35 @@ public sealed record TargetDisplayLayoutExecutionRunResult
         VerificationResult = verificationResult;
     }
 
+    /// <summary>
+    /// 从已经持久化并回读的恢复终态构造对外 RunResult。
+    /// 终态摘要只能来自 Lifecycle 的 RecoveryTerminalProjection，调用方不能再次手填。
+    /// </summary>
+    public static TargetDisplayLayoutExecutionRunResult FromPersistedRecoveryTerminal(
+        RecoverySessionRecord record,
+        bool isNoOp = false)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        var projection = RecoveryTerminalProjection.FromLifecycle(record.Lifecycle, isNoOp);
+        return new TargetDisplayLayoutExecutionRunResult(
+            projection.RunStatus,
+            projection.IsSuccess,
+            projection.IsNoOp,
+            session: null,
+            record.SafetySnapshotId,
+            record.ForwardAttempts,
+            record.RollbackAttempts,
+            record.LastFailedStepIndex,
+            projection.RequiresManualRecovery,
+            projection.IsPositionUncertain,
+            record.ForwardFailureType,
+            record.ForwardFailureMessage,
+            record.RecoveryFailureType,
+            record.RecoveryFailureMessage,
+            record.VerificationResult);
+    }
+
     public static TargetDisplayLayoutExecutionRunResult FailedBeforeWrite(
         string? exceptionType, string? errorMessage,
         TargetDisplayLayoutExecutionVerificationResult? verificationResult = null) =>

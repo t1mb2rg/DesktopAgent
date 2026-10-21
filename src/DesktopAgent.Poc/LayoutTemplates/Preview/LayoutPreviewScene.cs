@@ -68,6 +68,7 @@ public sealed class LayoutPreviewZoneVisual
 
 /// <summary>
 /// 图标可视化数据 — 不可变 sealed class，构造时校验 TargetX/TargetY 成对、State 一致性、有限数值。
+/// Fixed 与 Unassigned 都没有目标坐标；AlreadyAtTarget / MoveRequired 必须有目标坐标与 Zone。
 /// </summary>
 public sealed class LayoutPreviewIconVisual
 {
@@ -101,25 +102,27 @@ public sealed class LayoutPreviewIconVisual
         if (targetCanvasX.HasValue && (!double.IsFinite(targetCanvasX.Value) || !double.IsFinite(targetCanvasY!.Value)))
             throw new ArgumentException("Target Canvas 坐标必须为有限数值。");
 
-        // Unassigned 不能有 target / ZoneId / ZoneName
-        if (state == DesktopLayoutPreviewItemState.Unassigned)
+        switch (state)
         {
-            if (targetCanvasX.HasValue)
-                throw new ArgumentException("Unassigned 状态不能有 Target Canvas 坐标。");
-            if (zoneId is not null)
-                throw new ArgumentException("Unassigned 状态不能有 ZoneId。");
-            if (!string.IsNullOrEmpty(zoneName))
-                throw new ArgumentException("Unassigned 状态 ZoneName 必须为空。");
-        }
-        else
-        {
-            // Assigned (AlreadyAtTarget / MoveRequired) 必须有 target
-            if (!targetCanvasX.HasValue)
-                throw new ArgumentException("非 Unassigned 状态必须有 Target Canvas 坐标。");
-            if (zoneId is null || zoneId.Value == Guid.Empty)
-                throw new ArgumentException("Assigned 图标必须有非空 ZoneId。");
-            if (string.IsNullOrWhiteSpace(zoneName))
-                throw new ArgumentException("Assigned 图标 ZoneName 不能为空。");
+            case DesktopLayoutPreviewItemState.Unassigned:
+            case DesktopLayoutPreviewItemState.Fixed:
+                if (targetCanvasX.HasValue)
+                    throw new ArgumentException($"{state} 状态不能有 Target Canvas 坐标。");
+                if (zoneId is not null)
+                    throw new ArgumentException($"{state} 状态不能有 ZoneId。");
+                if (!string.IsNullOrEmpty(zoneName))
+                    throw new ArgumentException($"{state} 状态 ZoneName 必须为空。");
+                break;
+
+            case DesktopLayoutPreviewItemState.AlreadyAtTarget:
+            case DesktopLayoutPreviewItemState.MoveRequired:
+                if (!targetCanvasX.HasValue)
+                    throw new ArgumentException("Assigned 状态必须有 Target Canvas 坐标。");
+                if (zoneId is null || zoneId.Value == Guid.Empty)
+                    throw new ArgumentException("Assigned 图标必须有非空 ZoneId。");
+                if (string.IsNullOrWhiteSpace(zoneName))
+                    throw new ArgumentException("Assigned 图标 ZoneName 不能为空。");
+                break;
         }
 
         Icon = icon;

@@ -1,0 +1,153 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = '${{ inputs.version }}'
+          }
+          else {
+            $version = '${{ github.ref_name }}' -replace '^v', ''
+          }
+          "value=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building Tessel $version"
+
+      - name: Restore
+        run: dotnet restore DesktopAgent.sln
+
+      - name: Build Release (x64)
+        run: dotnet build DesktopAgent.sln --configuration Release -p:Platform=x64 --no-restore
+
+      - name: Test Release (x64)
+        run: >-
+          dotnet test tests/DesktopAgent.Tests/DesktopAgent.Tests.csproj
+          --configuration Release
+          -p:Platform=x64
+          --no-build
+          --results-directory TestResults
+          --logger "trx;LogFileName=DesktopAgent.Tests.trx"
+
+      - name: Publish self-contained bundle
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          $out = "artifacts/release/Tessel-$version-win-x64"
+          dotnet publish src/DesktopAgent.WinUI/DesktopAgent.WinUI.csproj `
+            --configuration Release -p:Platform=x64 -r win-x64 --self-contained true `
+            -p:PublishReadyToRun=false -p:PublishTrimmed=false `
+            -o $out --nologo
+          if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
+
+      - name: Trim unused machine-learning payload
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          $dir = "artifacts/release/Tessel-$version-win-x64"
+          $patterns = @(
+            'onnxruntime.dll', 'DirectML.dll', 'Microsoft.ML.OnnxRuntime.dll',
+            'Microsoft.Windows.AI.*', 'Microsoft.Windows.Vision*', 'Microsoft.Windows.Internal.Vision*'
+          )
+          $removed = 0; $bytes = 0
+          foreach ($p in $patterns) {
+            Get-ChildItem $dir -Filter $p -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+              $bytes += $_.Length; $removed++; Remove-Item $_.FullName -Force
+            }
+          }
+          $exe = Join-Path $dir 'DesktopAgent.WinUI.exe'
+          if (-not (Test-Path $exe)) { throw 'published exe missing after trim' }
+          Write-Host ("removed {0} file(s), {1} MB" -f $removed, [math]::Round($bytes / 1MB, 1))
+
+      - name: Zip bundle
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          $dir = "artifacts/release/Tessel-$version-win-x64"
+          $zip = "artifacts/release/Tessel-$version-win-x64.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$dir/*" -DestinationPath $zip -CompressionLevel Optimal
+          Get-Item $zip | Select-Object Name, Length
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe', 'C:\Program Files\Inno Setup 6\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y
+            $iscc = Get-ChildItem 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $iscc) { throw 'Inno Setup compiler not found' }
+          "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          & $env:ISCC "/DAppVersion=$version" `
+            "/DSourceDir=$PWD\artifacts\release\Tessel-$version-win-x64" `
+            "/DOutputDir=$PWD\artifacts\release" `
+            "tools\installer\tessel.iss"
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compile failed' }
+          Get-ChildItem artifacts/release -Filter "Tessel-Setup-*.exe" | Select-Object Name, Length
+
+      - name: Assemble release notes
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.value }}'
+          $out = "release-notes.md"
+          if (Test-Path CHANGELOG.md) {
+            $md = Get-Content CHANGELOG.md -Raw -Encoding UTF8
+            $pattern = "(?ms)^##\s*\[?" + [regex]::Escape($version) + "\]?.*?(?=^##\s|\z)"
+            $section = [regex]::Match($md, $pattern)
+            if ($section.Success) { $section.Value | Set-Content $out -Encoding UTF8 }
+          }
+          if (-not (Test-Path $out)) { "Tessel $version" | Set-Content $out -Encoding UTF8 }
+          Get-Content $out -TotalCount 5
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Tessel ${{ steps.version.outputs.value }}
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/release/Tessel-${{ steps.version.outputs.value }}-win-x64.zip
+            artifacts/release/Tessel-Setup-${{ steps.version.outputs.value }}.exe
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics
+          path: TestResults/**
+          if-no-files-found: ignore
+          retention-days: 7

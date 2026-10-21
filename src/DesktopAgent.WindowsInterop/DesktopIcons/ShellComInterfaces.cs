@@ -359,6 +359,16 @@ internal static class NativeShellMethods
     [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
     public static extern int StrRetToBuf(ref CSSTRRET pstr, nint pidl,
         System.Text.StringBuilder pszBuf, uint cchBuf);
+
+    // ─── 坐标空间：视图客户区 ↔ 屏幕 ───
+    public const int SM_XVIRTUALSCREEN = 76;
+    public const int SM_YVIRTUALSCREEN = 77;
+
+    [DllImport("user32.dll")]
+    public static extern bool ClientToScreen(nint hWnd, ref System.Drawing.Point point);
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
 }
 
 #endregion

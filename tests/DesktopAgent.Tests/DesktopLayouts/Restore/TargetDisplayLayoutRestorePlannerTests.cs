@@ -103,6 +103,51 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
             MakeReadResult([LiveIcon("a", new(160, 240))]),
             new[] { MakeDisplay(TargetDevice) }, MakeCapabilities(), TargetDevice));
 
+    // ═══ 整桌面检查点（工作区设计应用写盘前存的那份，没有「目标显示器」） ═══
+
+    [Fact] public void WholeDesktopCheckpoint_NullTarget_PlansWithCrossDisplayOptIn()
+    {
+        // 真机踩到过：工作区应用的安全检查点是整桌面的，TargetMonitorDeviceName 为 null，
+        // 撤销路径必须能按每一项自带的显示器逐屏还原，而不是被这道校验拦下。
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshotNullTarget([SnapItem("a", new(160, 240), monitor: @"\\.\DISPLAY2")]),
+            MakeReadResult([LiveIcon("a", new(999, 999), monitor: @"\\.\DISPLAY2")]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), @"\\.\DISPLAY2",
+            allowSnapshotFromAnotherDisplay: true);
+        Assert.Equal(1, p.MoveRequiredCount);
+        Assert.Equal(1, p.SnapshotTargetIconCount);
+    }
+
+    [Fact] public void WholeDesktopCheckpoint_PlanTakesOnlyTheRequestedDisplay()
+    {
+        var snapshot = MakeSnapshotNullTarget(
+        [
+            SnapItem("a", new(160, 240), monitor: TargetDevice),
+            SnapItem("b", new(300, 400), monitor: @"\\.\DISPLAY2"),
+        ]);
+        var lives = new[]
+        {
+            LiveIcon("a", new(999, 999), monitor: @"\\.\DISPLAY2"),
+            LiveIcon("b", new(999, 999), monitor: @"\\.\DISPLAY2"),
+        };
+        var displays = new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") };
+
+        var first = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            snapshot, MakeReadResult(lives), displays, MakeCapabilities(), TargetDevice,
+            allowSnapshotFromAnotherDisplay: true);
+        var second = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            snapshot, MakeReadResult(lives), displays, MakeCapabilities(), @"\\.\DISPLAY2",
+            allowSnapshotFromAnotherDisplay: true);
+
+        Assert.Equal(1, first.SnapshotTargetIconCount);
+        Assert.Contains(first.Items, i => i.StableId == "a");
+        Assert.DoesNotContain(first.Items, i => i.StableId == "b");
+        Assert.Equal(1, second.SnapshotTargetIconCount);
+        Assert.Contains(second.Items, i => i.StableId == "b");
+        Assert.DoesNotContain(second.Items, i => i.StableId == "a");
+    }
+
     [Fact] public void SnapshotMonitorMismatch_Throws() => Assert.Throws<InvalidOperationException>(() =>
         TargetDisplayLayoutRestorePlanner.CreatePlan(
             MakeSnapshot([SnapItem("a", new(160, 240))], tm: @"\\.\DISPLAY2"),
@@ -319,6 +364,23 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
             new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
             MakeCapabilities(), TargetDevice);
         Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.MoveRequired && i.StableId == "a");
+    }
+
+    [Fact] public void Occupancy_IconOnOtherDisplay_DoesNotBlockTargetRectangle()
+    {
+        var p = TargetDisplayLayoutRestorePlanner.CreatePlan(
+            MakeSnapshot([SnapItem("a", new(240, 320))]),
+            MakeReadResult([
+                LiveIcon("a", new(160, 240)),
+                LiveIcon("recycle", new(240, 320), monitor: @"\\.\DISPLAY2",
+                    isFileSys: false, isSys: true),
+            ]),
+            new[] { MakeDisplay(TargetDevice), MakeDisplay(@"\\.\DISPLAY2") },
+            MakeCapabilities(), TargetDevice);
+
+        var item = Assert.Single(p.Items);
+        Assert.Equal(TargetDisplayLayoutRestoreItemState.MoveRequired, item.State);
+        Assert.False(p.HasBlockingErrors);
     }
 
     [Fact] public void Occupancy_MultipleOccupiers_StationaryBlocks()
@@ -575,6 +637,32 @@ public sealed class TargetDisplayLayoutRestorePlannerTests
         var p = PlanWithIcons([SnapItem("a", new(240, 320))],
             [LiveIcon("a", new(160, 240), isFileSys: true, isSys: true)]);
         Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.SystemItem);
+    }
+    [Fact] public void NonFileSystemItem_AlreadyAtTarget_IsNotBlocked()
+    {
+        // 真机踩到过：回收站（既不是文件系统项目也不是系统项目）停在检查点原格，
+        // 它不需要被移动，就不该把整块屏的还原计划一个人挡下。
+        var p = PlanWithIcons([SnapItem("a", new(160, 240))],
+            [LiveIcon("a", new(160, 240), isFileSys: false, isSys: false)]);
+        Assert.Equal(1, p.AlreadyAtTargetCount);
+        Assert.Equal(0, p.BlockedCount);
+        Assert.False(p.HasBlockingErrors);
+        Assert.Null(p.Items.Single(i => i.StableId == "a").BlockReason);
+    }
+    [Fact] public void SystemItem_AlreadyAtTarget_IsNotBlocked()
+    {
+        var p = PlanWithIcons([SnapItem("a", new(160, 240))],
+            [LiveIcon("a", new(160, 240), isFileSys: true, isSys: true)]);
+        Assert.Equal(1, p.AlreadyAtTargetCount);
+        Assert.Equal(0, p.BlockedCount);
+    }
+    [Fact] public void NonFileSystemItem_NeedsMove_StillBlocked()
+    {
+        // 只有「本来就不用动」才放过：真需要写盘时仍然 fail closed。
+        var p = PlanWithIcons([SnapItem("a", new(240, 320))],
+            [LiveIcon("a", new(160, 240), isFileSys: false, isSys: false)]);
+        Assert.Equal(1, p.BlockedCount);
+        Assert.Contains(p.Items, i => i.State == TargetDisplayLayoutRestoreItemState.NotFileSystemItem);
     }
     [Fact] public void NoMonitor_Blocked()
     {
