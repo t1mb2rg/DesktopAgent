@@ -11,7 +11,17 @@ public sealed partial class AiAssistantView
 
     private async void AiAssistantView_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_persistenceHydrated || _latestSuccessfulUnderstanding is not null || IsRequestActive)
+        await _workspaceSession.InitializeAsync();
+        AttachWorkspaceSession();
+        await _workspaceSession.EnsureUnderstandingAsync();
+        if (_latestSuccessfulUnderstanding is { } cached)
+        {
+            RenderDraft(cached);
+            RenderConversationState();
+            AiAnalyzeButton.Content = "发送";
+            return;
+        }
+        if (_persistenceHydrated || IsRequestActive)
             return;
 
         _persistenceHydrated = true;
@@ -67,12 +77,12 @@ public sealed partial class AiAssistantView
             return;
 
         var semantic = snapshot.Understanding;
-        AiResultCard.Visibility = Visibility.Visible;
+        AiResultCard.Visibility = Visibility.Collapsed;
         AiDesktopSummaryText.Text = semantic.DesktopSummary;
         AiResultMetaText.Text =
             $"已保存理解 · {snapshot.SourceItemCount} 个项目 · {snapshot.CreatedAtUtc.ToLocalTime():g}";
         AiIntentSummaryText.Text =
-            "这是一份持久化的纯语义理解。布局意图、精确位置、Frozen Preview 与执行确认不会跨重启恢复。";
+            "桌面理解与设计草稿独立保存；精确预览与执行确认不会跨重启恢复。";
 
         AiCategoriesPanel.Children.Clear();
         foreach (var category in semantic.Categories)

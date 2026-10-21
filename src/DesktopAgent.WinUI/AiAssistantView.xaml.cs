@@ -1,7 +1,8 @@
-using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+﻿using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.Intelligence;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Editing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -12,11 +13,15 @@ public sealed partial class AiAssistantView : UserControl
     private readonly AiDesktopUnderstandingService _understandingService = new();
     private readonly AiDesktopLayoutConversationService _layoutConversationService = new();
     private readonly AiDesktopLogicalWorkspacePlanningService _logicalWorkspacePlanningService = new();
-    private readonly List<string> _workspaceUserIntentHistory = [];
     private CancellationTokenSource? _analysisCts;
     private CancellationTokenSource? _probeCts;
-    private AiDesktopUnderstandingProductResult? _latestSuccessfulUnderstanding;
-    private DesktopLayoutConversationState _conversationState = DesktopLayoutConversationState.Empty;
+    private AiDesktopUnderstandingProductResult? _latestSuccessfulUnderstanding
+    {
+        get => _workspaceSession.LatestUnderstanding;
+        set => _workspaceSession.LatestUnderstanding = value;
+    }
+    private DesktopLayoutConversationState _conversationState =>
+        DesktopWorkspaceConversationIntentAdapter.ToLegacy(_workspaceSession.Session.Snapshot().State.Intent);
 
     internal event Action<DesktopUnderstandingLayoutDraftCompiler.CompilationResult>?
         LayoutDraftImportRequested;
@@ -26,8 +31,11 @@ public sealed partial class AiAssistantView : UserControl
 
     internal bool IsRequestActive => _analysisCts is not null || _probeCts is not null;
 
-    public AiAssistantView()
+    public AiAssistantView() : this(new ProductWorkspaceSession()) { }
+
+    internal AiAssistantView(ProductWorkspaceSession workspaceSession)
     {
+        _workspaceSession = workspaceSession;
         InitializeComponent();
         Unloaded += AiAssistantView_Unloaded;
     }
@@ -104,12 +112,6 @@ public sealed partial class AiAssistantView : UserControl
             return;
 
         var guidanceText = AiGuidanceTextBox.Text.Trim();
-        if (_latestSuccessfulUnderstanding?.Draft is null)
-        {
-            await RunFullUnderstandingAsync(guidanceText.Length == 0 ? null : guidanceText);
-            return;
-        }
-
         if (guidanceText.Length == 0)
         {
             AiStatusBar.Severity = InfoBarSeverity.Informational;
@@ -119,7 +121,7 @@ public sealed partial class AiAssistantView : UserControl
             return;
         }
 
-        await RunLayoutConversationAsync(guidanceText);
+        await SendWorkspaceChatAsync(guidanceText);
     }
 
     private async void RefreshUnderstanding_Click(object sender, RoutedEventArgs e)
@@ -127,8 +129,8 @@ public sealed partial class AiAssistantView : UserControl
         if (IsRequestActive)
             return;
 
-        var guidanceText = AiGuidanceTextBox.Text.Trim();
-        await RunFullUnderstandingAsync(guidanceText.Length == 0 ? null : guidanceText);
+        await _workspaceSession.EnsureUnderstandingAsync(force: true);
+        RenderSessionState();
     }
 
     private async Task RunFullUnderstandingAsync(string? guidance)
@@ -164,9 +166,8 @@ public sealed partial class AiAssistantView : UserControl
             {
                 _latestSuccessfulUnderstanding = result;
                 _persistedUnderstandingState = null;
-                _conversationState = DesktopLayoutConversationState.Empty;
-                _workspaceUserIntentHistory.Clear();
                 RememberWorkspaceUserIntent(guidance);
+                _workspaceSession.Session.AppendMessage(DesktopWorkspaceMessageRole.Assistant, result.Draft.DesktopSummary);
                 RenderDraft(result);
                 AiGuidanceTextBox.Text = string.Empty;
                 AiAnalyzeButton.Content = "应用这条修正";
@@ -228,6 +229,7 @@ public sealed partial class AiAssistantView : UserControl
 
         try
         {
+            var baseRevision = _workspaceSession.Session.Snapshot().Revision;
             var request = DesktopLayoutConversationContextBuilder.Build(
                 latest.Draft,
                 latest.Observation,
@@ -255,8 +257,17 @@ public sealed partial class AiAssistantView : UserControl
                 return;
             }
 
-            _conversationState = _conversationState.Apply(result.Delta);
+            var edit = _workspaceSession.Session.TryApply(baseRevision,
+                [new ReplaceWorkspaceIntent(DesktopWorkspaceConversationIntentAdapter.FromLegacy(_conversationState.Apply(result.Delta)))]);
+            if (!edit.Applied)
+            {
+                AiStatusBar.Title = "设计已变化";
+                AiStatusBar.Message = edit.Message ?? "本次修正没有覆盖当前设计，请按最新设计重新提出要求。";
+                AiStatusBar.IsOpen = true;
+                return;
+            }
             RememberWorkspaceUserIntent(guidance);
+            _workspaceSession.Session.AppendMessage(DesktopWorkspaceMessageRole.Assistant, BuildDeltaSummary(result.Delta));
             RenderConversationState();
             AiGuidanceTextBox.Text = string.Empty;
             AiStatusBar.Severity = InfoBarSeverity.Success;
@@ -320,10 +331,19 @@ public sealed partial class AiAssistantView : UserControl
         => CancelActiveRequest();
 
     private void AiAssistantView_Unloaded(object sender, RoutedEventArgs e)
-        => CancelActiveRequest();
+    {
+        _sharedDesignCanvas?.CancelDrag();
+        CancelActiveRequest();
+        _workspaceSession.Changed -= WorkspaceSession_Changed;
+        _sessionSubscribed = false;
+    }
 
     private void SetBusy(bool busy)
     {
+        AiDirectSaveButton.IsEnabled = !busy;
+        AiDirectPreviewButton.IsEnabled = !busy;
+        foreach (var row in AiChatActionsPanel.Children.OfType<StackPanel>())
+            foreach (var button in row.Children.OfType<Button>()) button.IsEnabled = !busy;
         AiProbeButton.IsEnabled = !busy;
         AiRefreshUnderstandingButton.IsEnabled = !busy;
         AiAnalyzeButton.IsEnabled = !busy;
@@ -332,12 +352,13 @@ public sealed partial class AiAssistantView : UserControl
         AiCancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         AiProgressRing.IsActive = busy;
         AiProgressRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        AiAnalyzeButton.Content = "发送";
     }
 
     private void RenderDraft(AiDesktopUnderstandingProductResult result)
     {
         var draft = result.Draft!;
-        AiResultCard.Visibility = Visibility.Visible;
+        AiResultCard.Visibility = Visibility.Collapsed;
         AiDesktopSummaryText.Text = draft.DesktopSummary;
         AiResultMetaText.Text = result.ActiveLayoutName is null
             ? $"桌面模型 · {result.ObservedItemCount} 个项目 · 当前未使用布局作为 Zone 上下文"
@@ -421,19 +442,21 @@ public sealed partial class AiAssistantView : UserControl
             return;
 
         var trimmed = guidance.Trim();
-        if (_workspaceUserIntentHistory.Count > 0 &&
-            string.Equals(_workspaceUserIntentHistory[^1], trimmed, StringComparison.Ordinal))
+        var messages = _workspaceSession.Session.Snapshot().Messages;
+        if (messages.LastOrDefault(message => message.Role == DesktopWorkspaceMessageRole.User)?.Text == trimmed)
         {
             return;
         }
 
-        _workspaceUserIntentHistory.Add(trimmed);
+        _workspaceSession.Session.AppendMessage(DesktopWorkspaceMessageRole.User, trimmed);
     }
 
     private string? BuildWorkspaceSourceUserIntent()
-        => _workspaceUserIntentHistory.Count == 0
-            ? null
-            : string.Join(Environment.NewLine, _workspaceUserIntentHistory);
+    {
+        var messages = _workspaceSession.Session.Snapshot().Messages
+            .Where(message => message.Role == DesktopWorkspaceMessageRole.User).Select(message => message.Text).ToArray();
+        return messages.Length == 0 ? null : string.Join(Environment.NewLine, messages);
+    }
 
     private static string BuildDeltaSummary(DesktopLayoutConversationDelta delta)
     {

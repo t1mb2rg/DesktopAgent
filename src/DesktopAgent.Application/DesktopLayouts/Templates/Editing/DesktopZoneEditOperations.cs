@@ -67,7 +67,8 @@ public static class DesktopZoneEditOperations
 
     public static IReadOnlyList<DesktopLayoutZone> ReplaceZone(
         IReadOnlyList<DesktopLayoutZone> zones,
-        DesktopLayoutZone replacement)
+        DesktopLayoutZone replacement,
+        bool snapToAdjacentZones = true)
     {
         ArgumentNullException.ThrowIfNull(zones);
         ArgumentNullException.ThrowIfNull(replacement);
@@ -85,11 +86,11 @@ public static class DesktopZoneEditOperations
         if (index < 0)
             throw new InvalidOperationException("要更新的 Zone 不在当前草稿中。 ");
 
-        var adjusted = DesktopZoneSnapOperations.Snap(
+        var adjusted = snapToAdjacentZones ? DesktopZoneSnapOperations.Snap(
             zones,
             index,
             zones[index],
-            replacement);
+            replacement) : replacement;
 
         for (var i = 0; i < zones.Count; i++)
         {

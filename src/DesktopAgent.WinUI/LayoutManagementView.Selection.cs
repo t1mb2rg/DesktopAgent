@@ -1,4 +1,4 @@
-using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+﻿using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -173,6 +173,14 @@ public sealed partial class LayoutManagementView
     private void SetLayoutInteractionMode(bool isEditing)
     {
         ConfigureTargetDisplayUx();
+        if (_draft is not null && LayoutTemplateList.SelectedItem is LayoutTemplateListItem &&
+            _workspaceFrozenPreview is null && _logicalWorkspaceSession is null)
+        {
+            LibraryOverviewSurface.Visibility = Visibility.Collapsed;
+            SharedDesignSurface.Visibility = Visibility.Collapsed;
+            WorkspaceDetailSurface.Visibility = Visibility.Collapsed;
+            LayoutWorkbenchSurface.Visibility = Visibility.Visible;
+        }
 
         _isLayoutEditing = isEditing;
         var isLegacyLogicalWorkspacePreview = _logicalWorkspaceSession is not null;

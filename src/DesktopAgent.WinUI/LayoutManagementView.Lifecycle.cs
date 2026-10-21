@@ -1,4 +1,4 @@
-namespace DesktopAgent.WinUI;
+﻿namespace DesktopAgent.WinUI;
 
 public sealed partial class LayoutManagementView
 {
@@ -9,6 +9,7 @@ public sealed partial class LayoutManagementView
     /// 避免生命周期优化吞掉用户尚未完成的工作/预览状态。
     /// </summary>
     internal bool CanReleaseForDeepResident =>
+        !_sharedDesignActionBusy &&
         _draft is null &&
         _logicalWorkspaceSession is null &&
         _workspaceFrozenPreview is null &&
@@ -16,6 +17,7 @@ public sealed partial class LayoutManagementView
         !_overlayHost.IsVisible &&
         !_workspaceOverlayHosts.Any(static host => host.IsVisible) &&
         !_workspaceReuseInProgress &&
+        !_gridProbeRunning &&
         _desktopZoneEditorWindow is null &&
         !_directApplyInProgress;
 }

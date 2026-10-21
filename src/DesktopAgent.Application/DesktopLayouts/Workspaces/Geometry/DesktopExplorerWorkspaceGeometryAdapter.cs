@@ -648,7 +648,7 @@ public static class DesktopExplorerWorkspaceGeometryAdapter
         var obstacles = observation.Icons
             .Where(icon =>
                 string.Equals(icon.MonitorDeviceName, entry.Display.DeviceName, StringComparison.Ordinal) &&
-                (icon.IsSystemItem || icon.ItemKind == ItemKind.SystemItem))
+                !DesktopWorkspaceLocalItemFactProjector.IsMovable(icon))
             .OrderBy(static icon => icon.StableId, StringComparer.Ordinal)
             .Select(icon => new ExplorerFixedObstacle(
                 icon.StableId,

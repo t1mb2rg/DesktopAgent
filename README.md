@@ -4,6 +4,8 @@ DesktopAgent 是一个面向 Windows 11 的本地桌面管理 Agent。目标是�
 
 > 当前状态：**v1.0 Core Feature Freeze 已激活；M5-05 Daily Workflow + Layout Management 已完成，正在推进 M5-06 Diagnostics / Workbench Split。**
 
+2026-10-20 本地重构进度：正在把产品改为以 AI 对话为主入口，已接入强制校准、共享设计草稿与撤销、流式对话、顶部拓扑展示和保存/精确预览操作卡片。分区拖动与真实网格吸附、仅分析变化项目，以及新版完整真机验收仍未完成，当前不是发布就绪状态。最新本地 Release 测试为 2534 项通过；下方 GitHub Actions 数字是历史远端基线，不代表本次代码已获远端验证。范围与限制见 `docs/experiments/2026-10-20-ai-workspace-session-and-chat.md`。
+
 ## 当前产品形态
 
 DesktopAgent 现在明确分为两个 Surface。
@@ -75,6 +77,8 @@ DesktopAgent/
 要求：Windows 11、.NET 10 SDK，以及可构建 WPF / WinUI 3 的 Windows 开发环境。
 
 ### 正式产品壳
+
+产品使用前必须完成全部当前显示器的真实网格校准。启动时会核验已保存的实测记录；缺失、部分完成或显示环境变化时停留在校准引导。校准需要单独确认，取消不能跳过。校准成功不等于授予无人值守移动权限。
 
 ```powershell
 dotnet run --project .\src\DesktopAgent.WinUI\DesktopAgent.WinUI.csproj -c Debug

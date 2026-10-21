@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using Microsoft.UI.Xaml;
@@ -69,6 +69,8 @@ public sealed partial class LayoutManagementView
         _workspaceDetailAsset = asset;
         _workspaceDetailRevisions = revisions.AsReadOnly();
 
+        SharedDesignSurface.Visibility = Visibility.Collapsed;
+        _libraryDesignCanvas?.CancelDrag();
         var current = revisions[^1];
         WorkspaceDetailTitleText.Text = FormatWorkspaceTitle(asset.Name, current.Blueprint);
         WorkspaceRevisionList.ItemsSource = revisions
@@ -84,6 +86,7 @@ public sealed partial class LayoutManagementView
         WorkspaceRevisionList.SelectedIndex = 0;
 
         RenderWorkspaceRevision(current);
+        ShowLibraryOverview();
     }
 
     private void WorkspaceDetailBack_Click(object sender, RoutedEventArgs e)
@@ -103,6 +106,7 @@ public sealed partial class LayoutManagementView
             return;
 
         RenderWorkspaceRevision(selected.Record);
+        RenderLibraryDesign(selected.Record);
     }
 
     private void RenderWorkspaceRevision(DesktopWorkspaceBlueprintRevisionRecord record)
@@ -127,6 +131,7 @@ public sealed partial class LayoutManagementView
         RenderRelations(blueprint);
         RenderItemOverrides(blueprint);
         WorkspaceDetailSourceIntentText.Text = FormatSourceUserIntent(record.SourceUserIntent);
+        RenderLibraryDesign(record);
     }
 
     private void RenderDisplayPolicies(DesktopWorkspaceBlueprint blueprint)

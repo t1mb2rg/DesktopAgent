@@ -23,7 +23,9 @@ public sealed partial class LayoutManagementView
             _directApplySnapshotStore,
             _directApplyRecoveryStore,
             _workspaceExecutionJournalStore,
-            _workspaceDynamicExecutionJournalStore);
+            _workspaceDynamicExecutionJournalStore,
+            gridFactReader: _workspaceGridFactReader,
+            calibration: ProductGridCalibration.Calibration);
 
     private async void ApplyToDesktop_Click(object sender, RoutedEventArgs e)
     {
@@ -47,6 +49,7 @@ public sealed partial class LayoutManagementView
 
     private async Task ApplyToDesktopCoreAsync()
     {
+        var designRevision = _designSession.Session.Snapshot().Revision;
         if (_directApplyInProgress)
             return;
 
@@ -172,6 +175,11 @@ public sealed partial class LayoutManagementView
             return;
         }
 
+        if (designRevision != _designSession.Session.Snapshot().Revision || !ReferenceEquals(_latestPreview, preparation.Preview))
+        {
+            ShowInfo("预览已经变化", "确认期间设计或预览已修改，Writer 未启动。请重新预览。", InfoBarSeverity.Warning);
+            return;
+        }
         _directApplyInProgress = true;
         RefreshApplyButtonFromCurrentEvidence();
         LayoutCanvasStatusText.Text = "正在 fresh 验证并准备安全执行…";

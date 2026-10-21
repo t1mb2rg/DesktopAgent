@@ -19,7 +19,7 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         Assert.Contains("TryReadGridFactsAsync(freshObservation, cancellationToken)", service, StringComparison.Ordinal);
         Assert.Contains("                observation,\n                freshObservation,\n                geometryResult.Geometry,",
             service.Replace("\r\n", "\n", StringComparison.Ordinal), StringComparison.Ordinal);
-        var captureIndex = service.IndexOf("observationSource.CaptureAsync", StringComparison.Ordinal);
+        var captureIndex = service.IndexOf("ProductGridCalibration.Protect(observationSource).CaptureAsync", StringComparison.Ordinal);
         var geometryIndex = service.IndexOf("DesktopExplorerWorkspaceGeometryAdapter.Build", StringComparison.Ordinal);
         var preparationIndex = service.IndexOf("DesktopWorkspaceDesignPreparationFactory.CreateFromFreshObservation", StringComparison.Ordinal);
         var designIndex = service.IndexOf("coordinator.DesignAndCompileAsync", StringComparison.Ordinal);
@@ -96,7 +96,8 @@ public sealed class WorkspaceBlueprintProductWiringContractTests
         var import = Read(root, "src/DesktopAgent.WinUI/AiAssistantView.MultiDisplayImport.cs");
         var service = Read(root, "src/DesktopAgent.WinUI/AiDesktopWorkspacePlanningService.cs");
 
-        Assert.Contains("_workspaceUserIntentHistory", aiView, StringComparison.Ordinal);
+        Assert.Contains("DesktopWorkspaceMessageRole.User", aiView, StringComparison.Ordinal);
+        Assert.Contains("_workspaceSession.Session.Snapshot().Messages", aiView, StringComparison.Ordinal);
         Assert.Contains("RememberWorkspaceUserIntent(guidance)", aiView, StringComparison.Ordinal);
         Assert.Contains("BuildWorkspaceSourceUserIntent()", aiView, StringComparison.Ordinal);
         Assert.Contains("BuildWorkspaceSourceUserIntent(),", import, StringComparison.Ordinal);

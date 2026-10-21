@@ -14,6 +14,9 @@ public sealed partial class LayoutManagementView
             _directApplyRecoveryStore);
 
     private async void ReconcileRecovery_Click(object sender, RoutedEventArgs e)
+        => await ReconcileRecoveryAsync();
+
+    private async Task ReconcileRecoveryAsync()
     {
         if (_directApplyInProgress)
             return;

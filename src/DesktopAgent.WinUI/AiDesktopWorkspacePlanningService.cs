@@ -74,7 +74,8 @@ internal sealed class AiDesktopWorkspacePlanningService
         DesktopObservation observation,
         DesktopLayoutConversationState conversationState,
         string? sourceUserIntent,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<bool>? isStillCurrent = null)
     {
         ArgumentNullException.ThrowIfNull(understanding);
         ArgumentNullException.ThrowIfNull(observation);
@@ -103,7 +104,7 @@ internal sealed class AiDesktopWorkspacePlanningService
                 new DesktopShellIconReader(),
                 new DesktopShellIconPositioningCapabilitiesReader(),
                 staExecutor);
-            capture = await observationSource.CaptureAsync(cancellationToken);
+            capture = await ProductGridCalibration.Protect(observationSource).CaptureAsync(cancellationToken);
         }
         if (!capture.IsCaptured || capture.Observation is null)
         {
@@ -179,6 +180,9 @@ internal sealed class AiDesktopWorkspacePlanningService
                 preparation.ItemRefBindings);
 
             string? persistenceWarning = null;
+            if (isStillCurrent?.Invoke() == false)
+                return Failure(AiDesktopWorkspacePlanningProductStatus.PreparationFailed,
+                    message: "设计在生成期间已修改，旧结果未保存、未替换当前设计。");
             try
             {
                 await PersistSuccessfulBlueprintAsync(

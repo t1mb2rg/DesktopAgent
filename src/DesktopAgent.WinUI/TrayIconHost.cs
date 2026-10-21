@@ -57,6 +57,7 @@ internal sealed class TrayIconHost : IDisposable
     private IntPtr _previousWindowProc;
     private bool _iconAdded;
     private bool _disposed;
+    internal event Action<bool>? DisplayEnvironmentChanged;
 
     public TrayIconHost(IntPtr hwnd, Action restoreAction)
         : this(hwnd, CreateCommandAction(restoreAction))
@@ -124,6 +125,11 @@ internal sealed class TrayIconHost : IDisposable
 
     private IntPtr WindowProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (!_disposed && (message is 0x007E or 0x001A or 0x02E0 || message == _taskbarCreatedMessage))
+        {
+            try { DisplayEnvironmentChanged?.Invoke(message == _taskbarCreatedMessage); }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Display environment notification failed: {ex}"); }
+        }
         if (message == _taskbarCreatedMessage && !_disposed)
         {
             try

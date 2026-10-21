@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.Automation;
 using DesktopAgent.Core.Productization;
@@ -43,6 +43,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InitializeCalibrationGate();
         Title = "Tessel";
 
         PendingList.ItemsSource = _pendingItems;
@@ -55,6 +56,7 @@ public sealed partial class MainWindow : Window
         _appWindow.Closing += OnAppWindowClosing;
 
         _trayIcon = new TrayIconHost(hwnd, ShowFromBackground);
+        _trayIcon.DisplayEnvironmentChanged += CalibrationEnvironmentChanged;
     }
 
     private void EnsureLayoutManagementView()
@@ -62,7 +64,8 @@ public sealed partial class MainWindow : Window
         if (_layoutManagementView is not null)
             return;
 
-        _layoutManagementView = new LayoutManagementView();
+        _layoutManagementView = new LayoutManagementView(_workspaceSession);
+        _layoutManagementView.DesignWorkspaceRequested += () => NavigateToSection("ai");
         LayoutsView.Children.Clear();
         LayoutsView.Children.Add(_layoutManagementView);
     }
@@ -116,6 +119,7 @@ public sealed partial class MainWindow : Window
             return;
 
         _residentReleaseTimer.Stop();
+        _calibrationTimer.Start();
         _appWindow.Show(activateWindow: true);
         EnsureSelectedSectionHydrated();
         Activate();
@@ -128,6 +132,8 @@ public sealed partial class MainWindow : Window
 
         _settingsLoaded = true;
         await LoadSettingsAsync();
+        await InitializeWorkspaceSessionAsync();
+        await RefreshCalibrationAsync();
     }
 
     private async Task LoadSettingsAsync()
@@ -294,8 +300,12 @@ public sealed partial class MainWindow : Window
 
             SettingsStatusBar.Severity = InfoBarSeverity.Success;
             SettingsStatusBar.Title = markFirstRunCompleted ? "首次设置已完成" : "设置已保存";
-            SettingsStatusBar.Message = "保存设置不会发起 AI 请求，也不会触发桌面移动。";
+            SettingsStatusBar.Message = candidate.AiEnabled
+                ? "设置已保存，将自动检查并理解桌面；不会移动图标。"
+                : "AI 已关闭。启用后会自动理解桌面。";
             SettingsStatusBar.IsOpen = true;
+            if (_calibrationReady && candidate.AiEnabled)
+                _ = _workspaceSession.EnsureUnderstandingAsync();
         }
         catch (Exception ex)
         {
@@ -407,6 +417,7 @@ public sealed partial class MainWindow : Window
 
     private void HideToTray()
     {
+        _calibrationTimer.Stop();
         CancelAiAssistantRequest();
         ReleaseAiAssistantView();
         _layoutManagementView?.PersistRecoverableStateBeforeHide();
@@ -461,17 +472,30 @@ public sealed partial class MainWindow : Window
         HideToTray();
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         if (_exitRequested)
             return;
 
+        if (_layoutManagementView?.IsCoordinateOperationInProgress == true)
+        {
+            _layoutManagementView.CancelRequiredCalibration();
+            CalibrationGateStatus.Text = "正在等待桌面操作完成或校准清理结束，结束后可以退出。";
+            return;
+        }
+
         _exitRequested = true;
+        _workspaceDesktopEditor?.Close();
+        _workspaceSession.StopBackgroundWork();
+        _calibrationTimer.Stop();
+        Activated -= CalibrationWindow_Activated;
         CancelAiAssistantRequest();
         ReleaseAiAssistantView();
+        await _workspaceSession.FlushAsync();
         _layoutManagementView?.PersistRecoverableStateBeforeHide();
         _residentReleaseTimer.Stop();
         _residentReleaseTimer.Tick -= ResidentReleaseTimer_Tick;
+        _trayIcon.DisplayEnvironmentChanged -= CalibrationEnvironmentChanged;
         _trayIcon.Dispose();
         _appWindow.Closing -= OnAppWindowClosing;
         Close();

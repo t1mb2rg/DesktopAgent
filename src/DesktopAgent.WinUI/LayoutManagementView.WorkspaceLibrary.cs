@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using DesktopAgent.Persistence.DesktopLayouts.Workspaces.Blueprints;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -81,7 +81,11 @@ public sealed partial class LayoutManagementView
             WorkspaceLibraryEmptyText.Text = "还没有工作区设计。到 AI 助手描述你希望怎样安排桌面，生成后会保存在这里。";
             WorkspaceLibraryStatusText.Text = items.Count == 0
                 ? "还没有保存的工作区设计"
-                : $"{items.Count} 个工作区 · 点击查看详情 · 只读设计资产";
+                : $"{items.Count} 个设计 · 点击查看分区 · 只读设计资产";
+            if (_workspaceDetailAsset is null && items.Count > 0 &&
+                SharedDesignSurface.Visibility != Visibility.Visible &&
+                _workspaceFrozenPreview is null && !_isLayoutEditing && !_sharedDesignActionBusy)
+                await OpenWorkspaceBlueprintDetailAsync(items[0]);
 
             if (showSuccess)
             {

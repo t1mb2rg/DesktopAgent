@@ -1,4 +1,4 @@
-namespace DesktopAgent.Application.DesktopLayouts.Workspaces;
+﻿namespace DesktopAgent.Application.DesktopLayouts.Workspaces;
 
 /// <summary>
 /// 面板此刻处于哪一步。此前 19 个按钮、10 个下拉全部平铺在同一页里：
@@ -55,7 +55,7 @@ public static class DesktopLayoutStagePresentation
     public static string Title(DesktopLayoutStage stage) => stage switch
     {
         DesktopLayoutStage.Prepare => "设备准备",
-        DesktopLayoutStage.Design => "编辑模板",
+        DesktopLayoutStage.Design => "设计库",
         DesktopLayoutStage.Execute => "预览与应用",
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "未知阶段。"),
     };
@@ -63,7 +63,7 @@ public static class DesktopLayoutStagePresentation
     public static string Hint(DesktopLayoutStage stage) => stage switch
     {
         DesktopLayoutStage.Prepare => "校准、显示器授权与恢复工具。查看设计和预览不需要在这里反复准备。",
-        DesktopLayoutStage.Design => "从左侧选择模板，查看画布并编辑属性。保存后可进入预览与应用。",
+        DesktopLayoutStage.Design => "从设计库选择方案；在 AI 助手中对话或调整画布，保存后生成预览并应用。",
         DesktopLayoutStage.Execute => "检查当前桌面的预览与移动明细，确认后再应用；桌面变化时需要刷新预览。",
         _ => throw new ArgumentOutOfRangeException(nameof(stage), stage, "未知阶段。"),
     };

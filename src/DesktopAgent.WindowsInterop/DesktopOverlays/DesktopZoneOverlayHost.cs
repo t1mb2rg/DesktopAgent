@@ -167,10 +167,9 @@ public sealed class DesktopZoneOverlayHost : IDisposable
         private const int HtTransparent = -1;
         private const int MaNoActivate = 3;
 
-        private const int LabelBaseHeight = 28;
-        private const int LabelBaseWidth = 132;
-        private const int LabelInsetDip = 10;
-        private const int ZoneInsetDip = 4;
+        private const int LabelBaseHeight = DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerGridPresentation.LabelHeightDip;
+        private const int LabelBaseWidth = DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerGridPresentation.LabelWidthDip;
+        private const int LabelInsetDip = DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerGridPresentation.LabelInsetDip;
 
         private const int TransparentBackgroundMode = 1;
         private const uint DtLeft = 0x00000000;
@@ -435,10 +434,6 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                         if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
                             continue;
 
-                        InsetZoneRect(ref rect, state.Scale);
-                        if (rect.Right <= rect.Left || rect.Bottom <= rect.Top)
-                            continue;
-
                         if (state.LayerKind == OverlayLayerKind.Fill)
                         {
                             DrawZoneFill(hdc, state, zone, rect);
@@ -476,15 +471,6 @@ public sealed class DesktopZoneOverlayHost : IDisposable
                 Right = Scale(state.Width, bounds.Right),
                 Bottom = Scale(state.Height, bounds.Bottom),
             };
-        }
-
-        private static void InsetZoneRect(ref NativeRect rect, double scale)
-        {
-            var inset = Math.Max(2, (int)Math.Round(ZoneInsetDip * scale));
-            rect.Left += inset;
-            rect.Top += inset;
-            rect.Right -= inset;
-            rect.Bottom -= inset;
         }
 
         private static void DrawZoneFill(
@@ -593,10 +579,10 @@ public sealed class DesktopZoneOverlayHost : IDisposable
 
             var labelRect = new NativeRect
             {
-                Left = zoneRect.Left + inset,
-                Top = zoneRect.Top + inset,
-                Right = zoneRect.Left + inset + width,
-                Bottom = zoneRect.Top + inset + height,
+                Left = zoneRect.Right - inset - width,
+                Top = zoneRect.Bottom - inset - height,
+                Right = zoneRect.Right - inset,
+                Bottom = zoneRect.Bottom - inset,
             };
 
             var colorRgb = ResolveZoneColor(state, zone.ZoneId);

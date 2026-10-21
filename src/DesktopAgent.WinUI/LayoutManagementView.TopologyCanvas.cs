@@ -206,13 +206,14 @@ public sealed partial class LayoutManagementView
                 virtualTop,
                 virtualRight,
                 virtualBottom);
-            var targetX = x(target.X);
-            var targetY = y(target.Y);
+            var spacing = _latestPreview.Observation.PositioningCapabilities.Spacing;
+            var targetX = x(target.X) + spacing.X * scale / 2d;
+            var targetY = y(target.Y) + spacing.Y * scale / 2d;
 
             if (currentVisible)
             {
-                var currentX = x(current.X);
-                var currentY = y(current.Y);
+                var currentX = x(current.X) + spacing.X * scale / 2d;
+                var currentY = y(current.Y) + spacing.Y * scale / 2d;
                 if (Math.Abs(currentX - targetX) > 1d || Math.Abs(currentY - targetY) > 1d)
                 {
                     LayoutCanvas.Children.Add(new Line

@@ -1,4 +1,4 @@
-using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
+﻿using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Core.Productization;
 using Microsoft.UI.Xaml.Controls;
 
@@ -6,6 +6,8 @@ namespace DesktopAgent.WinUI;
 
 public sealed partial class LayoutManagementView
 {
+    internal void HideDesktopOverlaysForEditing() => HideOverlay();
+
     private DesktopZoneEditorWindow? _desktopZoneEditorWindow;
 
     private async Task OpenDesktopZoneEditorAsync()
@@ -33,12 +35,19 @@ public sealed partial class LayoutManagementView
             ApplyPreviewToUi(preview);
 
             _settings = await _settingsStore.GetAsync();
+            var gridCapture = await ProductGridCalibration.Protect(_observationSource).CaptureAsync();
+            if (!gridCapture.IsCaptured) throw new InvalidOperationException("当前实测网格不可用，请重新核验校准。");
+            var gridResult = DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry.DesktopExplorerWorkspaceGeometryAdapter.Build(
+                gridCapture.Observation!, await _workspaceGridFactReader.TryReadActiveAsync(gridCapture.Observation!));
+            if (!gridResult.Succeeded) throw new InvalidOperationException("无法建立实测网格。");
+            var editorGrid = gridResult.Geometry!.Displays.Single(display => display.DeviceName == preview.Plan.TargetDisplay.DeviceName);
             HideOverlay();
 
             var editor = new DesktopZoneEditorWindow(
                 preview.Plan.TargetDisplay,
                 draft,
                 _settings,
+                editorGrid,
                 GetCurrentZoneColorOverridesSnapshot());
             editor.Completed += DesktopZoneEditor_Completed;
             editor.Cancelled += DesktopZoneEditor_Cancelled;

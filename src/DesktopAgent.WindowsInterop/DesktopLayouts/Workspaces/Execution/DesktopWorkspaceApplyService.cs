@@ -29,7 +29,8 @@ public sealed class DesktopWorkspaceApplyService
         IDesktopWorkspaceDynamicExecutionJournalStore dynamicWorkspaceJournalStore,
         IRecoverySessionStore legacyRecoveryStore,
         TimeProvider? timeProvider = null,
-        DesktopExplorerGridFactReader? gridFactReader = null)
+        DesktopExplorerGridFactReader? gridFactReader = null,
+        DesktopGridCalibration? calibration = null)
     {
         ArgumentNullException.ThrowIfNull(snapshotStore);
         ArgumentNullException.ThrowIfNull(workspaceJournalStore);
@@ -43,12 +44,14 @@ public sealed class DesktopWorkspaceApplyService
         var capabilitiesReader = new DesktopShellIconPositioningCapabilitiesReader();
         var positionWriter = new DesktopShellIconPositionWriter();
         var staExecutor = new StaThreadExecutor();
-        var observationSource = new WindowsDesktopObservationSource(
+        var rawObservationSource = new WindowsDesktopObservationSource(
             topologyReader,
             iconReader,
             capabilitiesReader,
             staExecutor,
             clock);
+        var observationSource = new CalibratedDesktopObservationSource(rawObservationSource,
+            calibration ?? (gridFactReader is null ? null : new DesktopGridCalibration(gridFactReader)));
         var snapshotFactory = new DesktopLayoutSnapshotFactory(clock);
         var coordinator = new DesktopWorkspaceDynamicExecutionCoordinator(
             observationSource,

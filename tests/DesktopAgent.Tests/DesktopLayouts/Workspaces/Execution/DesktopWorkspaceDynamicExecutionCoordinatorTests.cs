@@ -20,6 +20,35 @@ namespace DesktopAgent.Tests.DesktopLayouts.Workspaces.Execution;
 
 public sealed class DesktopWorkspaceDynamicExecutionCoordinatorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Execute_SystemNamespaceIcon_UsesJournalAndFreshVerification(bool inexact)
+    {
+        const string recycle = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+        var state = MutableDesktopState.CreateSystemIconSwap();
+        var preview = CreatePreview(state.Capture());
+        var snapshots = new InMemorySnapshotStore();
+        var journals = new InMemoryDynamicJournalStore();
+        var writer = new StatefulWriter(state, journals) { InexactOnCall = inexact ? 1 : null };
+        using var sta = new StaThreadExecutor();
+        var result = await CreateCoordinator(state, writer, sta, snapshots, new EmptyStaticJournalStore(), journals)
+            .ExecuteAsync(DesktopWorkspaceApplyConfirmation.Create(preview));
+        Assert.True(result.WriterStarted);
+        Assert.NotEmpty(snapshots.Snapshots);
+        Assert.All(writer.LifecycleSeenBeforeCalls, lifecycle => Assert.Equal(DesktopWorkspaceExecutionJournalLifecycle.ForwardInProgress, lifecycle));
+        if (inexact)
+        {
+            Assert.Equal(DesktopWorkspaceExecutionRunStatus.NeedsAttention, result.Status);
+            Assert.Equal(1, writer.CallCount);
+        }
+        else
+        {
+            Assert.True(result.Status == DesktopWorkspaceExecutionRunStatus.Committed, $"{result.Status}: {result.ErrorType}: {result.ErrorMessage}");
+            Assert.Equal(preview.Items.Single(item => item.StableId == recycle).TargetPixelPosition, state.GetPosition(recycle));
+        }
+    }
+
     [Fact]
     public async Task Execute_AuthorizedItemDriftsAfterEarlierWriter_ReobservesFreshFromAndCommits()
     {
@@ -259,6 +288,13 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinatorTests
                 ["b"] = new PixelPoint(0, 0),
             });
 
+        public static MutableDesktopState CreateSystemIconSwap()
+            => new(new Dictionary<string, PixelPoint>(StringComparer.Ordinal)
+            {
+                ["::{645FF040-5081-101B-9F08-00AA002F954E}"] = new(80, 0),
+                ["b"] = new(0, 0),
+            });
+
         public PixelPoint GetPosition(string stableId)
         {
             lock (_gate)
@@ -280,12 +316,12 @@ public sealed class DesktopWorkspaceDynamicExecutionCoordinatorTests
                     .Select(pair => new DesktopIconDescriptor(
                         pair.Key,
                         pair.Key.ToUpperInvariant(),
-                        null,
-                        ItemKind.File,
+                        pair.Key.StartsWith("::{", StringComparison.Ordinal) ? pair.Key : null,
+                        pair.Key.StartsWith("::{", StringComparison.Ordinal) ? ItemKind.SystemItem : ItemKind.File,
                         pair.Value,
                         Display.DeviceName,
-                        false,
-                        true))
+                        pair.Key.StartsWith("::{", StringComparison.Ordinal),
+                        !pair.Key.StartsWith("::{", StringComparison.Ordinal)))
                     .ToArray();
                 return new DesktopObservation(
                     Guid.NewGuid(),

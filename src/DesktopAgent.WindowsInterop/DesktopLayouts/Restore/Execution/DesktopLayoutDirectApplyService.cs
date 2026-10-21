@@ -1,5 +1,6 @@
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Application.DesktopObservations;
+using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.DesktopLayouts;
 using DesktopAgent.Core.DesktopLayouts.Restore;
 using DesktopAgent.Core.DesktopLayouts.Restore.Execution;
@@ -146,14 +147,18 @@ public sealed class DesktopLayoutDirectApplyService
         IRecoverySessionStore recoveryStore,
         IDesktopWorkspaceExecutionJournalStore workspaceExecutionJournalStore,
         IDesktopWorkspaceDynamicExecutionJournalStore dynamicWorkspaceExecutionJournalStore,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        DesktopExplorerGridFactReader? gridFactReader = null,
+        DesktopGridCalibration? calibration = null)
         : this(
             snapshotStore,
             recoveryStore,
             workspaceExecutionJournalStore ?? throw new ArgumentNullException(nameof(workspaceExecutionJournalStore)),
             dynamicWorkspaceExecutionJournalStore ?? throw new ArgumentNullException(nameof(dynamicWorkspaceExecutionJournalStore)),
             timeProvider,
-            productionMarker: true)
+            productionMarker: true,
+            gridFactReader: gridFactReader,
+            calibration: calibration)
     {
     }
 
@@ -163,7 +168,9 @@ public sealed class DesktopLayoutDirectApplyService
         IDesktopWorkspaceExecutionJournalStore? workspaceExecutionJournalStore,
         IDesktopWorkspaceDynamicExecutionJournalStore? dynamicWorkspaceExecutionJournalStore,
         TimeProvider? timeProvider,
-        bool productionMarker)
+        bool productionMarker,
+        DesktopExplorerGridFactReader? gridFactReader = null,
+        DesktopGridCalibration? calibration = null)
     {
         _ = productionMarker;
         _snapshotStore = snapshotStore ?? throw new ArgumentNullException(nameof(snapshotStore));
@@ -179,12 +186,14 @@ public sealed class DesktopLayoutDirectApplyService
         var staExecutor = new StaThreadExecutor();
         var snapshotFactory = new DesktopLayoutSnapshotFactory(_timeProvider);
 
-        _observationSource = new WindowsDesktopObservationSource(
+        var rawObservationSource = new WindowsDesktopObservationSource(
             topologyReader,
             iconReader,
             capabilitiesReader,
             staExecutor,
             _timeProvider);
+        _observationSource = new CalibratedDesktopObservationSource(rawObservationSource,
+            calibration ?? (gridFactReader is null ? null : new DesktopGridCalibration(gridFactReader)));
 
         var coordinator = new TargetDisplayLayoutExecutionCoordinator(
             topologyReader,

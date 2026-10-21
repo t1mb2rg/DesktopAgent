@@ -1,4 +1,4 @@
-using DesktopAgent.Core.Productization;
+﻿using DesktopAgent.Core.Productization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -149,6 +149,12 @@ public sealed partial class MainWindow
         var layoutText = state.ActiveLayout is null
             ? " · 还没有设置布局"
             : $" · {state.ActiveLayout.Zones.Count} 个分区";
+        if (state.AppliedWorkspace is { } applied && applied.Matches(snapshot))
+        {
+            layoutText = $" · {applied.Frames.Length} 个分区 · 最近成功应用的设计";
+            HomeCurrentLayoutText.Text = $"设计 v{applied.Revision}";
+            HomeCurrentLayoutDetailText.Text = applied.Title;
+        }
         HomeRadarSummaryText.Text = itemText + displayText + layoutText;
 
         var highDensityRegions = snapshot.Displays.Sum(display =>

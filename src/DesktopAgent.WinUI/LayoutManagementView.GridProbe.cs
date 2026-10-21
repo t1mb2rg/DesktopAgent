@@ -11,8 +11,7 @@ namespace DesktopAgent.WinUI;
 /// <summary>
 /// 产品侧的校准入口：把"这台机器上图标会落在哪"从推断变成实测。
 ///
-/// 校准是可选动作，不是产品能跑起来的前提：没有实测事实时产品照旧可用，
-/// 只是那块屏只能监督执行；校准把"可以无人值守"的范围扩大，而不是放松任何门槛。
+/// 全部显示器的实测网格是产品入口的前置条件，不等于无人值守执行授权。
 /// </summary>
 public sealed partial class LayoutManagementView
 {
@@ -34,10 +33,8 @@ public sealed partial class LayoutManagementView
             return;
         }
 
-        if (!await ConfirmGridProbeAsync())
-            return;
-
-        await RunGridProbeAsync();
+        try { await RunRequiredCalibrationAsync(); }
+        catch (Exception ex) { ShowError("校准未完成", ex.Message); }
     }
 
     private async Task<bool> ConfirmGridProbeAsync()
@@ -78,7 +75,7 @@ public sealed partial class LayoutManagementView
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
-    private async Task RunGridProbeAsync()
+    private async Task RunGridProbeAsync(Action<string>? reportProgress = null)
     {
         _gridProbeRunning = true;
         _gridProbeCancellation = new CancellationTokenSource();
@@ -86,10 +83,15 @@ public sealed partial class LayoutManagementView
         LayoutStatusBar.IsOpen = false;
 
         var logDirectory = ExplorerGridProbeSession.LogDirectoryFor(DesktopAgentDataPaths.DefaultDatabasePath);
-        var progress = new Progress<string>(message => GridPreparationStatusText.Text = $"校准中：{message}");
+        var progress = new Progress<string>(message =>
+        {
+            GridPreparationStatusText.Text = $"校准中：{message}";
+            reportProgress?.Invoke(GridPreparationStatusText.Text);
+        });
 
         try
         {
+            await ProductGridCalibration.InvalidateAsync();
             var session = new ExplorerGridProbeSession(
                 ExplorerGridPhysicalProbeRunnerFactory.Create(_observationSource, _staThreadExecutor),
                 new ExplorerGridProbeFactRecorder(
@@ -108,6 +110,7 @@ public sealed partial class LayoutManagementView
             var text = $"校准出现逃逸异常：{exception.GetType().Name}: {exception.Message}";
             ExplorerGridProbeSession.PersistReport(text, logDirectory);
             ShowError("校准失败", text);
+            throw;
         }
         finally
         {
@@ -131,7 +134,7 @@ public sealed partial class LayoutManagementView
         };
         var factLine = result.Recorded.Facts.Count > 0
             ? $"已写入 {result.Recorded.Facts.Count} 条实测网格事实。"
-            : "未写入网格事实（原因见报告）——这些屏只能监督执行。";
+            : "未写入网格事实（原因见报告）——完成全部显示器校准后才能进入产品。";
         GridPreparationStatusText.Text = $"校准结果：实测 {result.MeasuredDisplayCount}/{total} 块显示器；{factLine}";
 
         var panel = new StackPanel { Spacing = 10 };

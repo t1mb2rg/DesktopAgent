@@ -12,6 +12,7 @@ public enum DesktopObservationCaptureIssueCode
     IncompleteDesktopRead = 5,
     DuplicateStableId = 6,
     ObservationBuildFailed = 7,
+    CalibrationRequired = 8,
 }
 
 public sealed record DesktopObservationCaptureIssue(

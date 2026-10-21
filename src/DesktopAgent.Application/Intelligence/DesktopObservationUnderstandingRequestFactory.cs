@@ -21,8 +21,8 @@ public static class DesktopObservationUnderstandingRequestFactory
         return new DesktopFirstRunUnderstandingRequest(
             observation.Icons.Select(ToFacts),
             existingZones,
-            currentIntentSummary,
-            latestUserGuidance);
+            string.IsNullOrWhiteSpace(currentIntentSummary) ? null : currentIntentSummary,
+            string.IsNullOrWhiteSpace(latestUserGuidance) ? null : latestUserGuidance);
     }
 
     private static DesktopItemFacts ToFacts(DesktopIconDescriptor icon)

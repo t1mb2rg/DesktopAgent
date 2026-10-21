@@ -43,6 +43,47 @@ public sealed class DesktopWorkspaceSavedDesignPreviewFactoryTests
         Assert.Contains("重新理解桌面", error.Message);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WholeDesktopDesign_EmptyPrimaryEvacuatesToTwoSecondaryScreens(bool systemIcon)
+    {
+        var firstId = systemIcon ? "::{645FF040-5081-101B-9F08-00AA002F954E}" : "a";
+        var displays = new[]
+        {
+            new DisplayDescriptor("DISPLAY1", new(0, 0, 400, 240), new(0, 0, 400, 240), 96, 96, true),
+            new DisplayDescriptor("DISPLAY2", new(-400, 0, 0, 240), new(-400, 0, 0, 240), 96, 96, false),
+            new DisplayDescriptor("DISPLAY3", new(0, 240, 400, 480), new(0, 240, 400, 480), 96, 96, false),
+        };
+        var spacing = new PixelPoint(80, 80);
+        var source = new DesktopObservation(Guid.NewGuid(), DateTimeOffset.UtcNow, displays,
+            new(false, spacing, ConnectionMethod.FindWindowSW, null),
+            [new(firstId, systemIcon ? "回收站" : "工作文件", systemIcon ? firstId : null,
+                systemIcon ? ItemKind.SystemItem : ItemKind.File, new(30, 50), "DISPLAY1", systemIcon, !systemIcon),
+             new("b", "待确认文件", null, ItemKind.File, new(110, 50), "DISPLAY1", false, true)],
+            ConnectionMethod.FindWindowSW, TimeSpan.Zero);
+        var refs = new[] { "primary", "secondary_1", "secondary_2" };
+        var geometry = new ExplorerWorkspaceGeometry(source.ObservationId, "geometry:evacuate", false, spacing,
+            displays.Select((display, index) => new ExplorerDisplayGeometry(refs[index], display.DeviceName, display.Bounds,
+                display.WorkArea, display.IsPrimary, 96, 96, spacing,
+                new(30, 50), new(display.Bounds.Left + 30, display.Bounds.Top + 50), 5, 3,
+                Enumerable.Range(0, 15).Select(slot => new ExplorerNativeSlot($"{refs[index]}:{slot}", slot % 5, slot / 5,
+                    new(display.Bounds.Left + 30 + slot % 5 * 80, display.Bounds.Top + 50 + slot / 5 * 80))))));
+        var semantic = new DesktopSemanticUnderstanding("工作与待确认", [new("dev", "工作", "工作"), new("unknown", "待确认", "待确认")],
+            [new(firstId, "dev", 1, "工作"), new("b", "unknown", 1, "待确认")]);
+        var understanding = new DesktopSemanticUnderstandingSnapshot(Guid.NewGuid(), DateTimeOffset.UtcNow, source.ObservationId,
+            DesktopSemanticUnderstandingSourceFingerprint.Create(source), 2, semantic);
+        var draft = new DesktopAgent.Core.DesktopLayouts.Workspaces.Editing.DesktopWorkspaceDesignDraft(Guid.NewGuid(), "主屏清空",
+            zones: [new("work", "工作", "secondary_1", new(0, 0, 1, 1)), new("inbox", "待确认", "secondary_2", new(0, 0, 1, 1))],
+            categoryRules: [new("dev", "work"), new("unknown", "inbox")]);
+        var blueprint = DesktopWorkspaceWholeDesktopPolicy.CompleteIfAbsent(draft, refs).ToBlueprint();
+        var preview = DesktopWorkspaceSavedDesignPreviewFactory.Create(blueprint, understanding, source, geometry);
+        Assert.Equal(2, preview.MoveCount);
+        Assert.Equal("secondary_1", preview.Items.Single(item => item.StableId == firstId).TargetDisplayRef);
+        Assert.Equal("secondary_2", preview.Items.Single(item => item.StableId == "b").TargetDisplayRef);
+        Assert.DoesNotContain(preview.Items, item => item.TargetDisplayRef == "primary");
+    }
+
     [Fact]
     public void Reuse_ItemOverrideRequiresExplicitBinding_AndPreservesConfirmedKeep()
     {

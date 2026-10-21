@@ -23,6 +23,7 @@ namespace DesktopAgent.WinUI;
 /// </summary>
 internal sealed class DesktopZoneEditorWindow : Window
 {
+    private readonly DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerDisplayGeometry _grid;
     private const int MinimumZonePixels = 56;
     private const byte WindowOpacity = 232;
 
@@ -60,8 +61,10 @@ internal sealed class DesktopZoneEditorWindow : Window
         DisplayDescriptor display,
         DesktopLayoutEditDraft draft,
         DesktopProductSettings settings,
+        DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerDisplayGeometry grid,
         IReadOnlyDictionary<Guid, uint>? workingZoneColorOverrides = null)
     {
+        _grid = grid;
         _display = display ?? throw new ArgumentNullException(nameof(display));
         _sourceDraft = draft ?? throw new ArgumentNullException(nameof(draft));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -272,6 +275,8 @@ internal sealed class DesktopZoneEditorWindow : Window
                 FontSize = 14,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Bottom,
             };
             content.Children.Add(label);
 
@@ -395,7 +400,8 @@ internal sealed class DesktopZoneEditorWindow : Window
                 candidate = DesktopZoneEditOperations.Move(_dragOrigin, deltaX, deltaY);
             }
 
-            _zones = DesktopZoneEditOperations.ReplaceZone(_zones, candidate);
+            candidate = DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerGridPresentation.SnapLegacyZone(candidate, _grid);
+            _zones = DesktopZoneEditOperations.ReplaceZone(_zones, candidate, snapToAdjacentZones: false);
             ApplyZoneVisualBounds(_activeZoneVisual, candidate);
             _statusText.Text = $"{candidate.Name} · {candidate.Bounds.Width / 100d:0.#}% × {candidate.Bounds.Height / 100d:0.#}%";
         }

@@ -231,7 +231,7 @@
                         <StackPanel Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
                             <TextBlock Text="设置" FontSize="28" FontWeight="SemiBold" />
                             <TextBlock Text="自动化、AI Provider 与产品行为。" Opacity="0.62" />
-                            <InfoBar x:Name="FirstRunInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="首次运行设置" Message="首次使用建议先校准桌面网格，再选择自动化模式。校准会临时移动测试图标，需要你单独确认；AI 可以暂时保持关闭。">
+                            <InfoBar x:Name="FirstRunInfoBar" IsOpen="False" IsClosable="False" Severity="Informational" Title="首次运行设置" Message="首次使用必须完成全部显示器的网格校准，再选择自动化模式。校准会临时移动测试图标，需要你单独确认；AI 可以暂时保持关闭。">
                                 <InfoBar.ActionButton>
                                     <Button Content="第一步：前往校准桌面网格" Click="OpenGridPreparation_Click" />
                                 </InfoBar.ActionButton>
@@ -269,5 +269,22 @@
                 </Grid>
             </Grid>
         </NavigationView>
+        <Border x:Name="CalibrationGate" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="32">
+            <StackPanel MaxWidth="620" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18">
+                <TextBlock Text="先校准桌面网格" FontSize="30" FontWeight="SemiBold" />
+                <TextBlock Text="Tessel 的分区编辑与图标移动都基于真实网格。所有显示器完成校准后才能进入；分辨率、缩放或显示排列变化后需要重新校准。" TextWrapping="Wrap" Opacity="0.75" />
+                <TextBlock x:Name="CalibrationGateStatus" Text="正在核验当前显示环境与实测记录…" TextWrapping="Wrap" />
+                <TextBlock x:Name="CalibrationMaintenanceStatus" TextWrapping="Wrap" />
+                <ProgressRing x:Name="CalibrationGateProgress" IsActive="True" Width="30" Height="30" HorizontalAlignment="Left" />
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="RequiredCalibrationButton" Content="校准全部显示器…" Click="RequiredCalibration_Click" />
+                    <Button x:Name="CalibrationStopButton" Content="停止并清理" Visibility="Collapsed" Click="CalibrationStop_Click" />
+                    <Button x:Name="CalibrationRecheckButton" Content="重新检查" Click="CalibrationRecheck_Click" />
+                    <Button Content="退出" Click="Exit_Click" />
+                </StackPanel>
+                <Button x:Name="CalibrationRecoveryButton" Content="查看与处理已有恢复现场" Click="CalibrationRecovery_Click" />
+                <TextBlock Text="校准会临时创建并移动专用测试图标，开始前需要你确认。完成后会恢复、清理并核验；取消或失败不会绕过校准。" TextWrapping="Wrap" FontSize="12" Opacity="0.65" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

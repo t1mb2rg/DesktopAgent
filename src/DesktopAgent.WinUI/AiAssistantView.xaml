@@ -1,11 +1,16 @@
-<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="DesktopAgent.WinUI.AiAssistantView" Loaded="AiAssistantView_Loaded">
-    <Grid>
+﻿<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="DesktopAgent.WinUI.AiAssistantView" Loaded="AiAssistantView_Loaded">
+    <Grid x:Name="ChatWorkspaceGrid" SizeChanged="ChatWorkspace_SizeChanged" ColumnSpacing="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition x:Name="DesignPaneColumn" Width="0" />
+        </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <Grid ColumnSpacing="12">
+        <Grid ColumnSpacing="12" Grid.ColumnSpan="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -13,12 +18,37 @@
             <StackPanel Spacing="5">
                 <TextBlock Text="AI 助手" FontSize="28" FontWeight="SemiBold" />
                 <TextBlock Text="完整理解一次，之后用轻量对话逐步调整布局。" Opacity="0.62" />
+                <TextBlock x:Name="AiSessionStateText" FontSize="12" Opacity="0.6" TextWrapping="Wrap" />
             </StackPanel>
-            <ProgressRing x:Name="AiProgressRing" Grid.Column="1" Width="24" Height="24" IsActive="False" Visibility="Collapsed" VerticalAlignment="Center" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button Content="桌面编辑" Click="OpenWorkspaceDesktopEditor_Click" />
+                <Button x:Name="AiToggleDesignButton" Content="当前设计" Click="ToggleDesignPane_Click" />
+                <Button x:Name="AiUndoDesignButton" Content="撤销" Click="UndoDesign_Click" IsEnabled="False" />
+                <Button x:Name="AiRedoDesignButton" Content="重做" Click="RedoDesign_Click" IsEnabled="False" />
+                <ProgressRing x:Name="AiProgressRing" Width="24" Height="24" IsActive="False" Visibility="Collapsed" VerticalAlignment="Center" />
+            </StackPanel>
         </Grid>
-        <ScrollViewer Grid.Row="1" Margin="0,20,0,16" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Stretch">
-                <Border Padding="18" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+        <Border x:Name="DesignPane" Grid.Column="1" Grid.Row="1" Grid.RowSpan="3" Visibility="Collapsed" Padding="12" Margin="0,14,0,0" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+            <Grid RowSpacing="12">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <TextBlock x:Name="AiTopologySummaryText" Text="当前设计 · 等待桌面理解" FontSize="12" Opacity="0.6" />
+                <Canvas x:Name="ChatTopologyCanvas" Grid.Row="1" />
+                <TextBlock Grid.Row="2" Text="拖动分区可跨屏移动，拖右下角调整大小；吸附实测网格，松开后更新草稿。尚未移动图标。" FontSize="12" Opacity="0.6" TextWrapping="Wrap" />
+            </Grid>
+        </Border>
+        <ScrollViewer x:Name="ChatScroll" Grid.Row="2" Margin="0,14,0,16" HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" ViewChanged="ChatScroll_ViewChanged">
+            <StackPanel Spacing="12" MaxWidth="900" HorizontalAlignment="Center">
+                <Border Padding="16" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <StackPanel Spacing="10">
+                        <TextBlock x:Name="AiStartupStatusText" Text="正在检查桌面与 AI 配置…" TextWrapping="Wrap" />
+                        <ProgressRing x:Name="AiStartupProgress" Width="24" Height="24" HorizontalAlignment="Left" IsActive="False" Visibility="Collapsed" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="AiStartupSettingsButton" Content="配置并启用 AI" Click="ChatModelSettings_Click" />
+                            <Button x:Name="AiStartupRetryButton" Content="重试桌面理解" Click="RetryStartupUnderstanding_Click" Visibility="Collapsed" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border x:Name="AiWelcomePanel" Padding="18" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -32,6 +62,9 @@
                         </StackPanel>
                     </Grid>
                 </Border>
+                <StackPanel x:Name="AiChatMessages" Spacing="16" SizeChanged="ChatReply_SizeChanged" />
+                <TextBlock x:Name="AiStreamingReplyText" TextWrapping="Wrap" IsTextSelectionEnabled="True" Visibility="Collapsed" Margin="16" FontSize="15" SizeChanged="ChatReply_SizeChanged" />
+                <ContentControl x:Name="AiStreamingMarkdownHost" Visibility="Collapsed" HorizontalContentAlignment="Stretch" Margin="16" SizeChanged="ChatReply_SizeChanged" />
                 <InfoBar x:Name="AiStatusBar" IsOpen="False" IsClosable="False" />
                 <Border x:Name="AiResultCard" Visibility="Collapsed" Padding="18" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
                     <StackPanel Spacing="14">
@@ -68,8 +101,9 @@
                 </Border>
             </StackPanel>
         </ScrollViewer>
-        <Grid Grid.Row="2" ColumnSpacing="8">
+        <Grid Grid.Row="3" ColumnSpacing="8">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
@@ -80,11 +114,27 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <TextBox x:Name="AiGuidanceTextBox" MaxLength="4096" PlaceholderText="例如：大多数图标放副屏，主屏中间留空看壁纸" VerticalAlignment="Center" AcceptsReturn="True" MinHeight="76" TextWrapping="Wrap" Grid.Row="0" Grid.ColumnSpan="5" Margin="0,0,0,10" />
-            <Button x:Name="AiProbeButton" Grid.Column="1" Content="测试 AI 连接" Click="TestAiConnection_Click" Grid.Row="1" />
-            <Button x:Name="AiRefreshUnderstandingButton" Grid.Column="2" Content="重新理解桌面" Visibility="Collapsed" Click="RefreshUnderstanding_Click" Grid.Row="1" />
-            <Button x:Name="AiAnalyzeButton" Grid.Column="3" Content="分析当前桌面" Click="AnalyzeDesktop_Click" Grid.Row="1" Style="{StaticResource AccentButtonStyle}" />
-            <Button x:Name="AiCancelButton" Grid.Column="4" Content="取消" Visibility="Collapsed" Click="CancelAnalysis_Click" Grid.Row="1" />
+            <StackPanel Grid.ColumnSpan="5" Grid.Row="0" Spacing="8" Margin="0,0,0,8">
+            <StackPanel x:Name="AiDirectDesignActions" Visibility="Collapsed" Spacing="6">
+                <TextBlock x:Name="AiActionStateText" Text="当前设计可保存或检查精确预览，点击后才会执行。" TextWrapping="Wrap" FontSize="12" Opacity="0.7" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="AiDirectSaveButton" Content="保存当前设计" Click="SaveCurrentDesign_Click" />
+                    <Button x:Name="AiDirectPreviewButton" Content="检查精确预览" Click="PreviewCurrentDesign_Click" />
+                </StackPanel>
+            </StackPanel>
+            <Border x:Name="AiChatActionCard" Visibility="Collapsed" Padding="12" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                <StackPanel Spacing="8">
+                    <StackPanel x:Name="AiChatActionsPanel" Spacing="8" />
+                    <Button Content="暂不" Click="DismissChatAction_Click" />
+                </StackPanel>
+            </Border>
+            </StackPanel>
+            <TextBox x:Name="AiGuidanceTextBox" MaxLength="4096" PlaceholderText="描述你想怎样安排桌面，或者继续调整当前设计…" VerticalAlignment="Center" AcceptsReturn="True" MinHeight="76" TextWrapping="Wrap" Grid.Row="1" Grid.ColumnSpan="5" Margin="0,0,0,10" />
+            <Button x:Name="AiProbeButton" Grid.Column="1" Content="测试 AI 连接" Click="TestAiConnection_Click" Grid.Row="2" />
+            <Button Content="模型设置" HorizontalAlignment="Left" Click="ChatModelSettings_Click" Grid.Row="2" />
+            <Button x:Name="AiRefreshUnderstandingButton" Grid.Column="2" Content="重新理解桌面" Visibility="Collapsed" Click="RefreshUnderstanding_Click" Grid.Row="2" />
+            <Button x:Name="AiAnalyzeButton" Grid.Column="3" Content="发送" Click="AnalyzeDesktop_Click" Grid.Row="2" Style="{StaticResource AccentButtonStyle}" />
+            <Button x:Name="AiCancelButton" Grid.Column="4" Content="停止" Visibility="Collapsed" Click="CancelAnalysis_Click" Grid.Row="2" />
         </Grid>
     </Grid>
 </UserControl>

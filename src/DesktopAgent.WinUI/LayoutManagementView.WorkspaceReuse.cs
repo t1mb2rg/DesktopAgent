@@ -2,6 +2,7 @@ using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Editing;
 using DesktopAgent.Core.DesktopObservations;
 using DesktopAgent.Persistence.Intelligence;
 using Microsoft.UI.Xaml;
@@ -33,15 +34,22 @@ public sealed partial class LayoutManagementView
         WorkspaceRebuildPreviewButton.IsEnabled = false;
         try
         {
-            var capture = await _observationSource.CaptureAsync();
+            var baseRevision = _designSession.Session.Snapshot().Revision;
+            var capture = await ProductGridCalibration.Protect(_observationSource).CaptureAsync();
             if (!capture.IsCaptured || capture.Observation is null)
-                throw new InvalidOperationException("无法完整读取当前桌面，没有生成预览。");
+                throw new InvalidOperationException("没有生成预览：" + string.Join("；", capture.Issues.Select(issue => issue.Message)));
             var observation = capture.Observation;
             var geometry = DesktopExplorerWorkspaceGeometryAdapter.Build(observation,
                 await _workspaceGridFactReader.TryReadActiveAsync(observation));
             if (!geometry.Succeeded || geometry.Geometry is null)
                 throw new InvalidOperationException("无法建立当前桌面几何：" +
                     string.Join("；", geometry.Issues.Select(static issue => issue.Message)));
+
+            var legacyPoliciesCompleted = blueprint.DisplayPolicies.Count == 0;
+            if (legacyPoliciesCompleted)
+                blueprint = DesktopWorkspaceWholeDesktopPolicy.CompleteIfAbsent(
+                    DesktopWorkspaceDesignDraft.FromBlueprint(blueprint), geometry.Geometry.Displays.Select(display => display.DisplayRef))
+                    .ToBlueprint(blueprint.Revision, blueprint.ParentRevision);
 
             var store = new SqliteDesktopSemanticUnderstandingStore(DesktopAgentDataPaths.DefaultDatabasePath);
             await store.InitializeAsync();
@@ -51,15 +59,25 @@ public sealed partial class LayoutManagementView
             if (bindings is null)
                 return;
 
+            blueprint = DesktopWorkspaceZonePresentation.WithLabelReservations(
+                DesktopWorkspaceDesignDraft.FromBlueprint(blueprint), geometry.Geometry)
+                .ToBlueprint(blueprint.Revision, blueprint.ParentRevision);
+
             var preview = DesktopWorkspaceSavedDesignPreviewFactory.Create(
                 blueprint, understanding, observation, geometry.Geometry, bindings);
+            var edit = _designSession.Session.TryApply(baseRevision,
+                [new ReplaceWorkspaceDraft(DesktopWorkspaceDesignDraft.FromBlueprint(blueprint))]);
+            if (!edit.Applied)
+                throw new InvalidOperationException("设计在读取期间已修改，历史设计没有覆盖当前草稿。");
             PrepareWorkspaceFrozenPreviewReplacement();
             if (!TryLoadAiWorkspaceFrozenPreview(preview))
                 return;
             EnableWorkspaceFrozenPreviewApply();
             WorkspaceDetailSurface.Visibility = Visibility.Collapsed;
             SetLayoutStage(DesktopLayoutStage.Execute);
-            ShowInfo("已按当前桌面生成精确预览", $"复用设计版本 v{blueprint.Revision}；请先审阅，再确认应用。尚未移动图标。", InfoBarSeverity.Success);
+            ShowInfo("已按当前桌面生成精确预览", $"复用设计版本 v{blueprint.Revision}；" +
+                (legacyPoliciesCompleted ? "旧草稿未声明显示器策略，本次按全桌面参与设计补齐；空屏允许迁出图标，原保存版本未改写。" : "") +
+                "请先审阅，再确认应用。尚未移动图标。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {

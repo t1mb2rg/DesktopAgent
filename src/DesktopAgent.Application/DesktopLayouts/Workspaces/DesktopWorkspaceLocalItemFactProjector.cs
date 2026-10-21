@@ -54,6 +54,14 @@ public static class DesktopWorkspaceLocalItemFactProjector
     public static bool IsMovable(DesktopIconDescriptor icon)
     {
         ArgumentNullException.ThrowIfNull(icon);
-        return !icon.IsSystemItem && icon.ItemKind != ItemKind.SystemItem;
+        if (!icon.IsSystemItem && icon.ItemKind != ItemKind.SystemItem) return true;
+
+        // System namespace icons have no filesystem path, but the native writer positions
+        // their uniquely matched desktop PIDL through the same IFolderView API. Require
+        // the actual namespace parsing identity; never promote display-name fallbacks.
+        return icon.ParsingName is { } parsingName &&
+            parsingName.StartsWith("::{", StringComparison.Ordinal) &&
+            Guid.TryParseExact(parsingName.AsSpan(2), "B", out _) &&
+            string.Equals(icon.StableId, parsingName, StringComparison.Ordinal);
     }
 }

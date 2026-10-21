@@ -87,7 +87,7 @@ public sealed class SemanticUnderstandingPersistenceLifecycleContractTests
         Assert.Contains("RestoreLatestAsync", persistenceSurface, StringComparison.Ordinal);
         Assert.Contains("AiImportLayoutButton.IsEnabled = false", persistenceSurface, StringComparison.Ordinal);
         Assert.Contains("持久化 Understanding 不包含 Zone 或显示器设计", persistenceSurface, StringComparison.Ordinal);
-        Assert.Contains("Frozen Preview 与执行确认不会跨重启恢复", persistenceSurface, StringComparison.Ordinal);
+        Assert.Contains("执行确认不会跨重启恢复", persistenceSurface, StringComparison.Ordinal);
 
         Assert.Contains(
             "AiImportLayoutButton.IsEnabled = !busy && _latestSuccessfulUnderstanding?.Draft is not null",

@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using DesktopAgent.Application.DesktopLayouts.Templates.Editing;
 using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.DesktopLayouts.Templates.Preview;
@@ -46,8 +46,11 @@ public sealed partial class LayoutManagementView : UserControl
     private DesktopLayoutImpactPreview? _latestPreview;
     private bool _initialized;
 
-    public LayoutManagementView()
+    public LayoutManagementView() : this(new ProductWorkspaceSession()) { }
+
+    internal LayoutManagementView(ProductWorkspaceSession workspaceSession)
     {
+        _designSession = workspaceSession;
         InitializeComponent();
 
         _observationSource = new WindowsDesktopObservationSource(
@@ -65,6 +68,7 @@ public sealed partial class LayoutManagementView : UserControl
 
     private async void LayoutManagementView_Loaded(object sender, RoutedEventArgs e)
     {
+        AttachSharedDesign();
         if (_initialized)
             return;
 
@@ -89,7 +93,10 @@ public sealed partial class LayoutManagementView : UserControl
     }
 
     private void LayoutManagementView_Unloaded(object sender, RoutedEventArgs e)
-        => HideOverlay();
+    {
+        DetachSharedDesign();
+        HideOverlay();
+    }
 
     private async Task EnsureStoresAsync()
     {
@@ -131,6 +138,7 @@ public sealed partial class LayoutManagementView : UserControl
                 _settings.ActiveLayoutTemplateId == summary.TemplateId));
         }
 
+        LegacyLayoutsExpander.Visibility = summaries.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         LayoutSummaryText.Text = summaries.Count == 0
             ? "还没有保存的布局"
             : $"{summaries.Count} 个布局";
@@ -327,6 +335,15 @@ public sealed partial class LayoutManagementView : UserControl
 
         try
         {
+            var visibleDraft = SharedDesignSurface.Visibility == Visibility.Visible
+                ? _designSession.Session.Snapshot().State.Draft
+                : LibraryOverviewSurface.Visibility == Visibility.Visible
+                    ? _libraryOverviewCanvas?.DisplayDraft : null;
+            if (visibleDraft is { Zones.Count: > 0 })
+            {
+                await ShowDraftWorkspaceOverlayAsync(visibleDraft);
+                return;
+            }
             if (_workspaceFrozenPreview is not null)
             {
                 await ShowFrozenWorkspaceOverlayAsync(_workspaceFrozenPreview);
@@ -369,7 +386,7 @@ public sealed partial class LayoutManagementView : UserControl
             ? NormalizeRequiredDeviceName(LayoutDeviceNameTextBox.Text, "当前选择的显示器需要填写设备名。")
             : null;
 
-        var capture = await _observationSource.CaptureAsync();
+        var capture = await ProductGridCalibration.Protect(_observationSource).CaptureAsync();
         if (!capture.IsCaptured || capture.Observation is null)
         {
             var details = string.Join("；", capture.Issues.Select(issue => issue.Message));
@@ -611,8 +628,9 @@ public sealed partial class LayoutManagementView : UserControl
                 continue;
 
             var target = item.TargetPosition.Value;
-            var targetX = CanvasInset + drawableWidth * (target.X - work.Left) / work.Width;
-            var targetY = CanvasInset + drawableHeight * (target.Y - work.Top) / work.Height;
+            var spacing = _latestPreview.Observation.PositioningCapabilities.Spacing;
+            var targetX = CanvasInset + drawableWidth * (target.X + spacing.X / 2d - work.Left) / work.Width;
+            var targetY = CanvasInset + drawableHeight * (target.Y + spacing.Y / 2d - work.Top) / work.Height;
             if (targetX < CanvasInset || targetX > width - CanvasInset ||
                 targetY < CanvasInset || targetY > height - CanvasInset)
             {
@@ -620,8 +638,8 @@ public sealed partial class LayoutManagementView : UserControl
             }
 
             var current = item.CurrentPosition;
-            var currentX = CanvasInset + drawableWidth * (current.X - work.Left) / work.Width;
-            var currentY = CanvasInset + drawableHeight * (current.Y - work.Top) / work.Height;
+            var currentX = CanvasInset + drawableWidth * (current.X + spacing.X / 2d - work.Left) / work.Width;
+            var currentY = CanvasInset + drawableHeight * (current.Y + spacing.Y / 2d - work.Top) / work.Height;
             var hasVisibleCurrent =
                 currentX >= CanvasInset && currentX <= width - CanvasInset &&
                 currentY >= CanvasInset && currentY <= height - CanvasInset;

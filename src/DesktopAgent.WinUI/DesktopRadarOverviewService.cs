@@ -1,4 +1,4 @@
-using DesktopAgent.Core.DesktopLayouts.Templates;
+﻿using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.Productization;
 using DesktopAgent.Persistence.DesktopLayouts;
 using DesktopAgent.Persistence.DesktopLayouts.Templates;
@@ -14,7 +14,10 @@ internal sealed record DesktopRadarOverviewState(
     DesktopLayoutTemplate? ActiveLayout,
     DesktopProductSettings Settings,
     string FreshnessText,
-    string? StatusMessage);
+    string? StatusMessage)
+{
+    internal AppliedWorkspacePresentation? AppliedWorkspace { get; init; }
+}
 
 /// <summary>
 /// Overview Radar 的轻量缓存 + 按需刷新协调器。
@@ -67,7 +70,7 @@ internal sealed class DesktopRadarOverviewService : IDisposable
             context.Layout,
             context.Settings,
             FormatFreshness(snapshot?.ObservedAtUtc),
-            status);
+            status) { AppliedWorkspace = await AppliedWorkspacePresentation.LoadAsync() };
     }
 
     public bool ShouldRefresh(DesktopRadarSnapshot? snapshot)
@@ -111,7 +114,7 @@ internal sealed class DesktopRadarOverviewService : IDisposable
             context.Layout,
             context.Settings,
             FormatFreshness(snapshot.ObservedAtUtc),
-            StatusMessage: null);
+            StatusMessage: null) { AppliedWorkspace = await AppliedWorkspacePresentation.LoadAsync() };
     }
 
     public void Dispose()

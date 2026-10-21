@@ -1,4 +1,4 @@
-using DesktopAgent.Application.DesktopAutomation;
+﻿using DesktopAgent.Application.DesktopAutomation;
 using DesktopAgent.Application.DesktopLayouts.Workspaces.Geometry;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Execution;
@@ -17,6 +17,7 @@ public sealed partial class LayoutManagementView
 
     private DesktopWorkspaceApplyService? _workspaceApplyService;
     private Guid? _workspaceFrozenPreviewApplyPreviewId;
+    private long _workspaceFrozenPreviewApplyDesignRevision;
 
     /// <summary>
     /// 网格实测事实的唯一读取入口（Diagnostics 探针是唯一写入方）。
@@ -31,10 +32,12 @@ public sealed partial class LayoutManagementView
             _workspaceExecutionJournalStore,
             _workspaceDynamicExecutionJournalStore,
             _directApplyRecoveryStore,
-            gridFactReader: _workspaceGridFactReader);
+            gridFactReader: _workspaceGridFactReader,
+            calibration: ProductGridCalibration.Calibration);
 
     internal void EnableWorkspaceFrozenPreviewApply()
     {
+        _workspaceFrozenPreviewApplyDesignRevision = _designSession.Session.Snapshot().Revision;
         _workspaceFrozenPreviewApplyPreviewId =
             _workspaceFrozenPreview is { MoveCount: > 0 } preview
                 ? preview.PreviewId
@@ -43,7 +46,8 @@ public sealed partial class LayoutManagementView
     }
 
     private bool HasWorkspaceFrozenPreviewApplyTicket(DesktopWorkspaceFrozenPreview preview)
-        => _workspaceFrozenPreviewApplyPreviewId == preview.PreviewId;
+        => _workspaceFrozenPreviewApplyPreviewId == preview.PreviewId &&
+            _workspaceFrozenPreviewApplyDesignRevision == _designSession.Session.Snapshot().Revision;
 
     private void DisableWorkspaceFrozenPreviewApplyEvidence()
     {
@@ -128,6 +132,11 @@ public sealed partial class LayoutManagementView
         }
 
         // Confirmation 只在用户真正点下“确认并应用”后生成，并且一次性消费当前 PreviewId 的执行入口。
+        if (!HasWorkspaceFrozenPreviewApplyTicket(preview))
+        {
+            ShowInfo("设计已经变化", "确认期间设计已修改，Writer 未启动。请重新生成精确预览。", InfoBarSeverity.Warning);
+            return;
+        }
         var confirmation = DesktopWorkspaceApplyConfirmation.Create(preview);
         _workspaceFrozenPreviewApplyPreviewId = null;
         _directApplyInProgress = true;
@@ -141,6 +150,11 @@ public sealed partial class LayoutManagementView
             var result = await WorkspaceApplyService.ApplyAsync(confirmation);
             LayoutCanvasStatusText.Text = "Workspace Apply 已结束 · 再次执行前需要新的精确预览";
             PresentWorkspaceApplyResult(result, preview);
+            if (result.Status == DesktopWorkspaceExecutionRunStatus.Committed)
+            {
+                try { await AppliedWorkspacePresentation.SaveAsync(preview); }
+                catch (Exception ex) { ShowInfo("布局已应用，桌面概览未更新", ex.Message, InfoBarSeverity.Warning); }
+            }
 
             if (result.Status == DesktopWorkspaceExecutionRunStatus.Committed
                 && rememberDisplaysCheckBox?.IsChecked == true)

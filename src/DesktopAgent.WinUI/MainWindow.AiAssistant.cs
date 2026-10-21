@@ -14,10 +14,11 @@ public sealed partial class MainWindow
         if (_aiAssistantView is not null)
             return;
 
-        _aiAssistantView = new AiAssistantView();
+        _aiAssistantView = new AiAssistantView(_workspaceSession);
         _aiAssistantView.LayoutDraftImportRequested += AiAssistantView_LayoutDraftImportRequested;
         _aiAssistantView.LogicalWorkspacePreviewRequested += AiAssistantView_LogicalWorkspacePreviewRequested;
         _aiAssistantView.WorkspaceFrozenPreviewRequested += AiAssistantView_WorkspaceFrozenPreviewRequested;
+        _aiAssistantView.ModelSettingsRequested += AiAssistantView_ModelSettingsRequested;
         AiView.Children.Clear();
         Grid.SetRow(_aiAssistantView, 0);
         Grid.SetRowSpan(_aiAssistantView, 3);
@@ -68,6 +69,8 @@ public sealed partial class MainWindow
     private void CancelAiAssistantRequest()
         => _aiAssistantView?.CancelActiveRequest();
 
+    private void AiAssistantView_ModelSettingsRequested() => NavigateToSection("settings");
+
     private void ReleaseAiAssistantView()
     {
         if (_aiAssistantView is null)
@@ -77,6 +80,7 @@ public sealed partial class MainWindow
         _aiAssistantView.LayoutDraftImportRequested -= AiAssistantView_LayoutDraftImportRequested;
         _aiAssistantView.LogicalWorkspacePreviewRequested -= AiAssistantView_LogicalWorkspacePreviewRequested;
         _aiAssistantView.WorkspaceFrozenPreviewRequested -= AiAssistantView_WorkspaceFrozenPreviewRequested;
+        _aiAssistantView.ModelSettingsRequested -= AiAssistantView_ModelSettingsRequested;
         AiView.Children.Remove(_aiAssistantView);
         _aiAssistantView = null;
     }

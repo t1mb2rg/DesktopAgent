@@ -186,9 +186,9 @@
 
                             <Border x:Name="PreviewLeftZone">
                                 <Grid>
-                                    <StackPanel Margin="14" Spacing="12">
+                                    <Grid Margin="14">
                                         <Border x:Name="PreviewLeftLabel"
-                                                HorizontalAlignment="Left"
+                                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
                                                 Padding="9,5"
                                                 CornerRadius="10"
                                                 Background="#AA202020">
@@ -197,20 +197,20 @@
                                                        Foreground="White"
                                                        FontSize="12" />
                                         </Border>
-                                        <StackPanel Orientation="Horizontal" Spacing="14">
+                                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Top">
                                             <TextBlock Text="📄" FontSize="24" />
                                             <TextBlock Text="📁" FontSize="24" />
                                         </StackPanel>
-                                    </StackPanel>
+                                    </Grid>
                                 </Grid>
                             </Border>
 
                             <Border x:Name="PreviewRightZone"
                                     Grid.Column="1">
                                 <Grid>
-                                    <StackPanel Margin="14" Spacing="12">
+                                    <Grid Margin="14">
                                         <Border x:Name="PreviewRightLabel"
-                                                HorizontalAlignment="Left"
+                                                HorizontalAlignment="Right" VerticalAlignment="Bottom"
                                                 Padding="9,5"
                                                 CornerRadius="10"
                                                 Background="#AA202020">
@@ -219,11 +219,11 @@
                                                        Foreground="White"
                                                        FontSize="12" />
                                         </Border>
-                                        <StackPanel Orientation="Horizontal" Spacing="14">
+                                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Top">
                                             <TextBlock Text="📷" FontSize="24" />
                                             <TextBlock Text="📦" FontSize="24" />
                                         </StackPanel>
-                                    </StackPanel>
+                                    </Grid>
                                 </Grid>
                             </Border>
                         </Grid>

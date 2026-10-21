@@ -1,4 +1,4 @@
-using DesktopAgent.Application.DesktopLayouts.Workspaces;
+﻿using DesktopAgent.Application.DesktopLayouts.Workspaces;
 
 namespace DesktopAgent.Tests.Productization;
 
@@ -136,11 +136,43 @@ public sealed class ProductLayoutStagesContractTests
     }
 
     [Fact]
-    public void ReadOnlyOverlay_IsAvailableAcrossStagesInsteadOfInsidePrepareOnly()
+    public void ReadOnlyOverlay_IsOutsideHiddenStages_AndHasNoCollapsedAncestor()
     {
-        var xaml = Read("src", "DesktopAgent.WinUI", "LayoutManagementView.xaml");
-        Assert.Contains("OverlayToggleButton", Slice(xaml, "x:Name=\"LayoutStageBar\"", "</Border>"), StringComparison.Ordinal);
-        Assert.DoesNotContain("OverlayToggleButton", Slice(xaml, "x:Name=\"PrepareStagePanel\"", "</Border>"), StringComparison.Ordinal);
+        var xaml = System.Xml.Linq.XDocument.Parse(Read("src", "DesktopAgent.WinUI", "LayoutManagementView.xaml"));
+        System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var button = Assert.Single(xaml.Descendants(), element => (string?)element.Attribute(ns + "Name") == "OverlayToggleButton");
+        Assert.Contains(button.Ancestors(), element => (string?)element.Attribute(ns + "Name") == "DesktopOverlayToolbar");
+        Assert.DoesNotContain(button.Ancestors(), element => (string?)element.Attribute("Visibility") == "Collapsed");
+        Assert.DoesNotContain(button.Ancestors(), element => (string?)element.Attribute(ns + "Name") == "PrepareStagePanel");
+        Assert.Equal("ToggleOverlay_Click", (string?)button.Attribute("Click"));
+    }
+
+    [Fact]
+    public void LibraryNavigation_HidesPhaseTabsButKeepsPreparationAndRecoveryReachable()
+    {
+        var xaml = System.Xml.Linq.XDocument.Parse(Read("src", "DesktopAgent.WinUI", "LayoutManagementView.xaml"));
+        System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var stageBar = xaml.Descendants().Single(e => (string?)e.Attribute(ns + "Name") == "LayoutStageBar");
+        Assert.Equal("Collapsed", (string?)stageBar.Attribute("Visibility"));
+        Assert.Contains(xaml.Descendants(), e => (string?)e.Attribute("Click") == "OpenPreparationTools_Click");
+        Assert.Contains(xaml.Descendants(), e => (string?)e.Attribute("Click") == "EditWorkspaceDesign_Click");
+        Assert.Contains(xaml.Descendants(), e => (string?)e.Attribute("Click") == "WorkspaceRebuildPreview_Click");
+    }
+
+    [Fact]
+    public void DesktopEditing_UsesSharedDraftControllerWithoutExecutingOrSavingDesignVersions()
+    {
+        var desktopEditor = Read("src", "DesktopAgent.WinUI", "WorkspaceDesktopEditorWindow.cs");
+        var canvas = Read("src", "DesktopAgent.WinUI", "WorkspaceDesignCanvas.cs");
+        Assert.Contains("new WorkspaceDesignCanvas(session", desktopEditor, StringComparison.Ordinal);
+        Assert.Contains("DesktopCoordinates = true", desktopEditor, StringComparison.Ordinal);
+        Assert.Contains("ExplorerGridPresentation.Quantize", canvas, StringComparison.Ordinal);
+        Assert.Contains("Session.TryApply(_topologyDragRevision", canvas, StringComparison.Ordinal);
+        foreach (var forbidden in new[] { "DesktopShellIconPositionWriter", "WorkspaceApplyService", "AppendRevisionAsync", "_templateStore" })
+        {
+            Assert.DoesNotContain(forbidden, desktopEditor, StringComparison.Ordinal);
+            Assert.DoesNotContain(forbidden, canvas, StringComparison.Ordinal);
+        }
     }
 
     private static string Read(params string[] parts)

@@ -1,5 +1,6 @@
 using System.Text;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
+using DesktopAgent.Core.DesktopLayouts.Workspaces.Editing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -34,12 +35,14 @@ public sealed partial class AiAssistantView
 
         try
         {
+            var baseRevision = _workspaceSession.Session.Snapshot().Revision;
             var result = await _workspacePlanningService.PlanAsync(
                 latest.Draft,
                 latest.Observation,
                 _conversationState,
                 BuildWorkspaceSourceUserIntent(),
-                cts.Token);
+                cts.Token,
+                isStillCurrent: () => _workspaceSession.Session.Snapshot().Revision == baseRevision);
             if (cts.IsCancellationRequested)
             {
                 ShowCancelled();
@@ -60,6 +63,10 @@ public sealed partial class AiAssistantView
             if (WorkspaceFrozenPreviewRequested is null)
                 throw new InvalidOperationException("布局工作台当前没有挂载 Workspace Frozen Preview 入口。");
 
+            var edit = _workspaceSession.Session.TryApply(baseRevision,
+                [new ReplaceWorkspaceDraft(DesktopWorkspaceDesignDraft.FromBlueprint(result.Preview.Blueprint))]);
+            if (!edit.Applied)
+                throw new InvalidOperationException("设计在生成期间已修改，旧结果没有覆盖当前设计。请按最新设计重新生成预览。");
             WorkspaceFrozenPreviewRequested.Invoke(result.Preview);
             AiStatusBar.Severity = result.PersistenceWarning is null
                 ? InfoBarSeverity.Success

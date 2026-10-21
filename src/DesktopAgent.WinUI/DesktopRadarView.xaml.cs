@@ -1,4 +1,4 @@
-using DesktopAgent.Core.DesktopLayouts.Templates;
+﻿using DesktopAgent.Core.DesktopLayouts.Templates;
 using DesktopAgent.Core.Productization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -48,6 +48,29 @@ public sealed partial class DesktopRadarView : UserControl
             DrawDensityMarks(item);
 
         DrawZones(displayLayouts);
+        DrawAppliedWorkspace(displayLayouts);
+    }
+
+    private void DrawAppliedWorkspace(IReadOnlyList<RenderedDisplay> displays)
+    {
+        var presentation = _state?.AppliedWorkspace;
+        if (presentation is null || _state?.Snapshot is not { } snapshot || !presentation.Matches(snapshot)) return;
+        foreach (var frame in presentation.Frames)
+        {
+            var display = displays.Single(d => d.Display.DisplayKey == frame.DeviceName);
+            var scale = display.Width / display.Display.Bounds.Width;
+            var width = (frame.Right - frame.Left) * scale;
+            var height = (frame.Bottom - frame.Top) * scale;
+            var border = new Border { Width = width, Height = height,
+                BorderThickness = new Thickness(1.5), CornerRadius = new CornerRadius(3),
+                BorderBrush = RgbBrush(0x0088DD, 230), Background = RgbBrush(0x0088DD, 18),
+                Child = new TextBlock { Text = frame.Name, FontSize = 11, Margin = new Thickness(5),
+                    HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                    TextTrimming = TextTrimming.CharacterEllipsis } };
+            Canvas.SetLeft(border, display.Left + (frame.Left - display.Display.Bounds.Left) * scale);
+            Canvas.SetTop(border, display.Top + (frame.Top - display.Display.Bounds.Top) * scale);
+            RadarCanvas.Children.Add(border);
+        }
     }
 
     private IReadOnlyList<RenderedDisplay> CalculateDisplayLayouts(DesktopRadarSnapshot snapshot)

@@ -1,4 +1,4 @@
-using DesktopAgent.Application.DesktopLayouts.Workspaces;
+﻿using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -29,6 +29,9 @@ public sealed partial class LayoutManagementView
 
     internal void SetLayoutStage(DesktopLayoutStage stage)
     {
+        _libraryDesignCanvas?.CancelDrag();
+        SharedDesignSurface.Visibility = Visibility.Collapsed;
+        LibraryOverviewSurface.Visibility = stage == DesktopLayoutStage.Design ? Visibility.Visible : Visibility.Collapsed;
         _layoutStage = stage;
         _layoutStageInitialized = true;
         ApplyLayoutStage(stage);
@@ -39,26 +42,10 @@ public sealed partial class LayoutManagementView
     /// 以前这一步在界面上没有入口（校准按钮挂在"工作区设计库"卡片的角上），这就是"找不到入口"的根因。
     /// 读不到授权就不拦人：默认留在设计阶段。
     /// </summary>
-    private async Task InitializeLayoutStageAsync()
+    private Task InitializeLayoutStageAsync()
     {
-        if (_layoutStageInitialized)
-            return;
-
-        var stage = DesktopLayoutStage.Design;
-        try
-        {
-            var snapshot = await ReadDisplayAuthorizationsAsync(DesktopAgentDataPaths.DefaultDatabasePath);
-            if (snapshot is { IsAvailable: true, Authorizations.Count: 0 })
-                stage = DesktopLayoutStage.Prepare;
-        }
-        catch (Exception)
-        {
-            // 读不到授权不该拦住面板。
-        }
-
-        // 异步读取期间用户可能通过首次设置入口明确选择了阶段。
-        if (!_layoutStageInitialized)
-            SetLayoutStage(stage);
+        if (!_layoutStageInitialized) SetLayoutStage(DesktopLayoutStage.Design);
+        return Task.CompletedTask;
     }
 
     private void ApplyLayoutStage(DesktopLayoutStage stage)
@@ -75,7 +62,7 @@ public sealed partial class LayoutManagementView
             WorkspaceDetailSurface.Visibility = Visibility.Collapsed;
 
         var workbenchIsGatedVisible = DesktopLayoutStagePresentation.IsVisibleInStage(stage, "LayoutWorkbenchSurface");
-        LayoutWorkbenchSurface.Visibility = workbenchIsGatedVisible &&
+        LayoutWorkbenchSurface.Visibility = stage != DesktopLayoutStage.Design && workbenchIsGatedVisible &&
             !(stage == DesktopLayoutStage.Design && detailIsOpen)
                 ? Visibility.Visible
                 : Visibility.Collapsed;

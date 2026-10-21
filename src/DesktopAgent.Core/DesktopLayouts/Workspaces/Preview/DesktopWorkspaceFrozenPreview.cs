@@ -182,6 +182,7 @@ public sealed record DesktopWorkspaceFrozenPreviewItem
 /// <summary>Frozen Preview 中一块显示器的本地可视化表面。</summary>
 public sealed record DesktopWorkspaceFrozenPreviewDisplay
 {
+    public ExplorerDisplayGeometry GridGeometry { get; }
     private readonly IReadOnlyList<CompiledWorkspaceZone> _zones;
     private readonly IReadOnlyList<CompiledWorkspaceReservedRegion> _reservedRegions;
 
@@ -223,6 +224,7 @@ public sealed record DesktopWorkspaceFrozenPreviewDisplay
         var reservedArray = reservedRegions.ToArray();
 
         DisplayRef = geometry.DisplayRef;
+        GridGeometry = geometry;
         DeviceName = geometry.DeviceName;
         IsPrimary = geometry.IsPrimary;
         Policy = policy;

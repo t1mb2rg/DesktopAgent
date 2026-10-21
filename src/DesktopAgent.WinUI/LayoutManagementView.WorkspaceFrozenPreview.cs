@@ -1,4 +1,5 @@
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Blueprints;
+using DesktopAgent.Application.DesktopLayouts.Workspaces;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Compilation;
 using DesktopAgent.Core.DesktopLayouts.Workspaces.Preview;
 using Microsoft.UI.Xaml;
@@ -343,7 +344,7 @@ public sealed partial class LayoutManagementView
                     outlineOnly: false,
                     showLabel: !isTopology);
             }
-            foreach (var region in display.ReservedRegions)
+            foreach (var region in display.ReservedRegions.Where(region => !region.RegionKey.StartsWith(DesktopWorkspaceZonePresentation.LabelRegionPrefix, StringComparison.Ordinal)))
             {
                 AddWorkspaceFrozenRegion(
                     canvasDisplay,
@@ -373,7 +374,8 @@ public sealed partial class LayoutManagementView
                 var red = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude ? (byte)0xD8 : (byte)0x00;
                 var green = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude ? (byte)0x6B : (byte)0x78;
                 var blue = item.Disposition == DesktopWorkspaceCompiledItemDisposition.Exclude ? (byte)0x00 : (byte)0xD4;
-                AddWorkspaceFrozenItemDot(item, X(point.X), Y(point.Y), red, green, blue);
+                var spacing = renderDisplays[0].GridGeometry.Spacing;
+                AddWorkspaceFrozenItemDot(item, X(point.X + spacing.X / 2d), Y(point.Y + spacing.Y / 2d), red, green, blue);
             }
         }
 
@@ -391,7 +393,7 @@ public sealed partial class LayoutManagementView
                     outlineOnly: true,
                     showLabel: !isTopology);
             }
-            foreach (var region in display.ReservedRegions)
+            foreach (var region in display.ReservedRegions.Where(region => !region.RegionKey.StartsWith(DesktopWorkspaceZonePresentation.LabelRegionPrefix, StringComparison.Ordinal)))
             {
                 AddWorkspaceFrozenRegion(
                     canvasDisplay,
@@ -554,10 +556,13 @@ public sealed partial class LayoutManagementView
         bool showLabel)
     {
         var work = display.Display.WorkArea;
-        var leftGlobal = work.Left + work.Width * bounds.Left;
-        var topGlobal = work.Top + work.Height * bounds.Top;
-        var width = Math.Max(1d, work.Width * bounds.Width * display.Scale);
-        var height = Math.Max(1d, work.Height * bounds.Height * display.Scale);
+        var grid = display.Display.GridGeometry;
+        var pixels = DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerGridPresentation.FrameBounds(
+            DesktopAgent.Core.DesktopLayouts.Workspaces.Geometry.ExplorerGridPresentation.Quantize(bounds, grid), grid);
+        var leftGlobal = pixels.Left;
+        var topGlobal = pixels.Top;
+        var width = Math.Max(1d, pixels.Width * display.Scale);
+        var height = Math.Max(1d, pixels.Height * display.Scale);
         var left = display.Left + (leftGlobal - display.Display.PixelBounds.Left) * display.Scale;
         var top = display.Top + (topGlobal - display.Display.PixelBounds.Top) * display.Scale;
 
@@ -579,6 +584,8 @@ public sealed partial class LayoutManagementView
             Child = showLabel
                 ? new TextBlock
                 {
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Bottom,
                     Text = label,
                     FontSize = 10,
                     Margin = new Thickness(6, 4, 5, 4),

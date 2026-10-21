@@ -66,7 +66,7 @@ public sealed class ProductGridCalibrationSurfaceContractTests
     }
 
     [Fact]
-    public void CalibrationPanel_ReportsUnmeasuredDisplaysAsSupervisedOnly()
+    public void CalibrationPanel_RequiresAllDisplaysInsteadOfSupervisedFallback()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -74,7 +74,8 @@ public sealed class ProductGridCalibrationSurfaceContractTests
             "DesktopAgent.WinUI",
             "LayoutManagementView.GridProbe.cs"));
 
-        Assert.Contains("只能监督执行", source, StringComparison.Ordinal);
+        Assert.Contains("完成全部显示器校准后才能进入产品", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("只能监督执行", source, StringComparison.Ordinal);
         Assert.Contains("不会用推断顶替", source, StringComparison.Ordinal);
         Assert.Contains("MeasuredDisplayCount", source, StringComparison.Ordinal);
     }
