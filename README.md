@@ -123,3 +123,5 @@
 - 产品反馈清单：[`docs/suggestions/product-feedback-backlog.md`](docs/suggestions/product-feedback-backlog.md)
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
 - 许可证：GPL-3.0-or-later，见 [LICENSE](LICENSE)
+- 第三方组件与运行时许可：见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+  —— **源码是 GPL-3.0，但运行时依赖里的 Windows App SDK 是 Microsoft 专有许可**，这个区别写在那份文件里

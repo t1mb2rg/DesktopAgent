@@ -164,10 +164,36 @@ else {
     Write-Host '== Trim skipped (-SkipTrim)' -ForegroundColor DarkYellow
 }
 
+# ---------------------------------------------------------------- legal files
+# GPL-3.0 requires the license text to travel with the binaries, and the Windows
+# App SDK requires its own terms to be redistributed with the runtime. Copy both
+# into the published folder so the zip and the installer both carry them.
+Write-Step 'License files'
+$legalFiles = @(
+    @{ Source = Join-Path $repoRoot 'LICENSE';                  Target = 'LICENSE.txt' },
+    @{ Source = Join-Path $repoRoot 'THIRD-PARTY-NOTICES.md';   Target = 'THIRD-PARTY-NOTICES.md' },
+    @{ Source = Join-Path $repoRoot 'src\DesktopAgent.WinUI\ThirdPartyNotices.txt'; Target = 'ThirdPartyNotices.txt' },
+    @{ Source = Join-Path $repoRoot 'CHANGELOG.md';             Target = 'CHANGELOG.md' }
+)
+foreach ($item in $legalFiles) {
+    if (Test-Path $item.Source) {
+        Copy-Item -Path $item.Source -Destination (Join-Path $publishDir $item.Target) -Force
+        Write-Host "  + $($item.Target)"
+    }
+    else {
+        Write-Warning "  missing legal file: $($item.Source)"
+    }
+}
+
 # ---------------------------------------------------------------- verify + zip
 Write-Step 'Verify'
 $exe = Join-Path $publishDir 'DesktopAgent.WinUI.exe'
 if (-not (Test-Path $exe)) { throw "Publish output is missing DesktopAgent.WinUI.exe" }
+foreach ($required in @('LICENSE.txt', 'THIRD-PARTY-NOTICES.md')) {
+    if (-not (Test-Path (Join-Path $publishDir $required))) {
+        throw "Published folder is missing $required - GPL and Windows App SDK terms must ship with the binaries."
+    }
+}
 $bootstrap = Join-Path $publishDir 'Microsoft.WindowsAppRuntime.Bootstrap.dll'
 $selfContainedRuntime = Get-ChildItem $publishDir -Filter 'Microsoft.WindowsAppRuntime*.dll' -ErrorAction SilentlyContinue
 $files = Get-ChildItem $publishDir -File -Recurse
