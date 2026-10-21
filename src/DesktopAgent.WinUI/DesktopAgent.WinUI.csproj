@@ -14,6 +14,12 @@
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>
+    <!--
+      unpackaged 发布必须自带 Windows App SDK 运行时，否则目标机没装 Runtime 时
+      会弹「Windows App SDK unavailable」。这里写死在可执行项目内（不用命令行 -p:，
+      全局属性会传播到类库并触发 "should not be applied to a class library"）。
+    -->
+    <WindowsAppSDKSelfContained Condition="'$(WindowsAppSDKSelfContained)' == ''">true</WindowsAppSDKSelfContained>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
