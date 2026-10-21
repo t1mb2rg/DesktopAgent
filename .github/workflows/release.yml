@@ -43,14 +43,13 @@ jobs:
       - name: Restore
         run: dotnet restore DesktopAgent.sln
 
-      - name: Build Release (x64)
-        run: dotnet build DesktopAgent.sln --configuration Release -p:Platform=x64 --no-restore
+      - name: Build Release
+        run: dotnet build DesktopAgent.sln --configuration Release --no-restore
 
-      - name: Test Release (x64)
+      - name: Test Release
         run: >-
           dotnet test tests/DesktopAgent.Tests/DesktopAgent.Tests.csproj
           --configuration Release
-          -p:Platform=x64
           --no-build
           --results-directory TestResults
           --logger "trx;LogFileName=DesktopAgent.Tests.trx"
