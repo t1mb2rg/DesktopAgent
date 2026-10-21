@@ -1,9 +1,7 @@
 # 下一步开发方向
 
-> 面向 1.0.0 之后。**这不是承诺清单**，是按"现在最该做什么"排的优先级。
+> 面向 1.x 系列。**P0 三项是 1.x 内要完成的目标**，其余按"现在最该做什么"排序。
 > 已完成的部分见 [CHANGELOG](../CHANGELOG.md)，历史决策见 [architecture.md](architecture.md) 与 [pitfalls.md](pitfalls.md)。
-
-判断依据只有一条：**离"普通人装完就能放心用"还差什么。**
 
 ---
 
@@ -21,9 +19,67 @@
 
 ---
 
-## P0：挡住"能真正用起来"
+## P0：1.x 内要完成的三件事
 
-### 1. 无人值守执行接线
+按优先级排列。
+
+### 1. 降低内存占用
+
+**现状（2026-10-21 实测，Debug x64）**：
+
+| 场景 | 工作集 | 私有字节 |
+| --- | --- | --- |
+| 干净启动、空闲 20 秒 | **187 MB** | 170 MB |
+| 长时间使用后（含多轮 AI 对话） | **261 MB** | 213 MB（峰值 262 MB） |
+
+对一个"帮你摆图标"的工具来说，这个数字偏重 —— 它比很多原生桌面工具高一个量级。
+Release + 自包含发布形态的实际数字需要单独测（Debug 会更高）。
+
+**为什么重要**：它是常驻托盘的程序，用户不会为了摆图标容忍一个 200 MB 的后台进程。
+这也直接影响"开机自启"能不能接受。
+
+**待验证的四个方向**（现在只是假设，要逐一测）：
+
+| 假设 | 验证方法 | 预期 |
+| --- | --- | --- |
+| 自包含发布自带整套 .NET 运行时 | 对比 self-contained 与 framework-dependent 的私有字节 | 可能省一份运行时 |
+| 导航页全部常驻 | 统计各页 XAML 对象、Unloaded 后是否真的释放 | 按需创建/回收可省 |
+| WinAppSDK 组件仍有未使用的 | 已剔 ML 组件（onnxruntime + DirectML，42 MB 磁盘）；内存侧继续找 | 未知 |
+| 桌面雷达 / 文件系统监视器常驻开销 | 关掉它们的条件下测基线 | 未知 |
+
+**做法建议**：先建立**可重复的测量基线**（启动 → 空闲 → 打开 AI 助手 → 预览 → 应用的每一步内存曲线），
+再动优化。没有基线就没法证明"降了"。
+
+**验收标准**：空闲工作集有明确下降，且给出"优化前/后"的对照曲线。
+
+---
+
+### 2. 自动更新
+
+**现状**：没有。升级方式是"下载新版安装器覆盖安装"，数据保留。
+
+**为什么 1.x 内要做**：1.0.0 之后还会持续修问题（P1 里就有 7 条体验债）。用户不会每次手动下载。
+
+**分两步走**（不要一步做静默安装）：
+
+| 步骤 | 内容 | 风险 |
+| --- | --- | --- |
+| 第一步 | 检查新版本 → 提示"有新版本" → 打开下载页 / 直接下载到临时目录 | 低 |
+| 第二步 | 静默安装 / 一键升级 | 高（需签名、回滚、失败恢复） |
+
+**要注意的边界**：
+
+- **不能动校准结果**：升级不改变显示环境，已校准的网格事实应继续有效；
+- **不能动设计库**：`workspace-session.json` 与 SQLite 必须向后兼容（schema 迁移已幂等，见 architecture.md）；
+- **安装器是 per-user**（`PrivilegesRequired=lowest`），升级不需要提权；
+- **渠道隔离**：Dev 渠道的更新源不应指向 Stable（否则会把实验版推给正式用户）。
+
+**现成基础**：`release.yml` 已经产出稳定的资产名（`Tessel-Setup-<version>.exe`），
+GitHub Release API 可直接查最新版本。
+
+---
+
+### 3. 无人值守执行接线
 
 **现状**：自动化引擎（安全门链、触发协调器、执行周期）只存在于 `src/DesktopAgent.Poc`。
 产品壳 `src/DesktopAgent.WinUI` 里没有任何引擎装配 —— 设置页的「Automation Mode」
@@ -45,65 +101,31 @@
 
 ---
 
-### 2. 崩溃 `0xc000027b` 根因
+## P1：可靠性与体验
 
-**现状**：极少数情况下点「应用到桌面」会让进程异常退出。已加的取证代码会把异常写进
-`%TEMP%\tessel-product-crash.log`，但**根因尚未确定**。桌面写入是 fail-closed 的
-（崩溃时一步没写），所以危害被限制在"体验中断"。
+### 可靠性
 
-**为什么重要**：对非技术用户，"点一下程序没了"是不可接受的。
+| # | 问题 | 现状 |
+| --- | --- | --- |
+| 1 | 崩溃 `0xc000027b` 根因 | 极少数情况下点「应用到桌面」会让进程退出。已铺三个取证入口写 `%TEMP%\tessel-product-crash.log`，**根因未定**。桌面写入 fail-closed，所以危害限于体验中断 |
+| 2 | 更多显示组合未验收 | 现有结论都来自同一套三屏环境。单屏、双屏混合 DPI、竖屏主屏、侧边任务栏、显示器编号与物理位置不一致 —— 全未验证 |
 
-**做法**：拿到一份带托管栈的证据（`ProductCrashDiagnostics` 已经铺好三个入口）→
-定位到具体 XAML/异步边界 → 加显式处理。
+`0xc000027b` 是 stowed exception，`Microsoft.UI.Xaml.dll` 里 fail-fast，**没有托管栈是正常现象**，
+别因为"没栈"就归因于环境。
 
-**注意**：`0xc000027b` 是 stowed exception，`Microsoft.UI.Xaml.dll` 里 fail-fast，
-没有托管栈是**正常现象**，不要因为"没有栈"就认为是环境问题。
+### 体验债（都带文件行号，可直接下手）
 
----
+| # | 问题 | 位置 |
+| --- | --- | --- |
+| 1 | 每轮对话新建 `HttpClient` | [AiWorkspaceChatService.cs:18](../src/DesktopAgent.Application/Intelligence/AiWorkspaceChatService.cs) |
+| 2 | 超长消息可能卡住 UI（Provider 允许 512 KiB 正文，渲染无上限） | `src/DesktopAgent.WinUI/ChatMarkdownRenderer.cs` |
+| 3 | 网格拖动时显示器缺失会抛异常（`Single()` 未捕获） | `AiAssistantView.GridEditing.cs:24`、`:43` |
+| 4 | 卡片因修订变化失效时静默清空无提示 | `AiAssistantView.ChatActions.cs:43-48` |
+| 5 | 待确认卡片不持久化，重启后消失 | `_pendingChatActions` |
+| 6 | 校准体验偏重（几十秒 + 要动桌面 + 每屏一个探针） | 见 [grid-measurement.md](grid-measurement.md) |
+| 7 | 崩溃日志藏在 `%TEMP%`，用户找不到 | 可在设置页加"打开日志目录" |
 
-### 3. 更多显示组合的验收
-
-**现状**：所有真机结论都来自**一套**三屏环境（主屏 2560×1440 + 左侧竖屏 1080×1920 + 下方宽屏 1920×1080）。
-已知相位逐屏不同（`DISPLAY1 (2,16)` vs `DISPLAY3 (35,84)`）。
-
-**未验证的组合**：
-
-- 单屏（最常见的新用户环境）
-- 双屏横排 + 混合 DPI（100% + 150%）
-- 竖屏作为主屏
-- 任务栏放在侧边 / 自动隐藏
-- 显示器编号顺序与物理位置不一致
-
-**做法**：每多一套环境，就按 `docs/grid-measurement.md` 的流程跑一次校准 + 一次应用/撤销，
-把数字记进 `docs/experiments/`。**不需要改代码，需要的是更多环境的实测数据。**
-
----
-
-### 4. 自动更新
-
-**现状**：没有。升级方式是"下载新版安装器覆盖安装"，数据保留。
-
-**为什么暂时没做**：更新通道牵扯签名、回滚、灰度，做不好比没有更危险。
-
-**如果要做**：先做"检查新版本并提示下载链接"，不做静默安装。
-
----
-
-## P1：体验与可靠性
-
-按"用户能感觉到"排序：
-
-| # | 问题 | 现状 | 位置 |
-| --- | --- | --- | --- |
-| 1 | 每轮对话新建 `HttpClient` | socket 耗尽反模式 | `src/DesktopAgent.Application/Intelligence/AiWorkspaceChatService.cs:18` |
-| 2 | 超长消息可能卡住 UI | Provider 允许 512 KiB 正文，Markdown 渲染无上限 | `src/DesktopAgent.WinUI/ChatMarkdownRenderer.cs` |
-| 3 | 网格拖动时显示器缺失会抛异常 | `Single()` 未捕获，理论上有闪退面 | `src/DesktopAgent.WinUI/AiAssistantView.GridEditing.cs:24`、`:43` |
-| 4 | 卡片因修订变化失效时无提示 | 静默清空，用户不知道发生了什么 | `src/DesktopAgent.WinUI/AiAssistantView.ChatActions.cs:43-48` |
-| 5 | 待确认卡片不持久化 | 重启后消失 | `_pendingChatActions` |
-| 6 | 校准体验 | 几十秒 + 要动桌面 + 每屏一个探针 | 见 `grid-measurement.md` |
-| 7 | 崩溃日志用户不容易找到 | 只在 `%TEMP%` | 可在设置页加"打开日志目录" |
-
-第 1、2、3 条都是**小而明确**的改动，适合作为第一个贡献切入点。
+第 1、2、3 条是小而明确的改动，适合作为第一次贡献。
 
 ---
 
@@ -111,7 +133,7 @@
 
 | # | 事项 | 说明 |
 | --- | --- | --- |
-| 1 | `build.yml` 加 `paths-ignore` | 现在纯文档提交也会跑全量构建（3 次提交排了 3 个 run） |
+| 1 | `build.yml` 加 `paths-ignore` | 纯文档提交目前也会跑全量构建 |
 | 2 | 清理 nullable 警告 | `DesktopWorkspaceBlueprintJsonSerializer.cs` 6 处、`DesktopSemanticUnderstandingJsonSerializer.cs` 3 处 CS8619；`AiAssistantView.xaml.cs:30` CS0067 |
 | 3 | `.editorconfig` | 目前靠约定（见 [CONTRIBUTING](../CONTRIBUTING.md)） |
 | 4 | issue / PR 模板 | 让 bug 报告自带版本、渠道、日志 |
@@ -126,15 +148,16 @@
 | 不做 | 原因 |
 | --- | --- |
 | 松开 `MaximumAcceptanceMoveLimit`（验收预算 10 项） | 这是刻意护栏。撞预算说明"候选需要变小"，不是"预算该变大" |
-| 把推断当真凭据（`Inferred` 授权写入） | 隐私/正确性都靠这条线；`Inferred` 只能参与预览 |
+| 把推断当真凭据（`Inferred` 授权写入） | 隐私与正确性都靠这条线；`Inferred` 只能参与预览 |
 | 用"多数屏一致"推断某块屏的网格 | 多屏相位本来就不同，这是错的 |
 | 在系统消息栈（WndProc）里读桌面或弹 UI | 会拖死 Explorer |
 | 自动重试模型请求 | 失败就是失败，重试会把不确定性带进设计 |
 | 云端同步桌面内容 | 桌面文件名本身就是隐私 |
+| 静默安装式自动更新（第一步不做） | 没签名、没回滚之前，静默升级比不更新更危险 |
 
 ---
 
 ## 怎么参与
 
-见 [CONTRIBUTING.md](../CONTRIBUTING.md)。最需要外部帮助的其实是 **P0-3：更多显示环境的实测数据** ——
+见 [CONTRIBUTING.md](../CONTRIBUTING.md)。最需要外部帮助的其实是 **更多显示环境的实测数据** ——
 哪怕只提供一份 `grid-probe-*.txt` 和你的显示器配置描述，也比改代码有用。
