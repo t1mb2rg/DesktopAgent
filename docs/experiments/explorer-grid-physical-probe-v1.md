@@ -256,6 +256,8 @@ moves icons back and re-verifies). It restored the 46 displaced icons exactly:
 Tests: `RunAsync_ExplorerReflowsTheDesktopDuringTheRun_PutsTheMovedUserIconsBackAndStillPasses` and
 `RunAsync_UserIconsKeepMovingAfterTheRepair_ReportsTheUnrepairedIconsAndFails`.
 
+> 开源脱敏说明：下方真实验收日志中的用户目录与桌面文件名已替换为示例值；显示器、坐标、状态和验收结论保持原始技术语义。
+
 ## Sixth real run: the repair works, the re-flow outlasts the settle budget (2026-10-14)
 
 The first run with the end-of-run repair in place. `UserIconsUnchanged: True` **and**
@@ -267,8 +269,8 @@ The run still failed, for a different reason:
 
 ```
 Failure: ProbeAbortException: \\.\DISPLAY1 Horizontal[12] settled Observation 检测到非预期桌面变化：
-  StableId "c:\users\29719\desktop\daprobe-9417dbda-01.url" …
-  StableId "…\习近平新时代中国特色社会主义思想概论 23版 题库0610(2)【26.6.18&&】(1).doc" …
+  StableId "c:\users\example-user\desktop\sample-shortcut.url" …
+  StableId "c:\users\example-user\desktop\private-document.doc" …
   … 8 existing desktop items in total
 ```
 
