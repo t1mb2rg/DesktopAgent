@@ -41,8 +41,10 @@ internal sealed class TrayIconHost : IDisposable
     private const uint TpmRightButton = 0x0002;
     private const uint TpmNonotify = 0x0080;
     private const uint TpmReturnCmd = 0x0100;
-    private const int IdiApplication = 32512;
     private const uint IconId = 1;
+
+    /// <summary>系统默认应用图标（<c>IDI_APPLICATION</c>）。仅在取不到产品图标时兜底。</summary>
+    private const int IdiApplication = 32512;
 
     private const uint OpenCommandId = 1001;
     private const uint LayoutsCommandId = 1002;
@@ -112,7 +114,13 @@ internal sealed class TrayIconHost : IDisposable
 
     private void AddIcon()
     {
-        var icon = LoadIconW(IntPtr.Zero, new IntPtr(IdiApplication));
+        // 托盘图标来自可执行文件自身的图标资源（见 ProductIcon），
+        // 不再使用 IDI_APPLICATION，否则通知区域会显示系统默认的空白窗口图标。
+        // 取不到自定义图标时退回系统默认图标：没有图标也好过启动失败。
+        var icon = ProductIcon.Small;
+        if (icon == IntPtr.Zero)
+            icon = LoadIconW(IntPtr.Zero, new IntPtr(IdiApplication));
+
         if (icon == IntPtr.Zero)
             throw new Win32Exception(Marshal.GetLastWin32Error(), "无法加载 DesktopAgent tray icon。");
 
@@ -321,9 +329,6 @@ internal sealed class TrayIconHost : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool Shell_NotifyIconW(uint message, ref NotifyIconData data);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr LoadIconW(IntPtr instance, IntPtr iconName);
-
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     private static extern IntPtr SetWindowLongPtrW(IntPtr hwnd, int index, IntPtr newLong);
 
@@ -337,6 +342,9 @@ internal sealed class TrayIconHost : IDisposable
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint RegisterWindowMessageW(string message);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr LoadIconW(IntPtr instance, IntPtr iconName);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr CreatePopupMenu();

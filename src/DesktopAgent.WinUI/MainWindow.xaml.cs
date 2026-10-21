@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using DesktopAgent.Application.Intelligence;
 using DesktopAgent.Core.Automation;
 using DesktopAgent.Core.Productization;
@@ -54,6 +54,7 @@ public sealed partial class MainWindow : Window
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         _appWindow.Closing += OnAppWindowClosing;
+        ProductIcon.ApplyTo(hwnd);
 
         _trayIcon = new TrayIconHost(hwnd, ShowFromBackground);
         _trayIcon.DisplayEnvironmentChanged += CalibrationEnvironmentChanged;

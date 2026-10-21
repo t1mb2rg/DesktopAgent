@@ -11,6 +11,7 @@
     <RootNamespace>DesktopAgent.WinUI</RootNamespace>
     <AssemblyName>DesktopAgent.WinUI</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\tessel.ico</ApplicationIcon>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>

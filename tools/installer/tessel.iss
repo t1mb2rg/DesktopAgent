@@ -10,6 +10,9 @@
 #ifndef OutputDir
   #define OutputDir "..\..\artifacts\release"
 #endif
+; Same master icon the application embeds, so installer, shortcuts and
+; Programs-and-Features entry all match.
+#define IconFile "..\..\src\DesktopAgent.WinUI\Assets\tessel.ico"
 
 [Setup]
 AppId={{7C1E5D42-9A63-4F0B-9C1E-2B7A8D4E5F60}
@@ -30,6 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+SetupIconFile={#IconFile}
 UninstallDisplayName=Tessel
 UninstallDisplayIcon={app}\DesktopAgent.WinUI.exe
 CloseApplications=yes
