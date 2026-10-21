@@ -1,22 +1,71 @@
-# DesktopAgent
+# Tessel
 
-DesktopAgent 是一个面向 Windows 11 的本地桌面管理 Agent。目标是在不接管 Explorer 原生桌面的前提下，通过确定性规则与可选 AI 建议理解桌面项目用途，提供分区、布局、待确认工作流，并在安全策略允许时进入受控执行链。
+**对 AI 说一句话，它把你的桌面按语义分区摆好；不满意，一键撤销。**
 
-> 当前版本：**1.0.0**。产品主线已改为「以 AI 对话为中心的工作区设计」，具备校准、设计、预览、应用、撤销的完整闭环。
-> 变更见 [CHANGELOG.md](CHANGELOG.md)，已知限制见下方「已知限制」。
+桌面上几十个快捷方式混在一起，找东西全靠扫视——Tessel 不接管 Explorer，而是理解每个图标
+是干什么的，把它们摆进有名字的分区，并且在你同意之前一步都不动。
 
-## 下载与安装
+<img src="docs/images/ai-assistant.png" width="900" alt="Tessel AI 助手：左侧是对话，右侧是实时设计拓扑">
 
-1. 从 [Releases](https://github.com/t1mb2rg/DesktopAgent/releases) 下载 `Tessel-Setup-<版本>.exe`。
-2. 双击安装。默认装到当前用户目录（`%LOCALAPPDATA%\Programs\Tessel`），**不需要管理员权限**。
-   也可以选择「下载 zip 解压即用」的绿色包。
-3. 首次启动会要求**校准全部显示器的桌面网格**：产品会临时创建并移动专用测试图标完成测量，
-   需要单独确认；取消或失败不会跳过校准。
-4. 校准通过后进入 AI 助手页，描述你想要的桌面样子即可。
+## 三步开始用
 
-校准必须在**当前显示环境下**完成；之后如果改了分辨率、缩放、显示排列或任务栏位置，需要重新校准。
+1. **安装** —— 下载 `Tessel-Setup-1.0.0.exe` 双击即可，装到当前用户目录，不需要管理员权限。
+2. **校准** —— 首次启动要求校准全部显示器的桌面网格。Tessel 会临时创建并移动专用测试图标
+   来测量真实网格，这一步需要你单独确认；取消或失败都不会跳过。
+3. **说话** —— 在校准完成后进入 AI 助手，描述你想要的桌面：
+   > 我想保持主屏干净，其它的都放到左侧副屏吧。
 
-### 数据放在哪
+   它会先给出一份设计（分区、每个分区放什么、跨屏怎么摆），你看过再决定要不要落到真桌面。
+
+## 它能做什么
+
+### 对话式设计，不是填表
+
+理解一次桌面之后，后续都用轻量对话调整。设计过程实时画在右侧拓扑上：
+三块屏、几个分区、每块屏上占多少位置，改一句就更新一次。
+
+### 先预览，再决定
+
+<img src="docs/images/desktop-overview.png" width="900" alt="我的桌面：三屏分区拓扑与当前布局">
+
+每条设计都能生成**精确预览**：这次要移动几项、保持几项、目标在哪块屏。预览用的是你桌面的
+真实网格与真实坐标，不是估算。看完预览再点应用，才会发生写入。
+
+### 每次应用前都有检查点
+
+应用之前会保存一次完整的安全检查点。摆得不对，点「撤销上次整理」就能回到应用之前的样子；
+如果桌面在这期间被你自己改过，它会停下来告诉你，而不是盲目回退。
+
+### 设计库：好用就存下来
+
+<img src="docs/images/design-library.png" width="900" alt="设计库：保存的设计与版本历史">
+
+满意的设计可以存进设计库，按版本保留、随时调出来重新预览。用不上的设计可以删除——只是从
+库里移除，历史版本仍在本地，桌面图标也不会因此移动。
+
+### 分区线框画在真桌面上
+
+把设计的分区直接描在你的真桌面上（鼠标穿透，不会挡操作），四种粗细/透明度可调，改设置当场
+生效。摆之前先看一眼分区落在哪，比对着面板想象靠谱。
+
+<img src="docs/images/settings.png" width="900" alt="设置：自动化模式、AI Provider 与分区框外观">
+
+## 为什么可以放心用
+
+| 原则 | 具体表现 |
+| --- | --- |
+| **不碰系统桌面** | 不接管 Explorer，不改系统设置，只移动用户图标；回收站等系统项默认不动 |
+| **AI 只提议，不动手** | 模型输出的是设计草稿；预览、写入、撤销各走独立的安全检查，AI 无法直接指挥写入 |
+| **失败就停** | 任何一步校验不一致（桌面变了、校准失效、目标不在范围内）都拒绝执行，而不是"尽力而为" |
+| **数据在本地** | 设计、会话、检查点都存在本地 SQLite；API Key 放 Windows DPAPI，不落明文 |
+| **每次写入可回退** | 安全检查点 + 一键撤销，撤销本身也复用同一条受控执行链 |
+
+## 安装、数据与卸载
+
+**安装**：`Tessel-Setup-<版本>.exe`（安装器，默认 `%LOCALAPPDATA%\Programs\Tessel`，无需管理员），
+或 `Tessel-<版本>-win-x64.zip`（绿色包，解压即用）。
+
+**数据放在哪**：
 
 | 内容 | 路径 |
 | --- | --- |
@@ -28,182 +77,26 @@ DesktopAgent 是一个面向 Windows 11 的本地桌面管理 Agent。目标是�
 
 从旧版本升级时数据目录不变，直接覆盖安装即可。
 
-### 卸载
-
-设置 → 应用 → 已安装的应用 → Tessel → 卸载，或运行安装目录下的 `unins000.exe`。
-卸载**只删除程序本体**，`%LOCALAPPDATA%\Tessel` 下的数据会保留；确认不再需要时手动删除该目录。
-
-## 当前产品形态
-
-DesktopAgent 现在明确分为两个 Surface。
-
-### DesktopAgent.WinUI
-
-正式产品壳，面向日常使用：
-
-- 桌面 / 设计库 / AI 助手 / 待处理 / 设置；
-- 单实例与 Windows 托盘常驻；
-- 关闭主窗口后继续驻留，托盘可直接打开页面或退出；
-- AI 对话式工作区设计（理解一次，之后轻量对话调整）；
-- 设计库：保存、按版本查看、删除；
-- 单屏布局模板与 Fresh Impact Preview；
-- Desktop Zone Overlay，支持 Light / Standard / Strong / Custom，改外观后线框实时生效；
-- Ring ColorPicker、全局颜色和逐 Zone 独立颜色；
-- Pending Queue 只读产品页；
-- Automation Mode 与 AI Provider 设置。
-
-正式产品壳不会直接构造 `DesktopShellIconPositionWriter`，不会因为 AI 建议、被动选择或 Overlay 展示直接移动真实桌面图标。
-
-### DesktopAgent Diagnostics Workbench
-
-工程诊断工作台。历史源码路径暂时仍为 `src/DesktopAgent.Poc`，M5-06 起输出进程身份为 `DesktopAgent.Diagnostics`。
-
-它保留：
-
-- 显示器拓扑与 Shell 图标原始读取；
-- Snapshot / SQLite / Recovery 诊断；
-- 受控 Writer / Recovery 实机验收；
-- M3/M4 monitoring / notification / automation diagnostics；
-- Debug fault injection 与 acceptance harness。
-
-Diagnostics Workbench 不是正式产品 UI。普通启动作为前台工程工具运行，不建立第二套产品常驻 tray；只有显式 Debug unattended acceptance 场景才保留旧 M3 resident tray。
-
-详细边界见 [`docs/experiments/M5-06-diagnostics-workbench-split.md`](docs/experiments/M5-06-diagnostics-workbench-split.md)。
-
-## 技术路线
-
-- .NET 10
-- 正式产品 UI：WinUI 3 / Windows App SDK
-- 工程诊断工作台：WPF
-- Windows Shell COM / Win32 集中在 `DesktopAgent.WindowsInterop`
-- 核心业务与安全合同不依赖 UI
-- SQLite 本地数据
-- 用户自带 OpenAI 兼容 Provider 配置
-- GPL-3.0-or-later
-
-## 项目结构
-
-```text
-DesktopAgent/
-├─ src/
-│  ├─ DesktopAgent.Core/             # 领域模型 / 安全合同
-│  ├─ DesktopAgent.Application/      # 应用协调与工作流
-│  ├─ DesktopAgent.WindowsInterop/   # Shell COM / Win32
-│  ├─ DesktopAgent.Persistence/      # SQLite / JSON / DPAPI
-│  ├─ DesktopAgent.WinUI/            # 正式产品壳
-│  └─ DesktopAgent.Poc/              # 历史路径；当前为 Diagnostics Workbench
-├─ tests/
-│  └─ DesktopAgent.Tests/
-├─ docs/
-│  ├─ decisions/
-│  ├─ experiments/
-│  └─ milestones/
-└─ .github/workflows/
-```
-
-## 本地运行
-
-要求：Windows 11、.NET 10 SDK，以及可构建 WPF / WinUI 3 的 Windows 开发环境。
-
-### 正式产品壳
-
-产品使用前必须完成全部当前显示器的真实网格校准。启动时会核验已保存的实测记录；缺失、部分完成或显示环境变化时停留在校准引导。校准需要单独确认，取消不能跳过。校准成功不等于授予无人值守移动权限。
-
-```powershell
-dotnet run --project .\src\DesktopAgent.WinUI\DesktopAgent.WinUI.csproj -c Debug
-```
-
-### Diagnostics Workbench
-
-```powershell
-dotnet run --project .\src\DesktopAgent.Poc\DesktopAgent.Poc.csproj -c Debug
-```
-
-M5-06 起该项目构建的可执行文件名为 `DesktopAgent.Diagnostics.exe`；项目路径 / namespace 暂时保留历史 `DesktopAgent.Poc` 名称以降低迁移回归面。
-
-### 全仓验证
-
-```powershell
-dotnet restore DesktopAgent.sln
-dotnet build DesktopAgent.sln -c Debug
-dotnet build DesktopAgent.sln -c Release
-dotnet test tests\DesktopAgent.Tests\DesktopAgent.Tests.csproj -c Release --no-build
-```
-
-## 构建与打包
-
-```powershell
-# 开发调试
-dotnet build DesktopAgent.sln -c Debug -p:Platform=x64
-
-# 全量测试
-dotnet test tests\DesktopAgent.Tests\DesktopAgent.Tests.csproj -c Release -p:Platform=x64
-
-# 一条命令出发布包（构建 + 测试 + 自包含发布 + 裁剪 + zip + 安装器）
-powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Clean
-```
-
-`publish.ps1` 产物都在 `artifacts\release\`：
-
-| 产物 | 说明 |
-| --- | --- |
-| `Tessel-<版本>-win-x64\` | 自包含发布目录，解压即用 |
-| `Tessel-<版本>-win-x64.zip` | 绿色包 |
-| `Tessel-Setup-<版本>.exe` | 安装器（需要 Inno Setup 6） |
-
-常用开关：`-SkipTests`、`-SkipTrim`、`-SkipInstaller`、`-Version x.y.z`、`-Launch`、`-IsccPath`。
-
-## 当前验证基线
-
-- Release 全量测试 **2587 / 2587 通过**（0 失败、0 跳过）；
-- GitHub Actions `build` 工作流：restore → Debug 构建 → Release 构建 → Release 测试；
-- 真机验收在 Windows 11 三屏环境完成：校准往返、跨屏汇聚与一键回滚、设计库增删、
-  线框外观实时刷新、安装 → 启动 → 卸载。
-
-历史 Actions 曾因 GitHub billing / spending-limit 外部 Gate 无法启动 runner，那段时间的代码由本机
-build 与真实 Windows 验证承担；当前远端 CI 已恢复正常。
+**卸载**：设置 → 应用 → 已安装的应用 → Tessel → 卸载，或运行安装目录下的 `unins000.exe`。
+卸载只删除程序本体，`%LOCALAPPDATA%\Tessel` 下的数据会保留；确认不再需要时手动删除该目录。
 
 ## 已知限制
 
-- **无人值守自动执行未启用。** 引擎、安全门与「记住这块屏」授权都在代码里，但产品壳默认只到
+- **无人值守自动执行未启用。** 引擎、安全门与「记住这块屏」授权都在代码里，但产品默认只到
   「建议 / 协助」级别；开启属于实验特性，需要显式验收钥匙，本轮未纳入发布形态。
-- 只有 x64 构建，没有 arm64。
+- 只有 **x64** 构建，没有 arm64。
 - 没有自动更新；升级方式是重新运行新版安装器覆盖安装。
-- 校准会临时创建并移动专用测试图标，必须由用户单独确认。
+- 校准必须在**当前显示环境下**完成；之后改了分辨率、缩放、显示排列或任务栏位置，需要重新校准。
 - 界面与真机验收在 Windows 11 三屏环境完成，其他多屏组合尚未逐一验收。
-- 已知崩溃根因未完全定位：极少数情况下「应用到桌面」可能让进程异常退出（`0xc000027b`），
-  应用前会保存安全检查点，桌面上的写入是 fail-closed 的；如果遇到请反馈
-  `%TEMP%\tessel-product-crash.log`。
+- 极少数情况下「应用到桌面」可能让进程异常退出（`0xc000027b`）。应用前已保存安全检查点，
+  桌面写入是 fail-closed 的；遇到请反馈 `%TEMP%\tessel-product-crash.log`。
 
-## 已冻结的安全原则
+## 给开发者
 
-- AI 和 UI 不直接调用 Shell Writer；
-- Layout Editing 阶段 Automation Policy 必须 BLOCK；
-- Preview 每次基于 Fresh Desktop Observation；
-- 不持久化并重放旧 WriterCommand；
-- Safety / Layout Editing 永远不能被 Automation Mode 绕过；
-- AI-only authority 永远不能直接进入 Writer AUTO；
-- Pending Queue 只持久化事实、分类快照与授权依据，不持久化执行 payload；
-- 真实执行前必须 fresh observe / fresh replan；
-- Writer 异常视为可能已产生副作用；
-- 身份或前置位置不可信时禁止盲目回滚；
-- 宁可停止整理，也不冒险继续执行。
+技术选型、项目结构、本地运行、构建打包、安全原则与里程碑路线都在
+[`docs/development.md`](docs/development.md) 里。
 
-## M5 路线
-
-当前产品化阶段按以下顺序推进：
-
-```text
-M5-00  WinUI Feasibility                  COMPLETE
-M5-01  Automation Policy                  COMPLETE
-M5-02  Pending Queue / Confirm / Remember COMPLETE
-M5-03  WinUI Product Shell                COMPLETE
-M5-04  First-run / Settings / AI Config   COMPLETE
-M5-05  Daily Workflow / Layout Management COMPLETE
-M5-06  Diagnostics / Workbench Split      COMPLETE
-M5-07  Performance / Long-run Stability   NEXT
-M5-08  Packaging / Install / Upgrade       COMPLETE (1.0.0)
-M5-09  Product E2E / RC                   NEXT
-```
-
-M5-06 不新增 Writer 能力，重点是让正式产品壳与工程诊断工具在身份、常驻职责和 UI 语义上彻底分开。
+- 历史实验与真机验收记录：[`docs/experiments/`](docs/experiments/)
+- 产品反馈清单：[`docs/suggestions/product-feedback-backlog.md`](docs/suggestions/product-feedback-backlog.md)
+- 变更记录：[CHANGELOG.md](CHANGELOG.md)
+- 许可证：GPL-3.0-or-later，见 [LICENSE](LICENSE)
