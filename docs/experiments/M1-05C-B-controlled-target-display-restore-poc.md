@@ -139,7 +139,7 @@ RestorePlanner 阶段 7 在检查 `AlreadyAtTarget` 之前先执行了 `IsFullyC
 | 字段 | 值 |
 |---|---|
 | Kind | MoveToTarget |
-| StableId | `c:\users\29719\desktop\desktopagent-m1-05c-b-test` |
+| StableId | `c:\users\example-user\desktop\desktopagent-m1-05c-b-test` |
 | FromPosition | `(1962,507)` |
 | ToPosition | `(1886,507)` |
 | TargetDeviceName | `\\.\DISPLAY2` |
