@@ -96,6 +96,10 @@
 技术选型、项目结构、本地运行、构建打包、安全原则与里程碑路线都在
 [`docs/development.md`](docs/development.md) 里。
 
+- **架构与关键实现**：[`docs/architecture.md`](docs/architecture.md) —— 分层职责、数据流、
+  六道安全闸、坐标换算与设计会话等核心机制
+- **我们踩过的坑**：[`docs/pitfalls.md`](docs/pitfalls.md) —— 15 个真实阻断点：现象、定位过程、
+  根因、解法与可迁移的教训（含失败与误判，不是变更日志）
 - 历史实验与真机验收记录：[`docs/experiments/`](docs/experiments/)
 - 产品反馈清单：[`docs/suggestions/product-feedback-backlog.md`](docs/suggestions/product-feedback-backlog.md)
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
