@@ -1255,7 +1255,7 @@ c4r3 (304,1279) 的菜单是「打开 DesktopAgent / 布局 / 待确认 / 设置
   站定授权、风险预算）一个字没松，`SetRequestedMode` 本身也没有额外的安全门。
 - 真机过程：武装启动（PID 33576，`launch-armed-auto.cmd`）→ 对话框 Yes → 绑定模板
   「AI 建议布局」（Revision 1）→ 启动后台监听（FileSystem watchers 2 / PeriodicFallback 15s）
-  → 在 `C:\Users\29719\Desktop` 新建一个文件，制造一次真实变化。
+  → 在 `C:\\Users\\<user>\\Desktop` 新建一个文件，制造一次真实变化。
 
 **§28.4 结果：建议出来了，但一次自动执行都没发生**
 
@@ -1386,7 +1386,7 @@ c4r3 (304,1279) 的菜单是「打开 DesktopAgent / 布局 / 待确认 / 设置
 - 应用后重新预览同一模板：`MoveCountText=0`、`StayCountText=44`、
   `ApplyReadinessHeadlineText=不需要应用`、`ApplyReadinessDetailText=按当前预览，桌面已经是目标样子（要移动 0 项）。`
   → DISPLAY1 的 44 个图标已经在模板分区里。
-- 产品库 `C:\Users\29719\AppData\Local\Tessel.Dev\desktop-agent.db` 新增 1 条 recovery session（15 → 16）；
+- 产品库 `C:\\Users\\<user>\\AppData\Local\Tessel.Dev\desktop-agent.db` 新增 1 条 recovery session（15 → 16）；
   演练库不受影响（仍 15 条）。
 
 #### §30.3 无人值守：候选变成"17 项"，仍然停在 preflight 风险预算
@@ -1397,7 +1397,7 @@ c4r3 (304,1279) 的菜单是「打开 DesktopAgent / 布局 / 待确认 / 设置
   `Mode=ValidatedOpen; MaxMoves=10; MaxSteps=20; AllowStaging=False; FailureMode=None; RequestedMode=Automatic`。
 - 14:14:00 在桌面新建 `dsh-drift-2.txt` → 14:14:02 文件系统 hint（`Unstable`：该文件只出现在第二次观察）→
   14:14:15 周期 `ChangesDetected`：
-  `Added StableId=c:\users\29719\desktop\dsh-drift-2.txt Pos=(138,982) Monitor=\\.\DISPLAY1`（图标 146 → 147）→
+  `Added StableId=C:\\Users\\<user>\\desktop\dsh-drift-2.txt Pos=(138,982) Monitor=\\.\DISPLAY1`（图标 146 → 147）→
   建议 `7d5a6be0-6654-4752-ad65-0c9eea468250`（模板 `6f0daaa5`、目标 `\\.\DISPLAY1`、**Moves=17 / ExecutionSteps=17**）→
   点火生效，日志给出裁决：
   `[B05] automatic cycle PreflightStopped | mode=Automatic/Automatic gate=DesktopAutomationUnattendedGate { IsOpen = True, Reason = None } paused=false cooldown=false fuse=false | suggestion=7d5a6be0-… lifecycleRev=1 | preflight=RiskBudgetBlocked riskMoves=17/10 riskSteps=17/20 staging=false withinBudget=false blockReasons=MoveCountLimitExceeded`
