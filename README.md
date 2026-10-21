@@ -102,6 +102,10 @@
   间距可以问、原点只能测，双证据如何交叉验证，以及为什么「测不到的屏就不写事实」
 - **我们踩过的坑**：[`docs/pitfalls.md`](docs/pitfalls.md) —— 15 个真实阻断点：现象、定位过程、
   根因、解法与可迁移的教训（含失败与误判，不是变更日志）
+- **下一步做什么**：[`docs/roadmap.md`](docs/roadmap.md) —— 按"离普通人装完就能放心用还差什么"
+  排序的方向，含明确写了"不做"的清单
+- **怎么参与**：[`CONTRIBUTING.md`](CONTRIBUTING.md) —— 环境、代码地图、提交规范、四条安全红线、
+  真机验证方法与报 bug 需要的信息
 - 历史实验与真机验收记录：[`docs/experiments/`](docs/experiments/)
 - 产品反馈清单：[`docs/suggestions/product-feedback-backlog.md`](docs/suggestions/product-feedback-backlog.md)
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
