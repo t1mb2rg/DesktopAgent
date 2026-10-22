@@ -2,8 +2,9 @@
 
 面向贡献者与维护者。用户使用说明见 [README](../README.md)。
 
-> 仓库名仍为 `DesktopAgent`（历史命名），产品名是 **Tessel**。代码命名空间、项目名与
-> 发布产物按此映射：产品壳 `DesktopAgent.WinUI` → 安装后 `Tessel`。
+> 仓库名是 **Tessel**（2026-10-22 由 `DesktopAgent` 改名，旧地址会自动重定向）。代码命名空间、
+> 项目名与发布产物仍沿用历史命名 `DesktopAgent`：产品壳 `DesktopAgent.WinUI` → 安装后显示 `Tessel`，
+> 发布包名 `Tessel-<version>-win-x64.zip`。
 
 ## 产品形态
 
