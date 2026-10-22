@@ -61,8 +61,23 @@ jobs:
           dotnet publish src/DesktopAgent.WinUI/DesktopAgent.WinUI.csproj `
             --configuration Release -p:Platform=x64 -r win-x64 --self-contained true `
             -p:PublishReadyToRun=false -p:PublishTrimmed=false `
+            -p:DebugType=none -p:DebugSymbols=false `
             -o $out --nologo
           if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
+
+      - name: Drop debug symbols
+        shell: pwsh
+        run: |
+          # .pdb files embed absolute build-machine source and NuGet cache paths, and
+          # end users do not need them. 1.0.1 shipped them by mistake.
+          $version = '${{ steps.version.outputs.value }}'
+          $dir = "artifacts/release/Tessel-$version-win-x64"
+          $pdbs = Get-ChildItem $dir -Filter *.pdb -File -Recurse -ErrorAction SilentlyContinue
+          foreach ($f in $pdbs) { Remove-Item $f.FullName -Force }
+          Write-Host ("removed {0} .pdb file(s)" -f @($pdbs).Count)
+          if (Get-ChildItem $dir -Filter *.pdb -File -Recurse -ErrorAction SilentlyContinue) {
+            throw 'debug symbols still present in the release payload'
+          }
 
       - name: Trim unused machine-learning payload
         shell: pwsh
