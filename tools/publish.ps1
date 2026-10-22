@@ -131,8 +131,21 @@ if ($running) {
 }
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 & dotnet publish $appProject -c Release -p:Platform=x64 -r win-x64 --self-contained true `
-    -p:PublishReadyToRun=false -p:PublishTrimmed=false -o $publishDir --nologo
+    -p:PublishReadyToRun=false -p:PublishTrimmed=false -p:DebugType=none -p:DebugSymbols=false `
+    -o $publishDir --nologo
 Assert-LastExit 'publish'
+
+# Debug symbols must never ship. .pdb files embed absolute build-machine source and
+# NuGet cache paths (they contained "C:\Users\<name>\.nuget\packages\..." in 1.0.1),
+# and end users do not need them. Removing them also saves ~1 MB.
+Write-Step 'Drop debug symbols'
+$pdbFiles = Get-ChildItem $publishDir -Filter *.pdb -File -Recurse -ErrorAction SilentlyContinue
+$pdbBytes = 0
+foreach ($pdb in $pdbFiles) { $pdbBytes += $pdb.Length; Remove-Item $pdb.FullName -Force }
+Write-Host ("  removed {0} .pdb file(s), {1} MB" -f @($pdbFiles).Count, [math]::Round($pdbBytes / 1MB, 2))
+if (Get-ChildItem $publishDir -Filter *.pdb -File -Recurse -ErrorAction SilentlyContinue) {
+    throw "Debug symbols are still present in the publish output; refusing to package them."
+}
 
 # ---------------------------------------------------------------- trim
 if (-not $SkipTrim) {
